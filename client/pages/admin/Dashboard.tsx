@@ -50,57 +50,76 @@ import { fetchDashboardStats } from "@/store/slices/dashboardSlice";
 const AdminDashboard = () => {
   const [wizardOpen, setWizardOpen] = useState(false);
   const dispatch = useAppDispatch();
-  const { loans, isLoading: loading } = useAppSelector(
-    (state) => state.pipeline,
-  );
-  const { stats, isLoading: statsLoading } = useAppSelector(
-    (state) => state.dashboard,
-  );
+  const {
+    loans,
+    isLoading: loading,
+    error: loansError,
+  } = useAppSelector((state) => state.pipeline);
+  const {
+    stats,
+    isLoading: statsLoading,
+    error: statsError,
+  } = useAppSelector((state) => state.dashboard);
 
   useEffect(() => {
-    dispatch(fetchLoans());
-    dispatch(fetchDashboardStats());
+    try {
+      dispatch(fetchLoans({}));
+      dispatch(fetchDashboardStats());
+    } catch (error) {
+      console.error("Error loading dashboard data:", error);
+    }
   }, [dispatch]);
 
   const handleLoanCreated = () => {
-    dispatch(fetchLoans());
-    dispatch(fetchDashboardStats());
+    try {
+      dispatch(fetchLoans({}));
+      dispatch(fetchDashboardStats());
+    } catch (error) {
+      console.error("Error refreshing dashboard data:", error);
+    }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case "underwriting":
       case "under_review":
-        return "bg-blue-500";
+        return "bg-primary";
       case "documents_pending":
         return "bg-amber-500";
       case "conditional_approval":
       case "approved":
-        return "bg-emerald-500";
+        return "bg-primary/60";
       case "denied":
       case "cancelled":
         return "bg-destructive";
       default:
-        return "bg-blue-500";
+        return "bg-primary";
     }
   };
 
   const formatLoanType = (type: string) => {
+    if (!type || typeof type !== "string") {
+      return "N/A";
+    }
     return type
       .split("_")
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(" ");
   };
 
-  // Prepare chart data from weekly activity
-  const chartData =
-    stats?.weeklyActivity.map((day) => ({
+  // Prepare chart data from weekly activity with error handling
+  const chartData = React.useMemo(() => {
+    if (!stats?.weeklyActivity || !Array.isArray(stats.weeklyActivity)) {
+      return [];
+    }
+    return stats.weeklyActivity.map((day) => ({
       name: new Date(day.date).toLocaleDateString("en-US", {
         weekday: "short",
       }),
-      apps: day.applications,
-      closed: day.closed,
-    })) || [];
+      apps: day.applications || 0,
+      closed: day.closed || 0,
+    }));
+  }, [stats]);
 
   // Format currency
   const formatCurrency = (value: number) => {
@@ -160,6 +179,19 @@ const AdminDashboard = () => {
         />
 
         <div className="space-y-8 animate-in fade-in duration-500">
+          {/* Error Display */}
+          {(statsError || loansError) && (
+            <Card className="border-destructive bg-destructive/5">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2 text-destructive">
+                  <AlertCircle className="h-5 w-5" />
+                  <p className="font-medium">
+                    Error loading dashboard data: {statsError || loansError}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
           {/* Stats Cards */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             {[
@@ -171,7 +203,7 @@ const AdminDashboard = () => {
                     : formatCurrency(stats.totalPipelineValue),
                 change: pipelineChange,
                 trend: "up",
-                icon: <TrendingUp className="text-emerald-500" />,
+                icon: <TrendingUp className="text-primary" />,
               },
               {
                 title: "Active Applications",
@@ -181,7 +213,7 @@ const AdminDashboard = () => {
                     : stats.activeApplications.toString(),
                 change: appsChange,
                 trend: "up",
-                icon: <Users className="text-blue-500" />,
+                icon: <Users className="text-primary" />,
               },
               {
                 title: "Avg. Closing Time",
@@ -198,7 +230,7 @@ const AdminDashboard = () => {
                 value: statsLoading || !stats ? "..." : `${stats.closureRate}%`,
                 change: rateChange,
                 trend: "up",
-                icon: <CheckCircle2 className="text-emerald-500" />,
+                icon: <CheckCircle2 className="text-primary" />,
               },
             ].map((stat, i) => (
               <Card key={i}>
@@ -216,7 +248,7 @@ const AdminDashboard = () => {
                     <span
                       className={
                         stat.trend === "up"
-                          ? "text-emerald-500"
+                          ? "text-primary"
                           : "text-destructive"
                       }
                     >
@@ -365,7 +397,7 @@ const AdminDashboard = () => {
                   <div className="text-center py-8 text-muted-foreground">
                     Loading...
                   </div>
-                ) : loans.length === 0 ? (
+                ) : (loans || []).length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
                     No active loans yet. Create your first loan application!
                   </div>
@@ -397,19 +429,21 @@ const AdminDashboard = () => {
                       </tr>
                     </thead>
                     <tbody className="[&_tr:last-child]:border-0">
-                      {loans.map((loan) => (
+                      {(loans || []).map((loan) => (
                         <tr
                           key={loan.id}
                           className="border-b transition-colors hover:bg-muted/50"
                         >
                           <td className="p-2 sm:p-4 align-middle font-medium whitespace-nowrap">
-                            {loan.client_first_name} {loan.client_last_name}
+                            {loan.client_first_name || ""}{" "}
+                            {loan.client_last_name || ""}
                           </td>
                           <td className="p-2 sm:p-4 align-middle whitespace-nowrap">
                             {loan.broker_first_name ? (
                               <Badge variant="outline" className="text-xs">
                                 <User className="h-3 w-3 mr-1" />
-                                {loan.broker_first_name} {loan.broker_last_name}
+                                {loan.broker_first_name}{" "}
+                                {loan.broker_last_name || ""}
                               </Badge>
                             ) : (
                               <span className="text-xs text-muted-foreground">
@@ -418,22 +452,26 @@ const AdminDashboard = () => {
                             )}
                           </td>
                           <td className="p-2 sm:p-4 align-middle whitespace-nowrap">
-                            {formatLoanType(loan.loan_type)}
+                            {loan.loan_type
+                              ? formatLoanType(loan.loan_type)
+                              : "N/A"}
                           </td>
                           <td className="p-2 sm:p-4 align-middle font-semibold whitespace-nowrap">
                             $
                             {new Intl.NumberFormat("en-US").format(
-                              loan.loan_amount,
+                              loan.loan_amount || 0,
                             )}
                           </td>
                           <td className="p-2 sm:p-4 align-middle">
                             <Badge
                               className={cn(
                                 "text-white whitespace-nowrap text-xs",
-                                getStatusColor(loan.status),
+                                getStatusColor(loan.status || "draft"),
                               )}
                             >
-                              {formatLoanType(loan.status)}
+                              {loan.status
+                                ? formatLoanType(loan.status)
+                                : "Draft"}
                             </Badge>
                           </td>
                           <td className="p-2 sm:p-4 align-middle">

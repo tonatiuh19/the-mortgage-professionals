@@ -142,7 +142,7 @@ export function BrokerWizard({
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="first_name">
-                  First Name <span className="text-red-500">*</span>
+                  First Name <span className="text-destructive">*</span>
                 </Label>
                 <Input
                   id="first_name"
@@ -162,19 +162,19 @@ export function BrokerWizard({
 
               <div className="space-y-2">
                 <Label htmlFor="last_name">
-                  Last Name <span className="text-red-500">*</span>
+                  Last Name <span className="text-destructive">*</span>
                 </Label>
                 <Input
                   id="last_name"
                   {...formik.getFieldProps("last_name")}
                   className={
                     formik.touched.last_name && formik.errors.last_name
-                      ? "border-red-500"
+                      ? "border-destructive"
                       : ""
                   }
                 />
                 {formik.touched.last_name && formik.errors.last_name && (
-                  <p className="text-xs text-red-500">
+                  <p className="text-xs text-destructive">
                     {formik.errors.last_name}
                   </p>
                 )}
@@ -190,7 +190,7 @@ export function BrokerWizard({
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="email">
-                  Email <span className="text-red-500">*</span>
+                  Email <span className="text-destructive">*</span>
                 </Label>
                 <Input
                   id="email"
@@ -199,12 +199,14 @@ export function BrokerWizard({
                   disabled={mode === "edit"}
                   className={
                     formik.touched.email && formik.errors.email
-                      ? "border-red-500"
+                      ? "border-destructive"
                       : ""
                   }
                 />
                 {formik.touched.email && formik.errors.email && (
-                  <p className="text-xs text-red-500">{formik.errors.email}</p>
+                  <p className="text-xs text-destructive">
+                    {formik.errors.email}
+                  </p>
                 )}
               </div>
 
@@ -216,7 +218,7 @@ export function BrokerWizard({
                   {...formik.getFieldProps("phone")}
                   className={
                     formik.touched.phone && formik.errors.phone
-                      ? "border-red-500"
+                      ? "border-destructive"
                       : ""
                   }
                 />

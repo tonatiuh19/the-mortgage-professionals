@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   ChevronRight,
   CheckCircle,
@@ -15,9 +15,12 @@ import {
   User,
 } from "lucide-react";
 import Header from "../components/Header";
+import Footer from "../components/layout/Footer";
 
 export default function Index() {
   const [showLeadForm, setShowLeadForm] = useState(false);
+  const [videoError, setVideoError] = useState(false);
+  const [isHeaderTransparent, setIsHeaderTransparent] = useState(true);
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -42,20 +45,72 @@ export default function Index() {
     setShowLeadForm(false);
   };
 
+  // Scroll detection for header transparency
+  useEffect(() => {
+    const handleScroll = () => {
+      const heroHeight = window.innerHeight; // Hero section is min-h-screen
+      const scrollY = window.scrollY;
+
+      // Header becomes solid when scrolling past hero section
+      setIsHeaderTransparent(scrollY < heroHeight - 100); // 100px buffer
+    };
+
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
   return (
     <div className="min-h-screen bg-white">
-      <Header onGetPreApproved={() => setShowLeadForm(true)} />
+      <Header
+        onGetPreApproved={() => setShowLeadForm(true)}
+        transparent={isHeaderTransparent}
+      />
 
       {/* Hero Section */}
       <section className="relative min-h-screen flex items-center justify-center overflow-hidden bg-gradient-to-br from-[#0A2F52] via-[#1a4d7a] to-[#135E99] pt-20">
+        {/* Video Background */}
+        {!videoError && (
+          <video
+            autoPlay
+            loop
+            muted
+            playsInline
+            onError={() => setVideoError(true)}
+            className="absolute inset-0 w-full h-full object-cover z-0"
+            poster="https://images.unsplash.com/photo-1560518883-ce09059eeffa?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=2073&q=80"
+          >
+            <source
+              src="https://disruptinglabs.com/data/themortgageprofessionals/assets/videos/20660793-sd_640_360_30fps.mp4"
+              type="video/mp4"
+            />
+            <source
+              src="hhttps://disruptinglabs.com/data/themortgageprofessionals/assets/videos/20660793-sd_640_360_30fps.mp4"
+              type="video/mp4"
+            />
+          </video>
+        )}
+
+        {/* Fallback Image Background */}
+        {videoError && (
+          <div
+            className="absolute inset-0 w-full h-full bg-cover bg-center z-0"
+            style={{
+              backgroundImage: `url('https://images.unsplash.com/photo-1580587771525-78b9dba3b914?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=2074&q=80')`,
+            }}
+          />
+        )}
+
+        {/* Video/Image Overlay */}
+        <div className="absolute inset-0 bg-gradient-to-br from-[#0A2F52]/50 via-[#1a4d7a]/40 to-[#135E99]/60 z-10" />
+
         {/* Animated Background Elements */}
-        <div className="absolute inset-0 opacity-10">
+        <div className="absolute inset-0 z-20 opacity-10">
           <div className="absolute top-0 left-10 w-96 h-96 bg-white rounded-full mix-blend-screen filter blur-3xl animate-pulse" />
           <div className="absolute bottom-0 right-10 w-96 h-96 bg-white rounded-full mix-blend-screen filter blur-3xl animate-pulse" />
         </div>
 
         {/* Content */}
-        <div className="relative z-10 container mx-auto px-4 py-20 text-center max-w-4xl">
+        <div className="relative z-30 container mx-auto px-4 py-20 text-center max-w-4xl">
           <h1 className="font-display text-5xl md:text-7xl font-bold text-white mb-6 leading-tight animate-fade-in">
             A Smarter Way to Get Your Mortgage
           </h1>
@@ -72,7 +127,7 @@ export default function Index() {
             >
               Get Pre-Approved
             </button>
-            <button className="bg-white/20 hover:bg-white/30 text-white px-8 py-4 rounded-lg font-semibold uppercase tracking-wider text-sm border border-white/40 transition-all duration-300 transform hover:scale-105">
+            <button className="bg-primary hover:bg-primary-dark text-white px-8 py-4 rounded-lg font-semibold uppercase tracking-wider text-sm border border-white/40 transition-all duration-300 transform hover:scale-105">
               Calculate My Payment
             </button>
           </div>
@@ -530,112 +585,7 @@ export default function Index() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="bg-[#0A2F52] text-white py-16 px-4">
-        <div className="container mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-12 mb-12">
-            <div>
-              <h3 className="font-display text-2xl font-bold mb-4">
-                The Mortgage Professionals
-              </h3>
-              <p className="text-blue-200">
-                Making mortgages simple, transparent, and human.
-              </p>
-            </div>
-
-            <div>
-              <h4 className="font-semibold mb-4 text-amber-400">Company</h4>
-              <ul className="space-y-2 text-blue-200">
-                <li>
-                  <a href="#" className="hover:text-white transition">
-                    About Us
-                  </a>
-                </li>
-                <li>
-                  <a href="#" className="hover:text-white transition">
-                    Our Team
-                  </a>
-                </li>
-                <li>
-                  <a href="#" className="hover:text-white transition">
-                    Careers
-                  </a>
-                </li>
-                <li>
-                  <a
-                    href="/broker-login"
-                    className="text-amber-300 hover:text-amber-200 transition flex items-center gap-1 font-medium"
-                  >
-                    <User className="w-4 h-4" />
-                    Broker Login
-                  </a>
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h4 className="font-semibold mb-4 text-amber-400">Resources</h4>
-              <ul className="space-y-2 text-blue-200">
-                <li>
-                  <a href="#" className="hover:text-white transition">
-                    Learning Center
-                  </a>
-                </li>
-                <li>
-                  <a href="#" className="hover:text-white transition">
-                    Mortgage Calculator
-                  </a>
-                </li>
-                <li>
-                  <a href="#" className="hover:text-white transition">
-                    FAQ
-                  </a>
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h4 className="font-semibold mb-4 text-amber-400">Contact</h4>
-              <ul className="space-y-2 text-blue-200">
-                <li>1-800-MORTGAGE</li>
-                <li>hello@mortgagepros.com</li>
-                <li className="text-sm">Available Mon-Fri, 8am-8pm PT</li>
-              </ul>
-            </div>
-          </div>
-
-          <div className="border-t border-blue-400/30 pt-8 flex flex-col md:flex-row justify-between items-center">
-            <p className="text-blue-200 text-sm">
-              © 2024 The Mortgage Professionals. All rights reserved.
-            </p>
-            <div className="flex flex-col md:flex-row gap-4 md:gap-6 mt-4 md:mt-0 items-center">
-              <div className="flex gap-6 text-sm text-blue-200">
-                <a href="#" className="hover:text-white transition">
-                  Privacy Policy
-                </a>
-                <a href="#" className="hover:text-white transition">
-                  Terms of Service
-                </a>
-                <a href="#" className="hover:text-white transition">
-                  Disclosures
-                </a>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-blue-200 text-sm">
-                  Professional Access:
-                </span>
-                <a
-                  href="/broker-login"
-                  className="bg-amber-500/20 hover:bg-amber-500/30 border border-amber-300/30 text-amber-200 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-2"
-                >
-                  <User className="w-4 h-4" />
-                  Broker Portal
-                </a>
-              </div>
-            </div>
-          </div>
-        </div>
-      </footer>
+      <Footer />
 
       {/* Sticky Mobile CTA Button */}
       <div className="fixed bottom-0 left-0 right-0 md:hidden bg-white border-t border-gray-200 p-4 shadow-2xl z-40">

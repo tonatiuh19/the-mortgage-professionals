@@ -128,9 +128,9 @@ const Tasks = () => {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case "completed":
-        return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
+        return <CheckCircle2 className="h-4 w-4 text-primary" />;
       case "in_progress":
-        return <Clock className="h-4 w-4 text-blue-500" />;
+        return <Clock className="h-4 w-4 text-primary" />;
       case "pending":
         return <AlertCircle className="h-4 w-4 text-amber-500" />;
       default:

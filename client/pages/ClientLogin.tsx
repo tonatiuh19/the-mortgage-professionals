@@ -162,12 +162,11 @@ const ClientLogin = () => {
               onClick={() => navigate("/")}
               className="flex items-center gap-3 group transition-transform hover:scale-105"
             >
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-sm shadow-xl">
-                <Crown className="h-7 w-7" />
-              </div>
-              <span className="text-2xl font-bold">
-                The Mortgage Professionals
-              </span>
+              <img
+                src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png"
+                alt="The Mortgage Professionals"
+                className="h-12 w-auto filter brightness-0 invert"
+              />
             </button>
           </div>
 

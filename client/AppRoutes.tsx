@@ -30,7 +30,7 @@ const AppRoutes = () => (
     <Route
       path="/"
       element={
-        <AppLayout showHeader={true} showFooter={true}>
+        <AppLayout showHeader={false} showFooter={true}>
           <Index />
         </AppLayout>
       }

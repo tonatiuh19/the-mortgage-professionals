@@ -103,18 +103,13 @@ export default function BrokerLogin() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
             >
-              <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-sm px-4 py-2 rounded-full mb-8">
-                <Sparkles className="h-4 w-4" />
-                <span className="text-sm font-medium">Broker Portal</span>
+              <div className="mb-6">
+                <img
+                  src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png"
+                  alt="The Mortgage Professionals CRM"
+                  className="h-16 w-auto filter brightness-0 invert"
+                />
               </div>
-
-              <h1 className="text-5xl font-bold mb-6 leading-tight">
-                Welcome to
-                <br />
-                <span className="bg-gradient-to-r from-white to-primary-foreground/80 bg-clip-text text-transparent">
-                  The Mortgage Professionals
-                </span>
-              </h1>
 
               <p className="text-xl text-primary-foreground/90 mb-12 leading-relaxed">
                 Your powerful dashboard to manage clients, track applications,
@@ -181,9 +176,11 @@ export default function BrokerLogin() {
           >
             {/* Logo for mobile */}
             <div className="lg:hidden mb-8 text-center">
-              <h2 className="text-3xl font-bold bg-gradient-to-r from-primary to-primary/80 bg-clip-text text-transparent">
-                Encore Mortgage
-              </h2>
+              <img
+                src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png"
+                alt="The Mortgage Professionals CRM"
+                className="h-12 w-auto mx-auto mb-2"
+              />
               <p className="text-muted-foreground mt-2">Broker Portal</p>
             </div>
 

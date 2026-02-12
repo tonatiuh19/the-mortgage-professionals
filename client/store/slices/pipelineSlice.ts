@@ -9,6 +9,27 @@ import type {
   LoanDetails,
 } from "@shared/api";
 
+interface LoanFilters {
+  status?: string;
+  priority?: string;
+  loanType?: string;
+  dateRange?: string;
+  search?: string;
+  sortBy?: string;
+  sortOrder?: "ASC" | "DESC";
+  page?: number;
+  limit?: number;
+}
+
+interface PaginationInfo {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrev: boolean;
+}
+
 interface LoanDraft {
   formData: {
     client_email: string;
@@ -47,6 +68,8 @@ interface PipelineState {
   isLoadingDetails: boolean;
   error: string | null;
   loanDraft: LoanDraft | null;
+  pagination: PaginationInfo | null;
+  activeFilters: LoanFilters;
 }
 
 const initialState: PipelineState = {
@@ -56,17 +79,36 @@ const initialState: PipelineState = {
   isLoadingDetails: false,
   error: null,
   loanDraft: null,
+  pagination: null,
+  activeFilters: {},
 };
 
 export const fetchLoans = createAsyncThunk(
   "pipeline/fetchLoans",
-  async (_, { getState, rejectWithValue }) => {
+  async (filters: LoanFilters = {}, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
-      const { data } = await axios.get<GetLoansResponse>("/api/loans", {
-        headers: { Authorization: `Bearer ${sessionToken}` },
+
+      // Build query parameters
+      const params = new URLSearchParams();
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== "") {
+          params.append(key, String(value));
+        }
       });
-      return data.loans;
+
+      const { data } = await axios.get<GetLoansResponse>(
+        `/api/loans?${params.toString()}`,
+        {
+          headers: { Authorization: `Bearer ${sessionToken}` },
+        },
+      );
+
+      return {
+        loans: data.loans,
+        pagination: data.pagination,
+        filters,
+      };
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.error || "Failed to fetch loans",
@@ -123,6 +165,13 @@ const pipelineSlice = createSlice({
     clearLoans: (state) => {
       state.loans = [];
       state.error = null;
+      state.pagination = null;
+    },
+    updateFilters: (state, action: PayloadAction<Partial<LoanFilters>>) => {
+      state.activeFilters = { ...state.activeFilters, ...action.payload };
+    },
+    clearFilters: (state) => {
+      state.activeFilters = {};
     },
     saveLoanDraft: (state, action: PayloadAction<LoanDraft>) => {
       state.loanDraft = action.payload;
@@ -142,7 +191,9 @@ const pipelineSlice = createSlice({
       })
       .addCase(fetchLoans.fulfilled, (state, action) => {
         state.isLoading = false;
-        state.loans = action.payload;
+        state.loans = action.payload.loans;
+        state.pagination = action.payload.pagination;
+        state.activeFilters = action.payload.filters;
       })
       .addCase(fetchLoans.rejected, (state, action) => {
         state.isLoading = false;
@@ -174,6 +225,12 @@ const pipelineSlice = createSlice({
   },
 });
 
-export const { clearLoans, saveLoanDraft, clearLoanDraft, clearSelectedLoan } =
-  pipelineSlice.actions;
+export const {
+  clearLoans,
+  updateFilters,
+  clearFilters,
+  saveLoanDraft,
+  clearLoanDraft,
+  clearSelectedLoan,
+} = pipelineSlice.actions;
 export default pipelineSlice.reducer;

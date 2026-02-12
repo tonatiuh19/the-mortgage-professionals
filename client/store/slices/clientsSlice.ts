@@ -32,6 +32,23 @@ export const fetchClients = createAsyncThunk(
   },
 );
 
+export const deleteClient = createAsyncThunk(
+  "clients/deleteClient",
+  async (clientId: number, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.delete(`/api/clients/${clientId}`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      return { clientId, message: data.message };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to delete client",
+      );
+    }
+  },
+);
+
 const clientsSlice = createSlice({
   name: "clients",
   initialState,
@@ -54,6 +71,11 @@ const clientsSlice = createSlice({
       .addCase(fetchClients.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.payload as string;
+      })
+      .addCase(deleteClient.fulfilled, (state, action) => {
+        state.clients = state.clients.filter(
+          (client) => client.id !== action.payload.clientId,
+        );
       });
   },
 });

@@ -26,6 +26,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -44,6 +54,7 @@ import {
   createTask,
   updateTask,
   createTaskFormFields,
+  fetchTaskFormFields,
   saveTaskTemplateDraft,
   clearTaskTemplateDraft,
 } from "@/store/slices/tasksSlice";
@@ -117,6 +128,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
 }) => {
   const dispatch = useAppDispatch();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showUpdateWarning, setShowUpdateWarning] = useState(false);
   const [activeTab, setActiveTab] = useState("basic");
   const [formFields, setFormFields] = useState<FormField[]>([]);
   const [editingFieldIndex, setEditingFieldIndex] = useState<number | null>(
@@ -147,85 +159,119 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
     validationSchema,
     enableReinitialize: true,
     onSubmit: async (values) => {
-      try {
-        setIsSubmitting(true);
-        console.log("📝 TaskWizard: Starting task submission...");
-        console.log("📝 TaskWizard: Form values:", values);
-        console.log("📝 TaskWizard: Form fields to create:", formFields);
-        console.log("📝 TaskWizard: Is edit mode?", isEditMode);
-
-        let taskId: number;
-
-        if (isEditMode) {
-          console.log("✏️ TaskWizard: Updating existing task ID:", editTask.id);
-          const result = await dispatch(
-            updateTask({ id: editTask.id, ...values }),
-          ).unwrap();
-          taskId = result.id;
-          console.log("✅ TaskWizard: Task updated successfully, ID:", taskId);
-        } else {
-          console.log("➕ TaskWizard: Creating new task...");
-          const result = await dispatch(createTask(values)).unwrap();
-          taskId = result.id;
-          console.log("✅ TaskWizard: Task created successfully, ID:", taskId);
-        }
-
-        // Create form fields if custom form is enabled and fields exist
-        if (values.has_custom_form && formFields.length > 0) {
-          console.log(
-            `📋 TaskWizard: Creating ${formFields.length} form fields for task ${taskId}...`,
-          );
-          console.log("📋 TaskWizard: Form fields payload:", {
-            taskId,
-            form_fields: formFields,
-          });
-
-          const fieldsResult = await dispatch(
-            createTaskFormFields({
-              taskId,
-              form_fields: formFields,
-            }),
-          ).unwrap();
-
-          console.log(
-            "✅ TaskWizard: Form fields created successfully:",
-            fieldsResult,
-          );
-        } else {
-          console.log("⚠️ TaskWizard: Skipping form fields creation:", {
-            has_custom_form: values.has_custom_form,
-            formFieldsCount: formFields.length,
-          });
-        }
-
-        // Clear draft since task was successfully created
-        console.log("🧹 TaskWizard: Clearing draft and closing wizard...");
-        dispatch(clearTaskTemplateDraft());
-
-        formik.resetForm();
-        setFormFields([]);
-        onTaskCreated?.();
-        onClose();
-        console.log(
-          "✅ TaskWizard: Task creation flow completed successfully!",
-        );
-      } catch (error) {
-        console.error(
-          `❌ TaskWizard: Failed to ${isEditMode ? "update" : "create"} task:`,
-          error,
-        );
-        console.error("❌ TaskWizard: Error details:", {
-          message: error instanceof Error ? error.message : "Unknown error",
-          stack: error instanceof Error ? error.stack : undefined,
-        });
-      } finally {
-        setIsSubmitting(false);
+      // Show warning modal for updates that affect forms/documents
+      if (
+        isEditMode &&
+        (values.requires_documents ||
+          values.has_custom_form ||
+          formFields.length > 0)
+      ) {
+        setShowUpdateWarning(true);
+        return;
       }
+
+      // Proceed with submission (for new tasks or updates without forms)
+      await performTaskSubmission(values);
     },
   });
 
+  const performTaskSubmission = async (values: any) => {
+    try {
+      setIsSubmitting(true);
+      console.log("📝 TaskWizard: Starting task submission...");
+      console.log("📝 TaskWizard: Form values:", values);
+      console.log("📝 TaskWizard: Form fields to create:", formFields);
+      console.log("📝 TaskWizard: Is edit mode?", isEditMode);
+
+      let taskId: number;
+
+      if (isEditMode) {
+        console.log("✏️ TaskWizard: Updating existing task ID:", editTask.id);
+        console.log("✏️ TaskWizard: Update payload:", {
+          id: editTask.id,
+          ...values,
+        });
+        const result = await dispatch(
+          updateTask({ id: editTask.id, ...values }),
+        ).unwrap();
+        taskId = result.id;
+        console.log("✅ TaskWizard: Task updated successfully, ID:", taskId);
+        console.log("✅ TaskWizard: Updated task data:", result);
+      } else {
+        console.log("➕ TaskWizard: Creating new task...");
+        const result = await dispatch(createTask(values)).unwrap();
+        taskId = result.id;
+        console.log("✅ TaskWizard: Task created successfully, ID:", taskId);
+      }
+
+      // Create/update form fields if custom form is enabled OR requires documents AND fields exist
+      // Note: API auto-enables has_custom_form when requires_documents is true
+      const shouldHandleFormFields =
+        (values.has_custom_form || values.requires_documents) &&
+        formFields.length > 0;
+
+      if (shouldHandleFormFields) {
+        console.log(
+          `📋 TaskWizard: ${isEditMode ? "Updating" : "Creating"} ${formFields.length} form fields for task ${taskId}...`,
+        );
+        console.log("📋 TaskWizard: Form fields payload:", {
+          taskId,
+          form_fields: formFields,
+        });
+        console.log("📋 TaskWizard: Should handle form fields because:", {
+          has_custom_form: values.has_custom_form,
+          requires_documents: values.requires_documents,
+          formFieldsCount: formFields.length,
+        });
+
+        const fieldsResult = await dispatch(
+          createTaskFormFields({
+            taskId,
+            form_fields: formFields,
+          }),
+        ).unwrap();
+
+        console.log(
+          `✅ TaskWizard: Form fields ${isEditMode ? "updated" : "created"} successfully:`,
+          fieldsResult,
+        );
+      } else {
+        console.log("⚠️ TaskWizard: Skipping form fields creation:", {
+          has_custom_form: values.has_custom_form,
+          requires_documents: values.requires_documents,
+          formFieldsCount: formFields.length,
+          shouldHandle: shouldHandleFormFields,
+        });
+      }
+
+      // Clear draft since task was successfully created
+      console.log("🧹 TaskWizard: Clearing draft and closing wizard...");
+      dispatch(clearTaskTemplateDraft());
+
+      formik.resetForm();
+      setFormFields([]);
+      onTaskCreated?.();
+      onClose();
+      console.log(
+        `✅ TaskWizard: Task ${isEditMode ? "update" : "creation"} flow completed successfully!`,
+      );
+    } catch (error) {
+      console.error(
+        `❌ TaskWizard: Failed to ${isEditMode ? "update" : "create"} task:`,
+        error,
+      );
+      console.error("❌ TaskWizard: Error details:", {
+        message: error instanceof Error ? error.message : "Unknown error",
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    } finally {
+      setIsSubmitting(false);
+      setShowUpdateWarning(false);
+    }
+  };
+
   useEffect(() => {
-    if (editTask && open) {
+    if (editTask) {
       formik.setValues({
         title: editTask.title || "",
         description: editTask.description || "",
@@ -237,14 +283,19 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
         document_instructions: editTask.document_instructions || "",
         has_custom_form: editTask.has_custom_form ?? false,
       });
-      if (editTask.form_fields) {
-        setFormFields(
-          editTask.form_fields.map((field, index) => ({
-            ...field,
-            order_index: index,
-          })),
-        );
-      }
+
+      // Fetch form fields for editing
+      dispatch(fetchTaskFormFields(editTask.id)).then((result) => {
+        if (fetchTaskFormFields.fulfilled.match(result)) {
+          setFormFields(
+            result.payload.fields.map((field: any, index: number) => ({
+              ...field,
+              order_index: index,
+            })),
+          );
+        }
+      });
+
       // Mark steps as completed for edit mode
       setCompletedSteps({
         basic: true,
@@ -467,13 +518,13 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
   const getPriorityColor = (priority: string) => {
     switch (priority) {
       case "high":
-        return "bg-red-500/10 text-red-500 border-red-500/20";
+        return "bg-destructive/10 text-destructive border-destructive/20";
       case "medium":
         return "bg-amber-500/10 text-amber-500 border-amber-500/20";
       case "low":
-        return "bg-blue-500/10 text-blue-500 border-blue-500/20";
+        return "bg-primary/10 text-primary border-primary/20";
       default:
-        return "bg-gray-500/10 text-gray-500 border-gray-500/20";
+        return "bg-muted text-muted-foreground border-border";
     }
   };
 
@@ -482,11 +533,11 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-2xl font-bold flex items-center gap-2">
-            <div className="rounded-full bg-emerald-500/10 p-2">
+            <div className="rounded-full bg-primary/10 p-2">
               {isEditMode ? (
-                <Edit className="h-5 w-5 text-emerald-500" />
+                <Edit className="h-5 w-5 text-primary" />
               ) : (
-                <Plus className="h-5 w-5 text-emerald-500" />
+                <Plus className="h-5 w-5 text-primary" />
               )}
             </div>
             {isEditMode ? "Edit Task Template" : "Create Task Template"}
@@ -500,16 +551,16 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
 
         {/* Draft Detection Prompt */}
         {showDraftPrompt && taskTemplateDraft && (
-          <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-4 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="bg-primary/5 dark:bg-primary/10 border border-primary/20 dark:border-primary/30 rounded-lg p-4 animate-in fade-in slide-in-from-top-2 duration-300">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-1">
-                  <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                  <h4 className="font-semibold text-blue-900 dark:text-blue-100">
+                  <FileText className="h-5 w-5 text-primary dark:text-primary" />
+                  <h4 className="font-semibold text-primary dark:text-primary">
                     Draft Available
                   </h4>
                 </div>
-                <p className="text-sm text-blue-700 dark:text-blue-300">
+                <p className="text-sm text-primary/70 dark:text-primary/80">
                   You have a saved draft from{" "}
                   {new Date(taskTemplateDraft.savedAt).toLocaleDateString()}{" "}
                   {new Date(taskTemplateDraft.savedAt).toLocaleTimeString([], {
@@ -525,7 +576,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                   size="sm"
                   onClick={resumeDraft}
                   variant="default"
-                  className="bg-blue-600 hover:bg-blue-700"
+                  className="bg-primary hover:bg-primary/90"
                 >
                   Resume
                 </Button>
@@ -554,7 +605,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
               <TabsTrigger value="basic" className="relative">
                 Basic Info
                 {completedSteps.basic && (
-                  <CheckCircle2 className="h-4 w-4 ml-2 text-emerald-500" />
+                  <CheckCircle2 className="h-4 w-4 ml-2 text-primary" />
                 )}
               </TabsTrigger>
               <TabsTrigger
@@ -565,7 +616,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                 <File className="h-4 w-4 mr-2" />
                 Documents
                 {completedSteps.documents && (
-                  <CheckCircle2 className="h-4 w-4 ml-2 text-emerald-500" />
+                  <CheckCircle2 className="h-4 w-4 ml-2 text-primary" />
                 )}
               </TabsTrigger>
               <TabsTrigger
@@ -576,7 +627,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                 <FileText className="h-4 w-4 mr-2" />
                 Custom Form
                 {completedSteps.customForm && (
-                  <CheckCircle2 className="h-4 w-4 ml-2 text-emerald-500" />
+                  <CheckCircle2 className="h-4 w-4 ml-2 text-primary" />
                 )}
               </TabsTrigger>
               <TabsTrigger
@@ -971,12 +1022,12 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                       )}
                     </div>
 
-                    <Card className="bg-blue-50/50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800">
+                    <Card className="bg-primary/5 dark:bg-primary/10 border-primary/20 dark:border-primary/30">
                       <CardContent className="pt-4 space-y-2">
                         <div className="flex items-start gap-2">
-                          <CheckCircle2 className="h-4 w-4 text-blue-600 dark:text-blue-400 mt-0.5" />
+                          <CheckCircle2 className="h-4 w-4 text-primary dark:text-primary mt-0.5" />
                           <div>
-                            <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                            <p className="text-sm font-medium text-primary dark:text-primary">
                               Each document field = one specific upload
                             </p>
                             <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
@@ -1218,7 +1269,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
             {/* Summary/Review Tab */}
             <TabsContent value="summary" className="space-y-6 mt-4">
               <div className="space-y-6">
-                <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-500">
+                <div className="flex items-center gap-2 text-primary dark:text-primary">
                   <CheckCircle2 className="h-5 w-5" />
                   <h3 className="text-lg font-semibold">
                     Review Your Task Template
@@ -1314,7 +1365,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                   <CardContent>
                     {formik.values.requires_documents ? (
                       <div className="space-y-3">
-                        <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-500">
+                        <div className="flex items-center gap-2 text-primary dark:text-primary">
                           <CheckCircle2 className="h-4 w-4" />
                           <span className="text-sm font-medium">
                             Documents required
@@ -1402,7 +1453,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                         f.field_type !== "file_image",
                     ).length > 0 ? (
                       <div className="space-y-3">
-                        <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-500">
+                        <div className="flex items-center gap-2 text-primary dark:text-primary">
                           <CheckCircle2 className="h-4 w-4" />
                           <span className="text-sm font-medium">
                             {
@@ -1611,6 +1662,56 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
           </div>
         </form>
       </DialogContent>
+
+      {/* Update Warning Modal */}
+      <AlertDialog open={showUpdateWarning} onOpenChange={setShowUpdateWarning}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-amber-500" />
+              Update Task Template Warning
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              You are about to update a task template that contains form fields
+              or document requirements.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="font-medium text-foreground">
+              ⚠️ This will affect existing client forms that are linked to
+              active loans:
+            </div>
+            <ul className="list-disc list-inside space-y-1 text-sm ml-4">
+              <li>Form field labels and settings will be updated</li>
+              <li>New form fields will be added to existing tasks</li>
+              <li>Client data will be preserved safely</li>
+              <li>Changes are logged for audit purposes</li>
+            </ul>
+            <div className="text-sm text-muted-foreground">
+              <strong>Note:</strong> Clients who have already submitted
+              responses will see the updated form structure on their next visit.
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                setShowUpdateWarning(false);
+                setIsSubmitting(false);
+              }}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                await performTaskSubmission(formik.values);
+              }}
+              className="bg-amber-500 hover:bg-amber-600"
+            >
+              Proceed with Update
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 };

@@ -197,7 +197,7 @@ const Documents = () => {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">PDFs</CardTitle>
-              <FileText className="h-4 w-4 text-red-500" />
+              <FileText className="h-4 w-4 text-destructive" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
@@ -211,7 +211,7 @@ const Documents = () => {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Images</CardTitle>
-              <Image className="h-4 w-4 text-blue-500" />
+              <Image className="h-4 w-4 text-primary" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
@@ -352,9 +352,9 @@ const Documents = () => {
                       <TableRow key={doc.id}>
                         <TableCell>
                           {doc.document_type === "pdf" ? (
-                            <FileText className="h-5 w-5 text-red-500" />
+                            <FileText className="h-5 w-5 text-destructive" />
                           ) : (
-                            <Image className="h-5 w-5 text-blue-500" />
+                            <Image className="h-5 w-5 text-primary" />
                           )}
                         </TableCell>
                         <TableCell className="max-w-xs">

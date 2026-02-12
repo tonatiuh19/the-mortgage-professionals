@@ -171,15 +171,11 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
         <div className="flex h-16 items-center justify-between px-4 border-b">
           {!sidebarCollapsed ? (
             <>
-              <div className="flex items-center gap-2.5">
-                <Building2 className="h-6 w-6 text-primary" />
-                <div className="flex flex-col">
-                  <span className="text-sm font-bold leading-tight">TMP</span>
-                  <span className="text-xs text-muted-foreground leading-tight">
-                    Mortgage
-                  </span>
-                </div>
-              </div>
+              <img
+                src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png"
+                alt="The Mortgage Professionals CRM"
+                className="h-10 w-auto"
+              />
               <Button
                 variant="ghost"
                 size="icon"
@@ -190,15 +186,13 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
               </Button>
             </>
           ) : (
-            <div className="flex items-center justify-between w-full">
-              <Button
-                variant="ghost"
-                size="icon"
+            <div className="flex items-center justify-center w-full">
+              <img
+                src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo_crm.png"
+                alt="The Mortgage Professionals CRM"
+                className="h-6 w-auto cursor-pointer"
                 onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-                className="h-8 w-8 hover:bg-primary/10 mx-auto"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
+              />
             </div>
           )}
         </div>

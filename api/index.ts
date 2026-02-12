@@ -33,8 +33,7 @@ const JWT_SECRET =
   })();
 
 // Tenant Configuration
-// The Mortgage Professionals tenant ID (see database/schema.sql for reference)
-const THE_MORTGAGE_PROFESSIONALS_TENANT_ID = 2;
+const MORTGAGE_TENANT_ID = 2;
 
 // Database connection pool
 const pool = mysql.createPool({
@@ -47,6 +46,64 @@ const pool = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
 });
+
+// =====================================================
+// DATA INTEGRITY HELPERS
+// =====================================================
+
+/**
+ * Check if a parent entity can be safely deleted without breaking referential integrity
+ * @param parentTable - The table containing the parent record
+ * @param parentId - The ID of the parent record to check
+ * @param childChecks - Array of child table checks
+ * @returns Object with canDelete flag and violation details
+ */
+async function checkDeletionSafety(
+  parentTable: string,
+  parentId: number,
+  childChecks: Array<{
+    table: string;
+    foreignKey: string;
+    tenantFilter?: boolean;
+    friendlyName: string;
+  }>,
+): Promise<{
+  canDelete: boolean;
+  violations: Array<{
+    table: string;
+    count: number;
+    friendlyName: string;
+    sample?: string[];
+  }>;
+}> {
+  const violations = [];
+
+  for (const check of childChecks) {
+    const tenantCondition = check.tenantFilter ? ` AND tenant_id = ?` : "";
+    const params = check.tenantFilter
+      ? [parentId, MORTGAGE_TENANT_ID]
+      : [parentId];
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) as count FROM ${check.table} WHERE ${check.foreignKey} = ?${tenantCondition}`,
+      params,
+    );
+
+    const count = rows[0]?.count || 0;
+    if (count > 0) {
+      violations.push({
+        table: check.table,
+        count,
+        friendlyName: check.friendlyName,
+      });
+    }
+  }
+
+  return {
+    canDelete: violations.length === 0,
+    violations,
+  };
+}
 
 // =====================================================
 // EMAIL HELPER
@@ -427,7 +484,7 @@ const verifyClientSession = async (
       // Get client details
       const [clients] = await pool.query<any[]>(
         "SELECT * FROM clients WHERE id = ? AND status = 'active' AND tenant_id = ?",
-        [decoded.clientId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+        [decoded.clientId, MORTGAGE_TENANT_ID],
       );
 
       if (clients.length === 0) {
@@ -490,7 +547,7 @@ const verifyBrokerSession = async (
       // Get broker details
       const [brokers] = await pool.query<any[]>(
         "SELECT * FROM brokers WHERE id = ? AND status = 'active' AND tenant_id = ?",
-        [decoded.brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+        [decoded.brokerId, MORTGAGE_TENANT_ID],
       );
 
       if (brokers.length === 0) {
@@ -566,7 +623,7 @@ async function createAuditLog({
         ip_address, user_agent, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+        MORTGAGE_TENANT_ID,
         userId,
         brokerId,
         actorType,
@@ -652,7 +709,7 @@ const handleAdminSendCode: RequestHandler = async (req, res) => {
     // Check if broker exists and is active
     const [brokers] = await pool.query<any[]>(
       "SELECT * FROM brokers WHERE email = ? AND status = 'active' AND tenant_id = ?",
-      [normalizedEmail, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [normalizedEmail, MORTGAGE_TENANT_ID],
     );
 
     if (brokers.length === 0) {
@@ -732,7 +789,7 @@ const handleAdminVerifyCode: RequestHandler = async (req, res) => {
     // Check if broker exists
     const [brokers] = await pool.query<any[]>(
       "SELECT * FROM brokers WHERE email = ? AND status = 'active' AND tenant_id = ?",
-      [normalizedEmail, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [normalizedEmail, MORTGAGE_TENANT_ID],
     );
 
     if (brokers.length === 0) {
@@ -800,7 +857,7 @@ const handleAdminVerifyCode: RequestHandler = async (req, res) => {
     // Update last login
     await pool.query(
       "UPDATE brokers SET last_login = NOW() WHERE id = ? AND tenant_id = ?",
-      [broker.id, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [broker.id, MORTGAGE_TENANT_ID],
     );
 
     res.json({
@@ -856,7 +913,7 @@ const handleAdminValidateSession: RequestHandler = async (req, res) => {
       // Get broker details
       const [brokers] = await pool.query<any[]>(
         "SELECT * FROM brokers WHERE id = ? AND status = 'active' AND tenant_id = ?",
-        [decoded.brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+        [decoded.brokerId, MORTGAGE_TENANT_ID],
       );
 
       if (brokers.length === 0) {
@@ -926,7 +983,7 @@ const handleClientSendCode: RequestHandler = async (req, res) => {
     // Check if client exists
     const [clients] = await pool.query<any[]>(
       "SELECT * FROM clients WHERE email = ? AND status = 'active' AND tenant_id = ?",
-      [normalizedEmail, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [normalizedEmail, MORTGAGE_TENANT_ID],
     );
 
     if (clients.length === 0) {
@@ -995,7 +1052,7 @@ const handleClientVerifyCode: RequestHandler = async (req, res) => {
     // Check if client exists
     const [clients] = await pool.query<any[]>(
       "SELECT * FROM clients WHERE email = ? AND status = 'active' AND tenant_id = ?",
-      [normalizedEmail, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [normalizedEmail, MORTGAGE_TENANT_ID],
     );
 
     if (clients.length === 0) {
@@ -1062,7 +1119,7 @@ const handleClientVerifyCode: RequestHandler = async (req, res) => {
     // Update last login
     await pool.query(
       "UPDATE clients SET last_login = NOW() WHERE id = ? AND tenant_id = ?",
-      [client.id, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [client.id, MORTGAGE_TENANT_ID],
     );
 
     res.json({
@@ -1117,7 +1174,7 @@ const handleClientValidateSession: RequestHandler = async (req, res) => {
       // Get client details
       const [clients] = await pool.query<any[]>(
         "SELECT * FROM clients WHERE id = ? AND status = 'active' AND tenant_id = ?",
-        [decoded.clientId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+        [decoded.clientId, MORTGAGE_TENANT_ID],
       );
 
       if (clients.length === 0) {
@@ -1266,7 +1323,7 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
     // Check if client exists
     let [existingClients] = await connection.query<any[]>(
       "SELECT id FROM clients WHERE email = ? AND tenant_id = ?",
-      [client_email, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [client_email, MORTGAGE_TENANT_ID],
     );
 
     let clientId: number;
@@ -1282,7 +1339,7 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
           client_phone,
           brokerId,
           clientId,
-          THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+          MORTGAGE_TENANT_ID,
         ],
       );
     } else {
@@ -1291,7 +1348,7 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
         `INSERT INTO clients (tenant_id, email, first_name, last_name, phone, status, email_verified, assigned_broker_id, source) 
          VALUES (?, ?, ?, ?, ?, 'active', 0, ?, 'broker_created')`,
         [
-          THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+          MORTGAGE_TENANT_ID,
           client_email,
           client_first_name,
           client_last_name,
@@ -1315,7 +1372,7 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', 1, 8, ?, ?, NOW())`,
 
       [
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+        MORTGAGE_TENANT_ID,
         applicationNumber,
         clientId,
         brokerId,
@@ -1354,7 +1411,7 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
           assigned_to_user_id, created_by_broker_id, due_date, template_id
         ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
         [
-          THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+          MORTGAGE_TENANT_ID,
           applicationId,
           task.title,
           task.description,
@@ -1380,7 +1437,7 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
       `INSERT INTO notifications (tenant_id, user_id, title, message, notification_type, action_url)
        VALUES (?, ?, ?, ?, 'info', '/portal')`,
       [
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+        MORTGAGE_TENANT_ID,
         clientId,
         "New Loan Application Created",
         `Your loan application ${applicationNumber} has been created. Please complete the assigned tasks.`,
@@ -1429,25 +1486,189 @@ const handleGetLoans: RequestHandler = async (req, res) => {
     const brokerId = (req as any).brokerId;
     const brokerRole = (req as any).brokerRole;
 
-    // Admins see all loans for their tenant, regular brokers see only their own
-    const whereClause =
+    // Extract query parameters for filtering
+    const {
+      status,
+      priority,
+      loanType,
+      dateRange,
+      search,
+      sortBy = "created_at",
+      sortOrder = "DESC",
+      page = "1",
+      limit = "100",
+    } = req.query;
+
+    // Build base WHERE clause for authorization
+    let whereClause =
       brokerRole === "admin"
         ? "WHERE la.tenant_id = ?"
         : "WHERE la.broker_user_id = ? AND la.tenant_id = ?";
-    const queryParams =
-      brokerRole === "admin"
-        ? [
-            THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
-            THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
-            THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
-          ]
-        : [
-            brokerId,
-            THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
-            THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
-            THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
-          ];
 
+    const baseParams =
+      brokerRole === "admin"
+        ? [MORTGAGE_TENANT_ID]
+        : [brokerId, MORTGAGE_TENANT_ID];
+
+    const subqueryParams = [
+      MORTGAGE_TENANT_ID, // For first subquery (next_task)
+      MORTGAGE_TENANT_ID, // For second subquery (completed_tasks)
+      MORTGAGE_TENANT_ID, // For third subquery (total_tasks)
+    ];
+
+    const queryParams = [...baseParams];
+
+    // Add status filter
+    if (status && status !== "all") {
+      whereClause += ` AND la.status = ?`;
+      queryParams.push(status as string);
+    }
+
+    // Add priority filter
+    if (priority && priority !== "all") {
+      whereClause += ` AND la.priority = ?`;
+      queryParams.push(priority as string);
+    }
+
+    // Add loan type filter
+    if (loanType && loanType !== "all") {
+      whereClause += ` AND la.loan_type = ?`;
+      queryParams.push(loanType as string);
+    }
+
+    // Add date range filter
+    if (dateRange && dateRange !== "all") {
+      const now = new Date();
+      let startDate: Date;
+
+      switch (dateRange) {
+        case "today":
+          startDate = new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate(),
+          );
+          break;
+        case "week":
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case "month":
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+        case "quarter":
+          const quarter = Math.floor(now.getMonth() / 3);
+          startDate = new Date(now.getFullYear(), quarter * 3, 1);
+          break;
+        default:
+          startDate = new Date(0);
+      }
+
+      if (dateRange !== "all") {
+        whereClause += ` AND la.created_at >= ?`;
+        queryParams.push(
+          startDate.toISOString().slice(0, 19).replace("T", " "),
+        );
+      }
+    }
+
+    // Add search filter
+    if (search) {
+      whereClause += ` AND (
+        c.first_name LIKE ? OR 
+        c.last_name LIKE ? OR 
+        la.application_number LIKE ? OR
+        CONCAT(c.first_name, ' ', c.last_name) LIKE ?
+      )`;
+      const searchTerm = `%${search}%`;
+      queryParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
+    }
+
+    // Build ORDER BY clause
+    const validSortColumns = [
+      "created_at",
+      "loan_amount",
+      "status",
+      "priority",
+      "estimated_close_date",
+    ];
+    const sortColumn = validSortColumns.includes(sortBy as string)
+      ? sortBy
+      : "created_at";
+    const order =
+      (sortOrder as string).toUpperCase() === "ASC" ? "ASC" : "DESC";
+    const orderClause = `ORDER BY la.${sortColumn} ${order}`;
+
+    // Calculate pagination
+    const pageNum = Math.max(1, parseInt(page as string));
+    const limitNum = Math.min(Math.max(1, parseInt(limit as string)), 100);
+    const offset = (pageNum - 1) * limitNum;
+
+    // Get total count for pagination
+    const countQueryParams =
+      brokerRole === "admin"
+        ? [MORTGAGE_TENANT_ID]
+        : [brokerId, MORTGAGE_TENANT_ID];
+
+    // Add filter parameters to count query
+    if (status && status !== "all") {
+      countQueryParams.push(status as string);
+    }
+    if (priority && priority !== "all") {
+      countQueryParams.push(priority as string);
+    }
+    if (loanType && loanType !== "all") {
+      countQueryParams.push(loanType as string);
+    }
+    if (dateRange && dateRange !== "all") {
+      const now = new Date();
+      let startDate: Date;
+
+      switch (dateRange) {
+        case "today":
+          startDate = new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate(),
+          );
+          break;
+        case "week":
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case "month":
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+        case "quarter":
+          const quarter = Math.floor(now.getMonth() / 3);
+          startDate = new Date(now.getFullYear(), quarter * 3, 1);
+          break;
+        default:
+          startDate = new Date(0);
+      }
+
+      if (dateRange !== "all") {
+        countQueryParams.push(
+          startDate.toISOString().slice(0, 19).replace("T", " "),
+        );
+      }
+    }
+    if (search) {
+      const searchTerm = `%${search}%`;
+      countQueryParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
+    }
+
+    const [countResult] = await pool.query<any[]>(
+      `SELECT COUNT(*) as total
+       FROM loan_applications la
+       INNER JOIN clients c ON la.client_user_id = c.id
+       LEFT JOIN brokers b ON la.broker_user_id = b.id
+       ${whereClause}`,
+      countQueryParams,
+    );
+
+    const totalLoans = countResult[0].total;
+    const totalPages = Math.ceil(totalLoans / limitNum);
+
+    // Get loans with all enhancements
     const [loans] = await pool.query<any[]>(
       `SELECT 
         la.id,
@@ -1457,16 +1678,21 @@ const handleGetLoans: RequestHandler = async (req, res) => {
         la.status,
         la.priority,
         la.estimated_close_date,
+        la.property_address,
         la.created_at,
+        la.updated_at,
         c.first_name as client_first_name,
         c.last_name as client_last_name,
         c.email as client_email,
+        c.phone as client_phone,
         b.first_name as broker_first_name,
         b.last_name as broker_last_name,
+        b.email as broker_email,
         (SELECT title 
          FROM tasks 
          WHERE application_id = la.id 
            AND status IN ('pending', 'in_progress')
+           AND tenant_id = ?
          ORDER BY order_index ASC, due_date ASC 
          LIMIT 1) as next_task,
         (SELECT COUNT(*) 
@@ -1477,18 +1703,37 @@ const handleGetLoans: RequestHandler = async (req, res) => {
         (SELECT COUNT(*) 
          FROM tasks 
          WHERE application_id = la.id
-           AND tenant_id = ?) as total_tasks
+           AND tenant_id = ?) as total_tasks,
+        (SELECT COUNT(*) 
+         FROM documents d
+         WHERE d.application_id = la.id) as document_count
       FROM loan_applications la
       INNER JOIN clients c ON la.client_user_id = c.id
       LEFT JOIN brokers b ON la.broker_user_id = b.id
       ${whereClause}
-      ORDER BY la.created_at DESC`,
-      queryParams,
+      ${orderClause}
+      LIMIT ? OFFSET ?`,
+      [...queryParams, ...subqueryParams, limitNum, offset],
     );
 
     res.json({
       success: true,
       loans,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total: totalLoans,
+        totalPages,
+        hasNext: pageNum < totalPages,
+        hasPrev: pageNum > 1,
+      },
+      filters: {
+        status,
+        priority,
+        loanType,
+        dateRange,
+        search,
+      },
     });
   } catch (error) {
     console.error("Error fetching loans:", error);
@@ -1516,8 +1761,8 @@ const handleGetLoanDetails: RequestHandler = async (req, res) => {
         : "WHERE la.id = ? AND la.broker_user_id = ? AND la.tenant_id = ?";
     const queryParams =
       brokerRole === "admin"
-        ? [loanId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID]
-        : [loanId, brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID];
+        ? [loanId, MORTGAGE_TENANT_ID]
+        : [loanId, brokerId, MORTGAGE_TENANT_ID];
 
     // Get loan details with client and broker info
     const [loans] = (await pool.query(
@@ -1604,7 +1849,7 @@ const handleGetDashboardStats: RequestHandler = async (req, res) => {
       FROM loan_applications
       WHERE broker_user_id = ? AND tenant_id = ?
         AND status NOT IN ('denied', 'cancelled', 'closed')`,
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [brokerId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     // Get average closing days (from submitted to closed)
@@ -1617,7 +1862,7 @@ const handleGetDashboardStats: RequestHandler = async (req, res) => {
         AND actual_close_date IS NOT NULL
         AND submitted_at IS NOT NULL
         AND submitted_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)`,
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [brokerId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     // Get closure rate (approved/closed vs denied/cancelled)
@@ -1628,7 +1873,7 @@ const handleGetDashboardStats: RequestHandler = async (req, res) => {
       FROM loan_applications
       WHERE broker_user_id = ? AND tenant_id = ?
         AND status IN ('approved', 'closed', 'denied', 'cancelled')`,
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [brokerId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     const successful = closureRateStats[0]?.successful || 0;
@@ -1647,7 +1892,7 @@ const handleGetDashboardStats: RequestHandler = async (req, res) => {
         AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
       GROUP BY DATE(created_at)
       ORDER BY DATE(created_at) ASC`,
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [brokerId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     // Get status breakdown
@@ -1660,7 +1905,7 @@ const handleGetDashboardStats: RequestHandler = async (req, res) => {
         AND status NOT IN ('denied', 'cancelled')
       GROUP BY status
       ORDER BY count DESC`,
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [brokerId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     const stats = {
@@ -1720,7 +1965,7 @@ const handleGetClients: RequestHandler = async (req, res) => {
       WHERE c.assigned_broker_id = ? AND c.tenant_id = ?
       GROUP BY c.id
       ORDER BY c.created_at DESC`,
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [brokerId, MORTGAGE_TENANT_ID],
     );
 
     res.json({
@@ -1732,6 +1977,96 @@ const handleGetClients: RequestHandler = async (req, res) => {
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : "Failed to fetch clients",
+    });
+  }
+};
+
+/**
+ * Delete client with comprehensive safety guards
+ */
+const handleDeleteClient: RequestHandler = async (req, res) => {
+  try {
+    const { clientId } = req.params;
+    const brokerId = (req as any).brokerId;
+
+    // Check if client exists and belongs to this broker
+    const [clientRows] = await pool.query<RowDataPacket[]>(
+      `SELECT c.*, COUNT(DISTINCT la.id) as total_applications
+       FROM clients c 
+       LEFT JOIN loan_applications la ON c.id = la.client_user_id
+       WHERE c.id = ? AND c.assigned_broker_id = ? AND c.tenant_id = ?
+       GROUP BY c.id`,
+      [clientId, brokerId, MORTGAGE_TENANT_ID],
+    );
+
+    if (!Array.isArray(clientRows) || clientRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "Client not found or not accessible",
+      });
+    }
+
+    const client = clientRows[0];
+
+    // Use the safety check utility
+    const safetyCheck = await checkDeletionSafety(
+      "clients",
+      parseInt(clientId.toString()),
+      [
+        {
+          table: "loan_applications",
+          foreignKey: "client_user_id",
+          tenantFilter: true,
+          friendlyName: "loan applications",
+        },
+        {
+          table: "tasks",
+          foreignKey: "assigned_to_user_id",
+          tenantFilter: true,
+          friendlyName: "assigned tasks",
+        },
+      ],
+    );
+
+    if (!safetyCheck.canDelete) {
+      const totalViolations = safetyCheck.violations.reduce(
+        (sum, v) => sum + v.count,
+        0,
+      );
+      return res.status(400).json({
+        success: false,
+        error:
+          "Cannot delete client: Client has associated data that must be handled first",
+        details: {
+          client_name: `${client.first_name} ${client.last_name}`,
+          client_email: client.email,
+          violations: safetyCheck.violations,
+          message: `This client has ${totalViolations} associated records. Please reassign or complete these items before deletion.`,
+        },
+      });
+    }
+
+    console.log(
+      `🗑️ Deleting client ${clientId} "${client.first_name} ${client.last_name}"`,
+    );
+
+    // Safe to delete
+    await pool.query(
+      "DELETE FROM clients WHERE id = ? AND assigned_broker_id = ? AND tenant_id = ?",
+      [clientId, brokerId, MORTGAGE_TENANT_ID],
+    );
+
+    console.log(`✅ Successfully deleted client ${clientId}`);
+
+    res.json({
+      success: true,
+      message: `Client "${client.first_name} ${client.last_name}" deleted successfully`,
+    });
+  } catch (error) {
+    console.error("Error deleting client:", error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to delete client",
     });
   }
 };
@@ -1758,7 +2093,7 @@ const handleGetBrokers: RequestHandler = async (req, res) => {
     // Check if requesting broker is admin or superadmin
     const [brokerRows] = (await connection.execute(
       "SELECT role FROM brokers WHERE id = ? AND tenant_id = ?",
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [brokerId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     if (brokerRows.length === 0) {
@@ -1791,7 +2126,7 @@ const handleGetBrokers: RequestHandler = async (req, res) => {
       FROM brokers 
       WHERE status = 'active' AND tenant_id = ?
       ORDER BY first_name, last_name`,
-      [THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     res.json({
@@ -1829,7 +2164,7 @@ const handleCreateBroker: RequestHandler = async (req, res) => {
     // Check if requesting broker is admin
     const [adminCheck] = (await pool.query(
       "SELECT role FROM brokers WHERE id = ? AND tenant_id = ?",
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [brokerId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     if (adminCheck.length === 0 || adminCheck[0].role !== "admin") {
@@ -1850,7 +2185,7 @@ const handleCreateBroker: RequestHandler = async (req, res) => {
     // Check if email already exists
     const [existing] = (await pool.query(
       "SELECT id FROM brokers WHERE email = ? AND tenant_id = ?",
-      [email, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [email, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     if (existing.length > 0) {
@@ -1866,7 +2201,7 @@ const handleCreateBroker: RequestHandler = async (req, res) => {
         (tenant_id, email, first_name, last_name, phone, role, license_number, specializations, status, email_verified) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 0)`,
       [
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+        MORTGAGE_TENANT_ID,
         email,
         first_name,
         last_name,
@@ -1879,7 +2214,7 @@ const handleCreateBroker: RequestHandler = async (req, res) => {
 
     const [newBroker] = (await pool.query(
       "SELECT id, email, first_name, last_name, phone, role, status, license_number, specializations, email_verified, created_at FROM brokers WHERE id = ? AND tenant_id = ?",
-      [result.insertId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [result.insertId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     res.json({
@@ -1916,7 +2251,7 @@ const handleUpdateBroker: RequestHandler = async (req, res) => {
     // Check if requesting broker is admin
     const [adminCheck] = (await pool.query(
       "SELECT role FROM brokers WHERE id = ? AND tenant_id = ?",
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [brokerId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     if (adminCheck.length === 0 || adminCheck[0].role !== "admin") {
@@ -1929,7 +2264,7 @@ const handleUpdateBroker: RequestHandler = async (req, res) => {
     // Check if target broker exists
     const [existing] = (await pool.query(
       "SELECT id FROM brokers WHERE id = ? AND tenant_id = ?",
-      [targetBrokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [targetBrokerId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     if (existing.length === 0) {
@@ -1980,7 +2315,7 @@ const handleUpdateBroker: RequestHandler = async (req, res) => {
     }
 
     values.push(targetBrokerId);
-    values.push(THE_MORTGAGE_PROFESSIONALS_TENANT_ID);
+    values.push(MORTGAGE_TENANT_ID);
 
     await pool.query(
       `UPDATE brokers SET ${updates.join(", ")} WHERE id = ? AND tenant_id = ?`,
@@ -1989,7 +2324,7 @@ const handleUpdateBroker: RequestHandler = async (req, res) => {
 
     const [updatedBroker] = (await pool.query(
       "SELECT id, email, first_name, last_name, phone, role, status, license_number, specializations, email_verified, last_login, created_at FROM brokers WHERE id = ? AND tenant_id = ?",
-      [targetBrokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [targetBrokerId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     res.json({
@@ -2015,10 +2350,10 @@ const handleDeleteBroker: RequestHandler = async (req, res) => {
     const { brokerId: targetBrokerId } = req.params;
 
     // Check if requesting broker is admin
-    const [adminCheck] = (await pool.query(
+    const [adminCheck] = await pool.query<RowDataPacket[]>(
       "SELECT role FROM brokers WHERE id = ? AND tenant_id = ?",
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
-    )) as [RowDataPacket[], any];
+      [brokerId, MORTGAGE_TENANT_ID],
+    );
 
     if (adminCheck.length === 0 || adminCheck[0].role !== "admin") {
       return res.status(403).json({
@@ -2028,21 +2363,18 @@ const handleDeleteBroker: RequestHandler = async (req, res) => {
     }
 
     // Prevent self-deletion
-    const targetId = Array.isArray(targetBrokerId)
-      ? targetBrokerId[0]
-      : targetBrokerId;
-    if (parseInt(targetId) === brokerId) {
+    if (parseInt(targetBrokerId.toString()) === brokerId) {
       return res.status(400).json({
         success: false,
         error: "Cannot delete your own account",
       });
     }
 
-    // Check if target broker exists
-    const [existing] = (await pool.query(
-      "SELECT id, first_name, last_name FROM brokers WHERE id = ? AND tenant_id = ?",
-      [targetBrokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
-    )) as [RowDataPacket[], any];
+    // Check if target broker exists and get details
+    const [existing] = await pool.query<RowDataPacket[]>(
+      "SELECT id, first_name, last_name, email, status FROM brokers WHERE id = ? AND tenant_id = ?",
+      [targetBrokerId, MORTGAGE_TENANT_ID],
+    );
 
     if (existing.length === 0) {
       return res.status(404).json({
@@ -2051,15 +2383,69 @@ const handleDeleteBroker: RequestHandler = async (req, res) => {
       });
     }
 
-    // Instead of deleting, set status to inactive (soft delete)
-    await pool.query(
-      "UPDATE brokers SET status = 'inactive' WHERE id = ? AND tenant_id = ?",
-      [targetBrokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+    const targetBroker = existing[0];
+
+    // Check for dependencies (informational - we still allow soft delete)
+    const safetyCheck = await checkDeletionSafety(
+      "brokers",
+      parseInt(targetBrokerId.toString()),
+      [
+        {
+          table: "clients",
+          foreignKey: "assigned_broker_id",
+          tenantFilter: true,
+          friendlyName: "assigned clients",
+        },
+        {
+          table: "loan_applications",
+          foreignKey: "assigned_broker_id",
+          tenantFilter: true,
+          friendlyName: "loan applications",
+        },
+        {
+          table: "task_templates",
+          foreignKey: "created_by_broker_id",
+          tenantFilter: true,
+          friendlyName: "created task templates",
+        },
+      ],
     );
+
+    console.log(
+      `🔒 Deactivating broker ${targetBrokerId} "${targetBroker.first_name} ${targetBroker.last_name}"`,
+    );
+    if (safetyCheck.violations.length > 0) {
+      console.log(
+        `⚠️ Broker has dependencies that will be preserved:`,
+        safetyCheck.violations,
+      );
+    }
+
+    // Soft delete - set status to inactive (preserve data integrity)
+    await pool.query(
+      "UPDATE brokers SET status = 'inactive', updated_at = NOW() WHERE id = ? AND tenant_id = ?",
+      [targetBrokerId, MORTGAGE_TENANT_ID],
+    );
+
+    console.log(`✅ Successfully deactivated broker ${targetBrokerId}`);
 
     res.json({
       success: true,
-      message: `Broker ${existing[0].first_name} ${existing[0].last_name} has been deactivated`,
+      message: `Broker "${targetBroker.first_name} ${targetBroker.last_name}" has been deactivated successfully`,
+      details: {
+        action: "deactivated", // Not fully deleted, just deactivated
+        broker_name: `${targetBroker.first_name} ${targetBroker.last_name}`,
+        broker_id: targetBroker.id,
+        status: "inactive",
+        dependencies:
+          safetyCheck.violations.length > 0
+            ? safetyCheck.violations
+            : undefined,
+        note:
+          safetyCheck.violations.length > 0
+            ? "Broker was deactivated but associated data remains intact"
+            : "Broker was deactivated with no dependencies",
+      },
     });
   } catch (error) {
     console.error("Error deleting broker:", error);
@@ -2095,7 +2481,7 @@ const handleGetTaskTemplates: RequestHandler = async (req, res) => {
       FROM task_templates
       WHERE created_by_broker_id = ? AND tenant_id = ?
       ORDER BY order_index ASC, created_at DESC`,
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [brokerId, MORTGAGE_TENANT_ID],
     );
 
     res.json({
@@ -2145,9 +2531,13 @@ const handleCreateTaskTemplate: RequestHandler = async (req, res) => {
     // Get max order_index to append new template at end
     const [maxOrder] = await pool.query<any[]>(
       "SELECT COALESCE(MAX(order_index), 0) as max_order FROM task_templates WHERE created_by_broker_id = ? AND tenant_id = ?",
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [brokerId, MORTGAGE_TENANT_ID],
     );
     const orderIndex = (maxOrder[0]?.max_order || 0) + 1;
+
+    // Note: requires_documents and has_custom_form are separate flags
+    // requires_documents = true will auto-create document upload fields
+    // has_custom_form = true indicates user-defined custom fields exist
 
     // Insert task template
     const [result] = await pool.query<ResultSetHeader>(
@@ -2167,7 +2557,7 @@ const handleCreateTaskTemplate: RequestHandler = async (req, res) => {
         created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+        MORTGAGE_TENANT_ID,
         title,
         description || null,
         task_type,
@@ -2184,10 +2574,37 @@ const handleCreateTaskTemplate: RequestHandler = async (req, res) => {
 
     const templateId = result.insertId;
 
+    // If requires_documents is true, automatically create basic document upload fields
+    if (requires_documents) {
+      console.log(
+        `📄 Creating default document upload fields for template ${templateId}`,
+      );
+
+      // Create front and back document upload fields
+      await pool.query(
+        `INSERT INTO task_form_fields (
+          task_template_id,
+          field_name,
+          field_label,
+          field_type,
+          is_required,
+          order_index,
+          help_text
+        ) VALUES 
+        (?, 'document_front', 'Document - Front', 'file_pdf', 1, 0, 'Upload the front side of the required document'),
+        (?, 'document_back', 'Document - Back', 'file_pdf', 1, 1, 'Upload the back side of the required document')`,
+        [templateId, templateId],
+      );
+
+      console.log(
+        `✅ Created default document upload fields for template ${templateId}`,
+      );
+    }
+
     // Fetch the created template
     const [templates] = await pool.query<RowDataPacket[]>(
       "SELECT * FROM task_templates WHERE id = ? AND tenant_id = ?",
-      [templateId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [templateId, MORTGAGE_TENANT_ID],
     );
 
     res.json({
@@ -2210,18 +2627,87 @@ const handleCreateTaskTemplate: RequestHandler = async (req, res) => {
 const handleUpdateTask: RequestHandler = async (req, res) => {
   try {
     const { taskId } = req.params;
-    const { status } = req.body;
+    const { status, comment } = req.body;
+    const brokerId = (req as any).brokerId;
+    const tenantId = (req as any).tenantId || MORTGAGE_TENANT_ID;
 
+    // Validate required fields for status changes
+    if (status && !comment) {
+      return res.status(400).json({
+        success: false,
+        error: "Comment is required when manually changing task status",
+      });
+    }
+
+    // Get current task info for audit
+    const [currentTaskRows] = (await pool.query(
+      "SELECT status, title, application_id FROM tasks WHERE id = ? AND tenant_id = ?",
+      [taskId, tenantId],
+    )) as [any[], any];
+
+    if (!currentTaskRows || currentTaskRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "Task not found",
+      });
+    }
+
+    const currentTask = currentTaskRows[0];
     const completedAt = status === "completed" ? new Date() : null;
+    const statusChangedAt =
+      status && status !== currentTask.status ? new Date() : null;
 
+    // Update task with new fields
     await pool.query(
-      "UPDATE tasks SET status = ?, completed_at = ?, updated_at = NOW() WHERE id = ?",
-      [status, completedAt, taskId],
+      `UPDATE tasks SET 
+        status = ?, 
+        completed_at = ?, 
+        status_change_reason = ?, 
+        status_changed_by_broker_id = ?, 
+        status_changed_at = ?, 
+        updated_at = NOW() 
+      WHERE id = ? AND tenant_id = ?`,
+      [
+        status || currentTask.status,
+        completedAt,
+        comment || null,
+        statusChangedAt ? brokerId : null,
+        statusChangedAt,
+        taskId,
+        tenantId,
+      ],
     );
+
+    // Log the status change for audit purposes
+    if (status && status !== currentTask.status) {
+      await pool.query(
+        `INSERT INTO audit_logs (
+          tenant_id, broker_id, actor_type, action, entity_type, entity_id, 
+          changes, status, created_at
+        ) VALUES (?, ?, 'broker', 'update_task_status', 'task', ?, ?, 'success', NOW())`,
+        [
+          tenantId,
+          brokerId,
+          taskId,
+          JSON.stringify({
+            from_status: currentTask.status,
+            to_status: status,
+            comment: comment,
+            task_title: currentTask.title,
+            application_id: currentTask.application_id,
+            changed_at: statusChangedAt,
+          }),
+        ],
+      );
+    }
 
     res.json({
       success: true,
       message: "Task updated successfully",
+      audit: {
+        status_changed: status && status !== currentTask.status,
+        comment_added: !!comment,
+      },
     });
   } catch (error) {
     console.error("Error updating task:", error);
@@ -2238,6 +2724,12 @@ const handleUpdateTask: RequestHandler = async (req, res) => {
 const handleUpdateTaskTemplateFull: RequestHandler = async (req, res) => {
   try {
     const { taskId } = req.params;
+    const brokerId = (req as any).brokerId;
+    console.log(
+      `🔄 API: Updating task template ${taskId} by broker ${brokerId}`,
+    );
+    console.log(`🔄 API: Request body:`, req.body);
+
     const {
       title,
       description,
@@ -2268,8 +2760,23 @@ const handleUpdateTaskTemplateFull: RequestHandler = async (req, res) => {
       });
     }
 
+    // Note: requires_documents and has_custom_form are separate flags
+    // requires_documents = true will auto-create document upload fields
+    // has_custom_form = true indicates user-defined custom fields exist
+
+    // Check if we need to create default document fields
+    const wasRequiringDocuments = await pool.query<RowDataPacket[]>(
+      "SELECT requires_documents FROM task_templates WHERE id = ? AND tenant_id = ?",
+      [taskId, MORTGAGE_TENANT_ID],
+    );
+
+    const previouslyRequiredDocuments =
+      wasRequiringDocuments[0]?.[0]?.requires_documents;
+    const nowRequiresDocuments = requires_documents;
+
     // Update task template in database
-    await pool.query(
+    console.log(`🔄 API: Executing UPDATE query for task ${taskId}`);
+    const updateResult = await pool.query(
       `UPDATE task_templates SET 
         title = ?, 
         description = ?, 
@@ -2293,23 +2800,63 @@ const handleUpdateTaskTemplateFull: RequestHandler = async (req, res) => {
         document_instructions || null,
         has_custom_form || false,
         taskId,
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+        MORTGAGE_TENANT_ID,
       ],
     );
+    console.log(
+      `✅ API: Task template updated, affected rows:`,
+      (updateResult as any)[0].affectedRows,
+    );
+
+    // If requires_documents was just enabled and there are no existing form fields, create default ones
+    if (nowRequiresDocuments && !previouslyRequiredDocuments) {
+      const [existingFields] = await pool.query<RowDataPacket[]>(
+        "SELECT COUNT(*) as count FROM task_form_fields WHERE task_template_id = ?",
+        [taskId],
+      );
+
+      if (existingFields[0].count === 0) {
+        console.log(
+          `📄 Creating default document upload fields for template ${taskId}`,
+        );
+
+        // Create front and back document upload fields
+        await pool.query(
+          `INSERT INTO task_form_fields (
+            task_template_id,
+            field_name,
+            field_label,
+            field_type,
+            is_required,
+            order_index,
+            help_text
+          ) VALUES 
+          (?, 'document_front', 'Document - Front', 'file_pdf', 1, 0, 'Upload the front side of the required document'),
+          (?, 'document_back', 'Document - Back', 'file_pdf', 1, 1, 'Upload the back side of the required document')`,
+          [taskId, taskId],
+        );
+
+        console.log(
+          `✅ Created default document upload fields for template ${taskId}`,
+        );
+      }
+    }
 
     // Fetch updated template
     const [rows] = await pool.query<RowDataPacket[]>(
       "SELECT * FROM task_templates WHERE id = ? AND tenant_id = ?",
-      [taskId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [taskId, MORTGAGE_TENANT_ID],
     );
 
     if (!Array.isArray(rows) || rows.length === 0) {
+      console.log(`❌ API: Task template ${taskId} not found after update`);
       return res.status(404).json({
         success: false,
         error: "Task template not found after update",
       });
     }
 
+    console.log(`✅ API: Sending updated task template:`, rows[0]);
     res.json({
       success: true,
       message: "Task template updated successfully",
@@ -2337,7 +2884,7 @@ const handleDeleteTaskTemplate: RequestHandler = async (req, res) => {
     // Check if template exists
     const [existingRows] = await pool.query<RowDataPacket[]>(
       "SELECT id, title FROM task_templates WHERE id = ? AND tenant_id = ?",
-      [taskId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [taskId, MORTGAGE_TENANT_ID],
     );
 
     if (!Array.isArray(existingRows) || existingRows.length === 0) {
@@ -2347,15 +2894,79 @@ const handleDeleteTaskTemplate: RequestHandler = async (req, res) => {
       });
     }
 
-    // Delete template (task instances will have template_id set to NULL via CASCADE)
+    const template = existingRows[0];
+
+    // GUARD 1: Check if template is being used by any active tasks
+    const [activeTasksRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) as count, 
+              COUNT(CASE WHEN status IN ('pending', 'in_progress', 'completed', 'pending_approval') THEN 1 END) as active_count
+       FROM tasks 
+       WHERE template_id = ? AND tenant_id = ?`,
+      [taskId, MORTGAGE_TENANT_ID],
+    );
+
+    const totalTasks = activeTasksRows[0]?.count || 0;
+    const activeTasks = activeTasksRows[0]?.active_count || 0;
+
+    if (totalTasks > 0) {
+      // Get sample applications using this template
+      const [sampleRows] = await pool.query<RowDataPacket[]>(
+        `SELECT DISTINCT la.application_number, la.id as loan_id
+         FROM tasks t
+         INNER JOIN loan_applications la ON t.application_id = la.id
+         WHERE t.template_id = ? AND t.tenant_id = ?
+         LIMIT 3`,
+        [taskId, MORTGAGE_TENANT_ID],
+      );
+
+      const sampleApps = sampleRows
+        .map((row) => row.application_number)
+        .join(", ");
+
+      return res.status(400).json({
+        success: false,
+        error:
+          "Cannot delete task template: It is currently being used by existing loan applications",
+        details: {
+          template_name: template.title,
+          total_tasks: totalTasks,
+          active_tasks: activeTasks,
+          sample_applications: sampleApps,
+          message:
+            activeTasks > 0
+              ? `This template has ${activeTasks} active tasks. Please complete or reassign these tasks before deletion.`
+              : `This template has been used in ${totalTasks} completed tasks. To maintain data integrity, templates with task history cannot be deleted.`,
+        },
+      });
+    }
+
+    // GUARD 2: Double-check no orphaned relationships will be created
+    const [formFieldsRows] = await pool.query<RowDataPacket[]>(
+      "SELECT COUNT(*) as count FROM task_form_fields WHERE task_template_id = ?",
+      [taskId],
+    );
+
+    const formFieldsCount = formFieldsRows[0]?.count || 0;
+    console.log(
+      `🗑️ Deleting task template ${taskId} "${template.title}" with ${formFieldsCount} form fields`,
+    );
+
+    // Safe to delete - no active tasks using this template
     await pool.query(
       "DELETE FROM task_templates WHERE id = ? AND tenant_id = ?",
-      [taskId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [taskId, MORTGAGE_TENANT_ID],
+    );
+
+    console.log(
+      `✅ Successfully deleted task template ${taskId} and its ${formFieldsCount} form fields`,
     );
 
     res.json({
       success: true,
-      message: "Task template deleted successfully",
+      message: `Task template "${template.title}" deleted successfully`,
+      details: {
+        deleted_form_fields: formFieldsCount,
+      },
     });
   } catch (error) {
     console.error("Error deleting task template:", error);
@@ -2365,6 +2976,145 @@ const handleDeleteTaskTemplate: RequestHandler = async (req, res) => {
         error instanceof Error
           ? error.message
           : "Failed to delete task template",
+    });
+  }
+};
+
+/**
+ * Delete individual task instance from a loan application
+ */
+const handleDeleteTaskInstance: RequestHandler = async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const brokerId = (req as any).brokerId;
+
+    // Check if task exists and get its details
+    const [taskRows] = await pool.query<RowDataPacket[]>(
+      `SELECT t.*, la.application_number, la.client_user_id 
+       FROM tasks t 
+       INNER JOIN loan_applications la ON t.application_id = la.id
+       WHERE t.id = ? AND t.tenant_id = ?`,
+      [taskId, MORTGAGE_TENANT_ID],
+    );
+
+    if (!Array.isArray(taskRows) || taskRows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "Task not found",
+      });
+    }
+
+    const task = taskRows[0];
+
+    // GUARD 1: Check if task is in progress or completed - these might need special handling
+    if (task.status === "in_progress") {
+      return res.status(400).json({
+        success: false,
+        error: "Cannot delete task in progress",
+        details: {
+          task_title: task.title,
+          current_status: task.status,
+          message:
+            "Tasks that are in progress should be completed or canceled before deletion.",
+        },
+      });
+    }
+
+    // GUARD 2: Check if task has completed work that should be preserved
+    const [documentsRows] = await pool.query<RowDataPacket[]>(
+      "SELECT COUNT(*) as count FROM task_documents WHERE task_id = ?",
+      [taskId],
+    );
+
+    const [responsesRows] = await pool.query<RowDataPacket[]>(
+      "SELECT COUNT(*) as count FROM task_form_responses WHERE task_id = ?",
+      [taskId],
+    );
+
+    const documentsCount = documentsRows[0]?.count || 0;
+    const responsesCount = responsesRows[0]?.count || 0;
+
+    if (
+      (task.status === "completed" || task.status === "approved") &&
+      (documentsCount > 0 || responsesCount > 0)
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "Cannot delete completed task with submitted work",
+        details: {
+          task_title: task.title,
+          application_number: task.application_number,
+          documents_count: documentsCount,
+          responses_count: responsesCount,
+          message:
+            "This task has submitted documents or form responses. To maintain data integrity, completed tasks with work cannot be deleted.",
+        },
+      });
+    }
+
+    console.log(
+      `🗑️ Deleting task instance ${taskId} "${task.title}" from application ${task.application_number}`,
+    );
+    console.log(
+      `📊 Task has ${documentsCount} documents and ${responsesCount} form responses`,
+    );
+
+    // Begin transaction for safe deletion
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      // Delete related documents first (CASCADE should handle this, but being explicit)
+      if (documentsCount > 0) {
+        await connection.query("DELETE FROM task_documents WHERE task_id = ?", [
+          taskId,
+        ]);
+        console.log(`🗑️ Deleted ${documentsCount} task documents`);
+      }
+
+      // Delete form responses
+      if (responsesCount > 0) {
+        await connection.query(
+          "DELETE FROM task_form_responses WHERE task_id = ?",
+          [taskId],
+        );
+        console.log(`🗑️ Deleted ${responsesCount} form responses`);
+      }
+
+      // Finally delete the task itself
+      await connection.query(
+        "DELETE FROM tasks WHERE id = ? AND tenant_id = ?",
+        [taskId, MORTGAGE_TENANT_ID],
+      );
+
+      await connection.commit();
+      console.log(
+        `✅ Successfully deleted task ${taskId} and all related data`,
+      );
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+
+    res.json({
+      success: true,
+      message: `Task "${task.title}" deleted successfully`,
+      details: {
+        application_number: task.application_number,
+        deleted_documents: documentsCount,
+        deleted_responses: responsesCount,
+      },
+    });
+  } catch (error) {
+    console.error("Error deleting task instance:", error);
+    res.status(500).json({
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Failed to delete task instance",
     });
   }
 };
@@ -2397,47 +3147,148 @@ const handleCreateTaskFormFields: RequestHandler = async (req, res) => {
       await connection.beginTransaction();
       console.log("🔄 API: Transaction started");
 
-      // Update task template to indicate it has custom form
-      await connection.query(
-        `UPDATE task_templates SET has_custom_form = 1 WHERE id = ? AND created_by_broker_id = ? AND tenant_id = ?`,
-        [taskId, brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
-      );
-      console.log(
-        "✅ API: Updated task_templates.has_custom_form = 1 for task",
-        taskId,
+      // Update task template to indicate it has custom form ONLY if there are non-document fields
+      const hasActualCustomFields = form_fields.some(
+        (field) =>
+          field.field_type !== "file_pdf" && field.field_type !== "file_image",
       );
 
-      // Insert form fields
-      const insertedFields = [];
-      for (const field of form_fields) {
+      if (hasActualCustomFields) {
+        await connection.query(
+          `UPDATE task_templates SET has_custom_form = 1 WHERE id = ? AND created_by_broker_id = ? AND tenant_id = ?`,
+          [taskId, brokerId, MORTGAGE_TENANT_ID],
+        );
         console.log(
-          `🔄 API: Inserting field: ${field.field_label} (${field.field_type})`,
+          "✅ API: Updated task_templates.has_custom_form = 1 for task",
+          taskId,
+          "because it has actual custom fields",
         );
-
-        const [result] = await connection.query(
-          `INSERT INTO task_form_fields 
-          (task_template_id, field_name, field_label, field_type, field_options, 
-           is_required, placeholder, validation_rules, order_index, help_text)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            taskId,
-            field.field_name,
-            field.field_label,
-            field.field_type,
-            field.field_options ? JSON.stringify(field.field_options) : null,
-            field.is_required ?? true,
-            field.placeholder || null,
-            field.validation_rules
-              ? JSON.stringify(field.validation_rules)
-              : null,
-            field.order_index || 0,
-            field.help_text || null,
-          ],
+      } else {
+        console.log(
+          "ℹ️ API: NOT updating has_custom_form because all fields are document uploads for task",
+          taskId,
         );
+      }
 
-        const insertedId = (result as any).insertId;
-        console.log(`✅ API: Field inserted with ID: ${insertedId}`);
-        insertedFields.push({ id: insertedId, ...field });
+      // CRITICAL: DO NOT delete form fields that may have existing responses!
+      // Instead, update existing fields and only insert truly new ones
+
+      // Get existing form fields for this task template
+      const [existingFields] = await connection.query<RowDataPacket[]>(
+        `SELECT * FROM task_form_fields WHERE task_template_id = ? ORDER BY order_index ASC`,
+        [taskId],
+      );
+
+      console.log(
+        `🔍 API: Found ${existingFields.length} existing form fields for task ${taskId}`,
+      );
+
+      // Process form fields: UPDATE existing, INSERT new ones
+      const insertedFields = [];
+
+      for (let i = 0; i < form_fields.length; i++) {
+        const field = form_fields[i];
+        const existingField = existingFields[i]; // Match by index/order
+
+        if (existingField) {
+          // UPDATE existing field to preserve foreign key relationships
+          console.log(
+            `🔄 API: Updating existing field ID ${existingField.id}: ${field.field_label} (${field.field_type})`,
+          );
+
+          await connection.query(
+            `UPDATE task_form_fields SET 
+              field_name = ?, field_label = ?, field_type = ?, field_options = ?, 
+              is_required = ?, placeholder = ?, validation_rules = ?, order_index = ?, help_text = ?
+             WHERE id = ?`,
+            [
+              field.field_name,
+              field.field_label,
+              field.field_type,
+              field.field_options ? JSON.stringify(field.field_options) : null,
+              field.is_required ?? true,
+              field.placeholder || null,
+              field.validation_rules
+                ? JSON.stringify(field.validation_rules)
+                : null,
+              field.order_index || i,
+              field.help_text || null,
+              existingField.id,
+            ],
+          );
+
+          console.log(`✅ API: Updated existing field ID ${existingField.id}`);
+          insertedFields.push({ id: existingField.id, ...field });
+
+          // Audit log for field update
+          await createAuditLog({
+            actorType: "broker",
+            actorId: brokerId,
+            action: "update_task_form_field",
+            entityType: "task_form_field",
+            entityId: existingField.id,
+            changes: {
+              field_name: {
+                from: existingField.field_name,
+                to: field.field_name,
+              },
+              field_label: {
+                from: existingField.field_label,
+                to: field.field_label,
+              },
+              field_type: {
+                from: existingField.field_type,
+                to: field.field_type,
+              },
+              task_template_id: taskId,
+            },
+          });
+        } else {
+          // INSERT new field
+          console.log(
+            `➕ API: Inserting new field: ${field.field_label} (${field.field_type})`,
+          );
+
+          const [result] = await connection.query(
+            `INSERT INTO task_form_fields 
+            (task_template_id, field_name, field_label, field_type, field_options, 
+             is_required, placeholder, validation_rules, order_index, help_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              taskId,
+              field.field_name,
+              field.field_label,
+              field.field_type,
+              field.field_options ? JSON.stringify(field.field_options) : null,
+              field.is_required ?? true,
+              field.placeholder || null,
+              field.validation_rules
+                ? JSON.stringify(field.validation_rules)
+                : null,
+              field.order_index || i,
+              field.help_text || null,
+            ],
+          );
+
+          const insertedId = (result as any).insertId;
+          console.log(`✅ API: New field inserted with ID: ${insertedId}`);
+          insertedFields.push({ id: insertedId, ...field });
+
+          // Audit log for new field creation
+          await createAuditLog({
+            actorType: "broker",
+            actorId: brokerId,
+            action: "create_task_form_field",
+            entityType: "task_form_field",
+            entityId: insertedId,
+            changes: {
+              field_name: field.field_name,
+              field_label: field.field_label,
+              field_type: field.field_type,
+              task_template_id: taskId,
+            },
+          });
+        }
       }
 
       await connection.commit();
@@ -2480,10 +3331,11 @@ const handleGetTaskFormFields: RequestHandler = async (req, res) => {
     const { taskId } = req.params;
 
     const [fields] = await pool.query(
-      `SELECT * FROM task_form_fields 
-       WHERE task_template_id = ? 
-       ORDER BY order_index ASC`,
-      [taskId],
+      `SELECT tff.* FROM task_form_fields tff
+       INNER JOIN task_templates tt ON tff.task_template_id = tt.id
+       WHERE tff.task_template_id = ? AND tt.tenant_id = ?
+       ORDER BY tff.order_index ASC`,
+      [taskId, MORTGAGE_TENANT_ID],
     );
 
     res.json({
@@ -2622,7 +3474,7 @@ const handleUploadTaskDocument: RequestHandler = async (req, res) => {
       `SELECT td.* FROM task_documents td 
        INNER JOIN tasks t ON td.task_id = t.id 
        WHERE td.id = ? AND t.tenant_id = ?`,
-      [(result as any).insertId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [(result as any).insertId, MORTGAGE_TENANT_ID],
     );
 
     res.json({
@@ -2651,7 +3503,7 @@ const handleGetTaskDocuments: RequestHandler = async (req, res) => {
        INNER JOIN tasks t ON td.task_id = t.id 
        WHERE td.task_id = ? AND t.tenant_id = ? 
        ORDER BY td.uploaded_at DESC`,
-      [taskId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [taskId, MORTGAGE_TENANT_ID],
     );
 
     res.json({
@@ -2741,7 +3593,7 @@ const handleApproveTask: RequestHandler = async (req, res) => {
       `INSERT INTO notifications (tenant_id, user_id, title, message, notification_type, action_url)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+        MORTGAGE_TENANT_ID,
         task.client_user_id,
         "Task Approved",
         `Your task "${task.title}" has been approved. Great job!`,
@@ -2755,7 +3607,7 @@ const handleApproveTask: RequestHandler = async (req, res) => {
       `INSERT INTO audit_logs (tenant_id, broker_id, actor_type, action, entity_type, entity_id, changes, status)
        VALUES (?, ?, 'broker', 'approve_task', 'task', ?, ?, 'success')`,
       [
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+        MORTGAGE_TENANT_ID,
         brokerId,
         taskId,
         JSON.stringify({ status: "approved", approved_at: new Date() }),
@@ -2831,7 +3683,7 @@ const handleReopenTask: RequestHandler = async (req, res) => {
       `INSERT INTO notifications (tenant_id, user_id, title, message, notification_type, action_url)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+        MORTGAGE_TENANT_ID,
         task.client_user_id,
         "Task Needs Revision",
         `Your task "${task.title}" needs to be revised. Please check the feedback.`,
@@ -2858,7 +3710,7 @@ const handleReopenTask: RequestHandler = async (req, res) => {
       `INSERT INTO audit_logs (tenant_id, broker_id, actor_type, action, entity_type, entity_id, changes, status)
        VALUES (?, ?, 'broker', 'reopen_task', 'task', ?, ?, 'success')`,
       [
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+        MORTGAGE_TENANT_ID,
         brokerId,
         taskId,
         JSON.stringify({
@@ -2960,7 +3812,7 @@ const handleGenerateMISMO: RequestHandler = async (req, res) => {
       `INSERT INTO audit_logs (tenant_id, broker_id, actor_type, action, entity_type, entity_id, changes, status)
        VALUES (?, ?, 'broker', 'generate_mismo', 'loan_application', ?, ?, 'success')`,
       [
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+        MORTGAGE_TENANT_ID,
         brokerId,
         loanId,
         JSON.stringify({ filename, generated_at: new Date() }),
@@ -3295,7 +4147,7 @@ const handleGetEmailTemplates: RequestHandler = async (req, res) => {
       FROM email_templates
       WHERE tenant_id = ?
       ORDER BY created_at DESC`,
-      [THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     res.json({
@@ -3334,7 +4186,7 @@ const handleCreateEmailTemplate: RequestHandler = async (req, res) => {
         (tenant_id, name, subject, body_html, body_text, template_type, is_active) 
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+        MORTGAGE_TENANT_ID,
         name,
         subject,
         body_html,
@@ -3346,7 +4198,7 @@ const handleCreateEmailTemplate: RequestHandler = async (req, res) => {
 
     const [templates] = (await pool.query(
       "SELECT * FROM email_templates WHERE id = ? AND tenant_id = ?",
-      [result.insertId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [result.insertId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     res.json({
@@ -3378,7 +4230,7 @@ const handleUpdateEmailTemplate: RequestHandler = async (req, res) => {
     // Check if template exists
     const [existingRows] = (await pool.query(
       "SELECT id FROM email_templates WHERE id = ? AND tenant_id = ?",
-      [templateId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [templateId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     if (existingRows.length === 0) {
@@ -3425,7 +4277,7 @@ const handleUpdateEmailTemplate: RequestHandler = async (req, res) => {
     }
 
     values.push(templateId);
-    values.push(THE_MORTGAGE_PROFESSIONALS_TENANT_ID);
+    values.push(MORTGAGE_TENANT_ID);
 
     await pool.query(
       `UPDATE email_templates SET ${updates.join(", ")} WHERE id = ? AND tenant_id = ?`,
@@ -3434,7 +4286,7 @@ const handleUpdateEmailTemplate: RequestHandler = async (req, res) => {
 
     const [templates] = (await pool.query(
       "SELECT * FROM email_templates WHERE id = ? AND tenant_id = ?",
-      [templateId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [templateId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     res.json({
@@ -3464,7 +4316,7 @@ const handleDeleteEmailTemplate: RequestHandler = async (req, res) => {
     // Check if template exists
     const [existingRows] = (await pool.query(
       "SELECT id, name FROM email_templates WHERE id = ? AND tenant_id = ?",
-      [templateId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [templateId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     if (existingRows.length === 0) {
@@ -3476,7 +4328,7 @@ const handleDeleteEmailTemplate: RequestHandler = async (req, res) => {
 
     await pool.query(
       "DELETE FROM email_templates WHERE id = ? AND tenant_id = ?",
-      [templateId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [templateId, MORTGAGE_TENANT_ID],
     );
 
     res.json({
@@ -3528,12 +4380,7 @@ const handleGetClientApplications: RequestHandler = async (req, res) => {
       LEFT JOIN brokers b ON la.broker_user_id = b.id
       WHERE la.client_user_id = ? AND la.tenant_id = ?
       ORDER BY la.created_at DESC`,
-      [
-        clientId,
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
-      ],
+      [clientId, MORTGAGE_TENANT_ID, MORTGAGE_TENANT_ID, MORTGAGE_TENANT_ID],
     );
 
     res.json({
@@ -3622,7 +4469,7 @@ const handleUpdateClientTask: RequestHandler = async (req, res) => {
     // Verify task belongs to client
     const [tasks] = await pool.query<any[]>(
       "SELECT t.* FROM tasks t INNER JOIN loan_applications la ON t.application_id = la.id WHERE t.id = ? AND la.client_user_id = ? AND t.tenant_id = ?",
-      [taskId, clientId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [taskId, clientId, MORTGAGE_TENANT_ID],
     );
 
     if (tasks.length === 0) {
@@ -3698,13 +4545,13 @@ const handleGetTaskDetails: RequestHandler = async (req, res) => {
     if (task.template_id) {
       const [fields] = await pool.query<any[]>(
         `SELECT * FROM task_form_fields 
-         WHERE task_template_id = ? 
+         WHERE task_template_id = ? AND tenant_id = ?
          ORDER BY order_index`,
-        [task.template_id],
+        [task.template_id, MORTGAGE_TENANT_ID],
       );
       formFields = fields;
       console.log(
-        `✅ Found ${fields.length} form fields for template ${task.template_id}`,
+        `✅ Found ${fields.length} form fields for template ${task.template_id} (tenant ${MORTGAGE_TENANT_ID})`,
       );
     } else {
       console.warn(
@@ -3721,13 +4568,15 @@ const handleGetTaskDetails: RequestHandler = async (req, res) => {
         CASE WHEN td.id IS NOT NULL THEN 1 ELSE 0 END as is_uploaded
        FROM task_form_fields tff
        LEFT JOIN task_documents td ON td.task_id = ? AND td.field_id = tff.id
-       WHERE tff.task_template_id = ? 
+       WHERE tff.task_template_id = ? AND tff.tenant_id = ?
        AND (tff.field_type = 'file_pdf' OR tff.field_type = 'file_image')
        ORDER BY tff.order_index`,
-      [taskId, task.template_id || 0],
+      [taskId, task.template_id || 0, MORTGAGE_TENANT_ID],
     );
 
-    console.log(`📄 Found ${documents.length} document fields`);
+    console.log(
+      `📄 Found ${documents.length} document fields for template ${task.template_id || 0} (tenant ${MORTGAGE_TENANT_ID})`,
+    );
 
     res.json({
       success: true,
@@ -3872,7 +4721,7 @@ const handleUpdateClientProfile: RequestHandler = async (req, res) => {
     }
 
     values.push(clientId);
-    values.push(THE_MORTGAGE_PROFESSIONALS_TENANT_ID);
+    values.push(MORTGAGE_TENANT_ID);
 
     await pool.query(
       `UPDATE clients SET ${updates.join(", ")}, updated_at = NOW() WHERE id = ? AND tenant_id = ?`,
@@ -3887,7 +4736,7 @@ const handleUpdateClientProfile: RequestHandler = async (req, res) => {
         employment_status, income_type, annual_income,
         status, email_verified, phone_verified, created_at
       FROM clients WHERE id = ? AND tenant_id = ?`,
-      [clientId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [clientId, MORTGAGE_TENANT_ID],
     );
 
     res.json({
@@ -3912,7 +4761,7 @@ const handleGetSmsTemplates: RequestHandler = async (req, res) => {
   try {
     const [templates] = (await pool.query(
       "SELECT * FROM sms_templates WHERE tenant_id = ? ORDER BY created_at DESC",
-      [THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     res.json({
@@ -3962,7 +4811,7 @@ const handleCreateSmsTemplate: RequestHandler = async (req, res) => {
         (tenant_id, name, body, template_type, is_active) 
        VALUES (?, ?, ?, ?, ?)`,
       [
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
+        MORTGAGE_TENANT_ID,
         name,
         body,
         template_type,
@@ -3972,7 +4821,7 @@ const handleCreateSmsTemplate: RequestHandler = async (req, res) => {
 
     const [templates] = (await pool.query(
       "SELECT * FROM sms_templates WHERE id = ? AND tenant_id = ?",
-      [result.insertId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [result.insertId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     res.json({
@@ -4006,7 +4855,7 @@ const handleUpdateSmsTemplate: RequestHandler = async (req, res) => {
     // Check if template exists
     const [existingRows] = (await pool.query(
       "SELECT id FROM sms_templates WHERE id = ? AND tenant_id = ?",
-      [templateId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [templateId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     if (existingRows.length === 0) {
@@ -4053,7 +4902,7 @@ const handleUpdateSmsTemplate: RequestHandler = async (req, res) => {
     }
 
     values.push(templateId);
-    values.push(THE_MORTGAGE_PROFESSIONALS_TENANT_ID);
+    values.push(MORTGAGE_TENANT_ID);
 
     await pool.query(
       `UPDATE sms_templates SET ${updates.join(", ")} WHERE id = ? AND tenant_id = ?`,
@@ -4062,7 +4911,7 @@ const handleUpdateSmsTemplate: RequestHandler = async (req, res) => {
 
     const [templates] = (await pool.query(
       "SELECT * FROM sms_templates WHERE id = ? AND tenant_id = ?",
-      [templateId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [templateId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     res.json({
@@ -4095,7 +4944,7 @@ const handleDeleteSmsTemplate: RequestHandler = async (req, res) => {
     // Check if template exists
     const [existingRows] = (await pool.query(
       "SELECT id, name FROM sms_templates WHERE id = ? AND tenant_id = ?",
-      [templateId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [templateId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
     if (existingRows.length === 0) {
@@ -4107,7 +4956,7 @@ const handleDeleteSmsTemplate: RequestHandler = async (req, res) => {
 
     await pool.query(
       "DELETE FROM sms_templates WHERE id = ? AND tenant_id = ?",
-      [templateId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [templateId, MORTGAGE_TENANT_ID],
     );
 
     res.json({
@@ -4156,7 +5005,7 @@ const handleGetAuditLogs: RequestHandler = async (req, res) => {
       WHERE al.tenant_id = ?
     `;
 
-    const queryParams: any[] = [THE_MORTGAGE_PROFESSIONALS_TENANT_ID];
+    const queryParams: any[] = [MORTGAGE_TENANT_ID];
 
     if (actor_type) {
       query += ` AND al.actor_type = ?`;
@@ -4195,7 +5044,7 @@ const handleGetAuditLogs: RequestHandler = async (req, res) => {
 
     // Get total count for pagination
     let countQuery = `SELECT COUNT(*) as total FROM audit_logs WHERE tenant_id = ?`;
-    const countParams: any[] = [THE_MORTGAGE_PROFESSIONALS_TENANT_ID];
+    const countParams: any[] = [MORTGAGE_TENANT_ID];
 
     if (actor_type) {
       countQuery += ` AND actor_type = ?`;
@@ -4269,17 +5118,17 @@ const handleGetAuditLogStats: RequestHandler = async (req, res) => {
     // Get various statistics
     const [totalLogs] = await pool.query<RowDataPacket[]>(
       "SELECT COUNT(*) as count FROM audit_logs WHERE tenant_id = ?",
-      [THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [MORTGAGE_TENANT_ID],
     );
 
     const [logsByStatus] = await pool.query<RowDataPacket[]>(
       "SELECT status, COUNT(*) as count FROM audit_logs WHERE tenant_id = ? GROUP BY status",
-      [THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [MORTGAGE_TENANT_ID],
     );
 
     const [logsByActorType] = await pool.query<RowDataPacket[]>(
       "SELECT actor_type, COUNT(*) as count FROM audit_logs WHERE tenant_id = ? GROUP BY actor_type",
-      [THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [MORTGAGE_TENANT_ID],
     );
 
     const [logsByAction] = await pool.query<RowDataPacket[]>(
@@ -4289,7 +5138,7 @@ const handleGetAuditLogStats: RequestHandler = async (req, res) => {
        GROUP BY action 
        ORDER BY count DESC 
        LIMIT 10`,
-      [THE_MORTGAGE_PROFESSIONALS_TENANT_ID],
+      [MORTGAGE_TENANT_ID],
     );
 
     const [recentActivity] = await pool.query<RowDataPacket[]>(
@@ -4353,7 +5202,7 @@ const handleGetReportsOverview: RequestHandler = async (req, res) => {
         SUM(CAST(loan_amount AS DECIMAL(15,2))) as total_loan_volume
       FROM loan_applications 
       WHERE broker_user_id = ? AND tenant_id = ?${dateFilter}`,
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID, ...dateParams],
+      [brokerId, MORTGAGE_TENANT_ID, ...dateParams],
     );
 
     // Loans by type
@@ -4362,7 +5211,7 @@ const handleGetReportsOverview: RequestHandler = async (req, res) => {
        FROM loan_applications 
        WHERE broker_user_id = ? AND tenant_id = ?${dateFilter}
        GROUP BY loan_type`,
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID, ...dateParams],
+      [brokerId, MORTGAGE_TENANT_ID, ...dateParams],
     );
 
     // Loans by status over time
@@ -4376,7 +5225,7 @@ const handleGetReportsOverview: RequestHandler = async (req, res) => {
        GROUP BY DATE(created_at), status
        ORDER BY date DESC
        LIMIT 30`,
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID, ...dateParams],
+      [brokerId, MORTGAGE_TENANT_ID, ...dateParams],
     );
 
     // Client statistics
@@ -4483,12 +5332,7 @@ const handleGetRevenueReport: RequestHandler = async (req, res) => {
       WHERE broker_user_id = ? AND tenant_id = ?${dateFilter}
       GROUP BY period, loan_type
       ORDER BY period DESC`,
-      [
-        dateFormat,
-        brokerId,
-        THE_MORTGAGE_PROFESSIONALS_TENANT_ID,
-        ...dateParams,
-      ],
+      [dateFormat, brokerId, MORTGAGE_TENANT_ID, ...dateParams],
     );
 
     res.json({
@@ -4531,7 +5375,7 @@ const handleGetPerformanceReport: RequestHandler = async (req, res) => {
         ROUND((SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2) as approval_rate
       FROM loan_applications 
       WHERE broker_user_id = ? AND tenant_id = ?${dateFilter}`,
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID, ...dateParams],
+      [brokerId, MORTGAGE_TENANT_ID, ...dateParams],
     );
 
     // Average processing time
@@ -4542,7 +5386,7 @@ const handleGetPerformanceReport: RequestHandler = async (req, res) => {
       FROM loan_applications 
       WHERE broker_user_id = ? AND tenant_id = ?${dateFilter}
       GROUP BY status`,
-      [brokerId, THE_MORTGAGE_PROFESSIONALS_TENANT_ID, ...dateParams],
+      [brokerId, MORTGAGE_TENANT_ID, ...dateParams],
     );
 
     // Task completion rate
@@ -4672,6 +5516,11 @@ function createServer() {
     handleGenerateMISMO,
   );
   expressApp.get("/api/clients", verifyBrokerSession, handleGetClients);
+  expressApp.delete(
+    "/api/clients/:clientId",
+    verifyBrokerSession,
+    handleDeleteClient,
+  );
   expressApp.get("/api/brokers", verifyBrokerSession, handleGetBrokers);
   expressApp.post("/api/brokers", verifyBrokerSession, handleCreateBroker);
   expressApp.put(
@@ -4696,6 +5545,13 @@ function createServer() {
     "/api/tasks/:taskId",
     verifyBrokerSession,
     handleDeleteTaskTemplate,
+  );
+
+  // Task instance management (different from templates)
+  expressApp.delete(
+    "/api/tasks/instance/:taskId",
+    verifyBrokerSession,
+    handleDeleteTaskInstance,
   );
 
   // Task approval routes

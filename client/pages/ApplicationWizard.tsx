@@ -434,7 +434,7 @@ const ApplicationWizard = () => {
 
       {/* Decorative Background Effects */}
       <div className="fixed top-0 left-0 -z-10 h-[500px] w-[500px] rounded-full bg-primary/5 blur-[120px] pointer-events-none" />
-      <div className="fixed bottom-0 right-0 -z-10 h-[500px] w-[500px] rounded-full bg-blue-500/5 blur-[120px] pointer-events-none" />
+      <div className="fixed bottom-0 right-0 -z-10 h-[500px] w-[500px] rounded-full bg-primary/5 blur-[120px] pointer-events-none" />
     </div>
   );
 };

@@ -66,14 +66,18 @@ export const fetchTasks = createAsyncThunk(
 export const updateTaskStatus = createAsyncThunk(
   "tasks/updateStatus",
   async (
-    { taskId, status }: { taskId: number; status: string },
+    {
+      taskId,
+      status,
+      comment,
+    }: { taskId: number; status: string; comment?: string },
     { getState, rejectWithValue },
   ) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
       await axios.patch(
         `/api/tasks/${taskId}`,
-        { status },
+        { status, comment },
         { headers: { Authorization: `Bearer ${sessionToken}` } },
       );
       return { taskId, status };
@@ -139,13 +143,23 @@ export const updateTask = createAsyncThunk(
     { getState, rejectWithValue },
   ) => {
     try {
+      console.log("🔄 Redux: updateTask called with data:", taskData);
       const { sessionToken } = (getState() as RootState).brokerAuth;
       const { id, ...updates } = taskData;
+      console.log("🔄 Redux: Sending PUT request to", `/api/tasks/${id}`);
+      console.log("🔄 Redux: Updates payload:", updates);
+
       const { data } = await axios.put(`/api/tasks/${id}`, updates, {
         headers: { Authorization: `Bearer ${sessionToken}` },
       });
+
+      console.log("✅ Redux: API response:", data);
       return data.task;
     } catch (error: any) {
+      console.error(
+        "❌ Redux: updateTask error:",
+        error.response?.data || error,
+      );
       return rejectWithValue(
         error.response?.data?.error || "Failed to update task",
       );
@@ -165,6 +179,23 @@ export const deleteTask = createAsyncThunk(
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.error || "Failed to delete task",
+      );
+    }
+  },
+);
+
+export const deleteTaskInstance = createAsyncThunk(
+  "tasks/deleteInstance",
+  async (taskId: number, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.delete(`/api/tasks/instance/${taskId}`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      return { taskId, details: data.details };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to delete task instance",
       );
     }
   },

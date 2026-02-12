@@ -86,6 +86,9 @@ export default {
         "accordion-up": "accordion-up 0.2s ease-out",
         "spin-slow": "spin 3s linear infinite",
       },
+      fontFamily: {
+        sans: ["DM Sans", "sans-serif"],
+      },
     },
   },
   plugins: [require("tailwindcss-animate")],

@@ -13,13 +13,12 @@ export default function Navbar({ onGetPreApproved }: NavbarProps) {
       <nav className="max-w-7xl mx-auto px-6 py-4">
         <div className="flex items-center justify-between">
           {/* Logo */}
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-[#0A2F52] to-[#135E99] rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-xl">TMP</span>
-            </div>
-            <span className="text-xl font-bold text-[#0A2F52]">
-              The Mortgage Professionals
-            </span>
+          <div className="flex items-center">
+            <img
+              src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png"
+              alt="The Mortgage Professionals"
+              className="h-10 w-auto"
+            />
           </div>
 
           {/* Desktop Navigation */}

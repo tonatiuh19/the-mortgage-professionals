@@ -156,6 +156,8 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
   >(null);
   const [selectedBrokerId, setSelectedBrokerId] = useState<number | null>(null);
   const [showDraftPrompt, setShowDraftPrompt] = useState(false);
+  const [wasSuccessfullySubmitted, setWasSuccessfullySubmitted] =
+    useState(false);
 
   const { loanDraft } = useAppSelector((state) => state.pipeline);
 
@@ -231,6 +233,7 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
 
       // Clear draft since loan was successfully created
       dispatch(clearLoanDraft());
+      setWasSuccessfullySubmitted(true);
 
       toast({
         title: "Success! 🎉",
@@ -238,7 +241,20 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
       });
 
       onSuccess?.();
-      handleClose();
+
+      // Reset form and states without showing draft message
+      formik.resetForm();
+      setCurrentStep(1);
+      setTasks([]);
+      setMatchedClient(null);
+      setSelectedBrokerId(user?.id || null);
+      setShowDraftPrompt(false);
+
+      // Close the dialog
+      onOpenChange(false);
+
+      // Reset success flag after a brief delay to ensure clean state
+      setTimeout(() => setWasSuccessfullySubmitted(false), 100);
     } catch (error: any) {
       toast({
         title: "Error",
@@ -252,32 +268,36 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
   };
 
   const handleClose = () => {
-    // Save as draft if not completed (not on last step or has data)
-    const hasFormData = Object.values(formik.values).some(
-      (value) =>
-        value !== "" && value !== "purchase" && value !== "single_family",
-    );
-    if ((currentStep < 5 && hasFormData) || tasks.length > 0) {
-      dispatch(
-        saveLoanDraft({
-          formData: formik.values,
-          tasks,
-          currentStep,
-          savedAt: new Date().toISOString(),
-        }),
+    // Only save as draft if not successfully submitted and has form data
+    if (!wasSuccessfullySubmitted) {
+      const hasFormData = Object.values(formik.values).some(
+        (value) =>
+          value !== "" && value !== "purchase" && value !== "single_family",
       );
-      toast({
-        title: "Draft saved",
-        description: "Your loan application has been saved as a draft.",
-      });
+      if ((currentStep < 5 && hasFormData) || tasks.length > 0) {
+        dispatch(
+          saveLoanDraft({
+            formData: formik.values,
+            tasks,
+            currentStep,
+            savedAt: new Date().toISOString(),
+          }),
+        );
+        toast({
+          title: "Draft saved",
+          description: "Your loan application has been saved as a draft.",
+        });
+      }
     }
 
+    // Reset form and states
     formik.resetForm();
     setCurrentStep(1);
     setTasks([]);
     setMatchedClient(null);
     setSelectedBrokerId(user?.id || null);
     setShowDraftPrompt(false);
+    setWasSuccessfullySubmitted(false);
     onOpenChange(false);
   };
 
@@ -408,8 +428,11 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
     <Dialog
       open={open}
       onOpenChange={(isOpen) => {
-        if (!isOpen) {
+        if (!isOpen && !wasSuccessfullySubmitted) {
           handleClose();
+        } else if (!isOpen && wasSuccessfullySubmitted) {
+          // Just reset the success flag if closing after successful submission
+          setWasSuccessfullySubmitted(false);
         }
       }}
     >
@@ -437,16 +460,16 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
 
         {/* Draft Detection Prompt */}
         {showDraftPrompt && loanDraft && (
-          <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 rounded-lg p-4 animate-in fade-in slide-in-from-top-2 duration-300">
+          <div className="bg-primary/5 dark:bg-primary/10 border border-primary/20 dark:border-primary/30 rounded-lg p-4 animate-in fade-in slide-in-from-top-2 duration-300">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-1">
-                  <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                  <h4 className="font-semibold text-blue-900 dark:text-blue-100">
+                  <FileText className="h-5 w-5 text-primary dark:text-primary" />
+                  <h4 className="font-semibold text-primary dark:text-primary">
                     Draft Available
                   </h4>
                 </div>
-                <p className="text-sm text-blue-700 dark:text-blue-300">
+                <p className="text-sm text-primary/70 dark:text-primary/80">
                   You have a saved draft from{" "}
                   {new Date(loanDraft.savedAt).toLocaleDateString()}{" "}
                   {new Date(loanDraft.savedAt).toLocaleTimeString([], {
@@ -462,7 +485,7 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
                   size="sm"
                   onClick={resumeDraft}
                   variant="default"
-                  className="bg-blue-600 hover:bg-blue-700"
+                  className="bg-primary hover:bg-primary/90"
                 >
                   Resume
                 </Button>
@@ -536,7 +559,7 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
                   </p>
                 )}
                 {matchedClient && (
-                  <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">
+                  <p className="text-xs text-primary mt-1 flex items-center gap-1">
                     <CheckCircle className="h-3 w-3" />
                     Existing client found: {matchedClient.first_name}{" "}
                     {matchedClient.last_name} - Details pre-filled below
@@ -905,7 +928,7 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
                           >
                             <div className="flex items-start gap-2 w-full">
                               {isAdded ? (
-                                <CheckCircle className="h-4 w-4 mt-0.5 text-green-600" />
+                                <CheckCircle className="h-4 w-4 mt-0.5 text-primary" />
                               ) : (
                                 <Plus className="h-4 w-4 mt-0.5" />
                               )}

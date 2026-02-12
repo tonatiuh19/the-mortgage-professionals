@@ -66,6 +66,23 @@ export interface LoanTask {
   due_date: string | null;
   completed_at: string | null;
   created_at: string;
+  status_change_reason?: string | null;
+  status_changed_by_broker_id?: number | null;
+  status_changed_at?: string | null;
+}
+
+export interface UpdateTaskRequest {
+  status?: string;
+  comment?: string;
+}
+
+export interface UpdateTaskResponse {
+  success: boolean;
+  message: string;
+  audit: {
+    status_changed: boolean;
+    comment_added: boolean;
+  };
 }
 
 export interface LoanDetails {
