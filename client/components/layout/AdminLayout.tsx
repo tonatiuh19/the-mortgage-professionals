@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Building2,
   Mail,
+  MessageCircle,
   FileText,
   History,
   TrendingUp,
@@ -125,6 +126,12 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
       label: "Communications",
       icon: <Mail className="h-4 w-4" />,
       path: "/admin/communication-templates",
+    },
+    {
+      id: "conversations",
+      label: "Conversations",
+      icon: <MessageCircle className="h-4 w-4" />,
+      path: "/admin/conversations",
     },
     {
       id: "reports",

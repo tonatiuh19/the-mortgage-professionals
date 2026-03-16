@@ -560,6 +560,21 @@ export interface GetLoansResponse {
     completed_tasks: number;
     total_tasks: number;
   }>;
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrev: boolean;
+  };
+  filters?: {
+    status?: string;
+    priority?: string;
+    loanType?: string;
+    dateRange?: string;
+    search?: string;
+  };
 }
 
 export interface GetClientsResponse {
@@ -693,4 +708,231 @@ export interface UpdateTaskTemplateRequest extends CreateTaskRequest {
   document_instructions?: string;
   has_custom_form?: boolean;
   form_fields?: CreateTaskFormFieldRequest[];
+}
+
+/**
+ * Conversation & Communication Types
+ */
+export interface ConversationThread {
+  id: number;
+  conversation_id: string;
+  application_id?: number | null;
+  lead_id?: number | null;
+  client_id?: number | null;
+  broker_id: number;
+  client_name?: string | null;
+  client_phone?: string | null;
+  client_email?: string | null;
+  last_message_at: string;
+  last_message_preview?: string | null;
+  last_message_type: "email" | "sms" | "whatsapp" | "call" | "internal_note";
+  message_count: number;
+  unread_count: number;
+  priority: "low" | "normal" | "high" | "urgent";
+  status: "active" | "archived" | "closed";
+  tags?: string[] | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Communication {
+  id: number;
+  application_id?: number | null;
+  lead_id?: number | null;
+  from_user_id?: number | null;
+  from_broker_id?: number | null;
+  to_user_id?: number | null;
+  to_broker_id?: number | null;
+  communication_type: "email" | "sms" | "whatsapp" | "call" | "internal_note";
+  direction: "inbound" | "outbound";
+  subject?: string | null;
+  body: string;
+  status: "pending" | "sent" | "delivered" | "failed" | "read";
+  external_id?: string | null;
+  conversation_id?: string | null;
+  thread_id?: string | null;
+  reply_to_id?: number | null;
+  message_type: "text" | "image" | "document" | "audio" | "video" | "template";
+  template_id?: number | null;
+  delivery_status:
+    | "pending"
+    | "sent"
+    | "delivered"
+    | "read"
+    | "failed"
+    | "rejected";
+  delivery_timestamp?: string | null;
+  read_timestamp?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  cost?: number | null;
+  provider_response?: any | null;
+  metadata?: any | null;
+  scheduled_at?: string | null;
+  sent_at?: string | null;
+  created_at: string;
+}
+
+export interface GetConversationThreadsRequest {
+  page?: number;
+  limit?: number;
+  status?: "active" | "archived" | "closed" | "all";
+  priority?: "low" | "normal" | "high" | "urgent";
+  search?: string;
+}
+
+export interface GetConversationThreadsResponse {
+  success: boolean;
+  threads: ConversationThread[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export interface GetConversationMessagesRequest {
+  conversation_id: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface GetConversationMessagesResponse {
+  success: boolean;
+  messages: Communication[];
+  thread: ConversationThread;
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export interface SendMessageRequest {
+  conversation_id?: string;
+  application_id?: number;
+  lead_id?: number;
+  client_id?: number;
+  communication_type: "email" | "sms" | "whatsapp";
+  recipient_phone?: string;
+  recipient_email?: string;
+  subject?: string;
+  body: string;
+  template_id?: number;
+  message_type?: "text" | "template";
+  scheduled_at?: string;
+}
+
+export interface SendMessageResponse {
+  success: boolean;
+  message: string;
+  communication_id: number;
+  conversation_id: string;
+  external_id?: string;
+  cost?: number;
+}
+
+export interface UpdateConversationRequest {
+  conversation_id: string;
+  status?: "active" | "archived" | "closed";
+  priority?: "low" | "normal" | "high" | "urgent";
+  tags?: string[];
+}
+
+export interface UpdateConversationResponse {
+  success: boolean;
+  thread: ConversationThread;
+}
+
+export interface ConversationTemplate {
+  id: number;
+  name: string;
+  template_type: "email" | "sms" | "whatsapp";
+  subject?: string;
+  body: string;
+  body_html?: string;
+  body_text?: string;
+  category:
+    | "welcome"
+    | "reminder"
+    | "update"
+    | "follow_up"
+    | "marketing"
+    | "system";
+  variables: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GetConversationTemplatesResponse {
+  success: boolean;
+  templates: ConversationTemplate[];
+}
+
+export interface ConversationStats {
+  total_conversations: number;
+  active_conversations: number;
+  unread_messages: number;
+  today_messages: number;
+  response_time_avg: number;
+  channels: {
+    email: number;
+    sms: number;
+    whatsapp: number;
+  };
+  by_priority: {
+    low: number;
+    normal: number;
+    high: number;
+    urgent: number;
+  };
+}
+
+export interface GetConversationStatsResponse {
+  success: boolean;
+  stats: ConversationStats;
+}
+
+/**
+ * Analytics Dashboard Types
+ */
+export interface MonthlySnapshot {
+  month: number;
+  leads: number;
+  credit_pulls: number;
+  pre_approvals: number;
+  closings: number;
+  lead_to_credit_pct: number;
+  credit_to_preapp_pct: number;
+  lead_to_closing_pct: number;
+  leads_goal: number;
+  closings_goal: number;
+}
+
+export interface QuarterSummary {
+  quarter: number;
+  leads: number;
+  credit_pulls: number;
+  pre_approvals: number;
+  closings: number;
+  avg_lead_to_credit_pct: number;
+  avg_credit_to_preapp_pct: number;
+  avg_lead_to_closing_pct: number;
+}
+
+export interface AnnualMetrics {
+  year: number;
+  months: MonthlySnapshot[];
+  quarters: QuarterSummary[];
+  annual_leads: number;
+  annual_credit_pulls: number;
+  annual_pre_approvals: number;
+  annual_closings: number;
+  avg_lead_to_credit_pct: number;
+  avg_credit_to_preapp_pct: number;
+  avg_lead_to_closing_pct: number;
+  lead_sources_annual: { category: string; count: number }[];
 }
