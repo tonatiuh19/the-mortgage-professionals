@@ -30,6 +30,7 @@ import {
 } from "@/store/slices/clientPortalSlice";
 import { useToast } from "@/hooks/use-toast";
 import { TaskCompletionModal } from "@/components/TaskCompletionModal";
+import { logger } from "@/lib/logger";
 
 const Tasks = () => {
   const dispatch = useAppDispatch();
@@ -56,16 +57,16 @@ const Tasks = () => {
 
   const approvedTasks = tasks.filter((t) => t.status === "approved");
   const completionRate =
-    tasks.length > 0 ? (approvedTasks.length / tasks.length) * 100 : 0;
+    tasks.length > 0 ? (completedTasks.length / tasks.length) * 100 : 0;
 
   const handleStartTask = async (taskId: number) => {
     try {
-      console.log(`🚀 Starting task ${taskId}...`);
+      logger.log(`🚀 Starting task ${taskId}...`);
       // Update status to in_progress first and wait for it
       await dispatch(
         updateClientTask({ taskId, status: "in_progress" }),
       ).unwrap();
-      console.log(`✅ Task ${taskId} status updated, opening modal...`);
+      logger.log(`✅ Task ${taskId} status updated, opening modal...`);
       // Then open the modal
       setSelectedTaskId(taskId);
       toast({
@@ -73,7 +74,7 @@ const Tasks = () => {
         description: "Great! Let's get this done!",
       });
     } catch (error) {
-      console.error(`❌ Failed to start task ${taskId}:`, error);
+      logger.error(`❌ Failed to start task ${taskId}:`, error);
       toast({
         title: "Error",
         description: "Failed to start task. Please try again.",
@@ -304,9 +305,12 @@ const Tasks = () => {
             <h1 className="text-4xl font-bold mb-2">
               {completionRate.toFixed(0)}%
             </h1>
-            <Progress value={completionRate} className="h-2 bg-white/20" />
+            <Progress
+              value={completionRate}
+              className="h-2 bg-white/20 [&>div]:bg-white"
+            />
             <p className="text-sm opacity-90 mt-2">
-              {approvedTasks.length} of {tasks.length} tasks approved
+              {completedTasks.length} of {tasks.length} tasks completed
             </p>
           </div>
 
@@ -357,7 +361,10 @@ const Tasks = () => {
       )}
 
       {/* Tasks Tabs */}
-      <Tabs defaultValue="pending" className="space-y-6">
+      <Tabs
+        defaultValue={inProgressTasks.length > 0 ? "in-progress" : "pending"}
+        className="space-y-6"
+      >
         <TabsList className="grid w-full grid-cols-3 lg:w-[400px]">
           <TabsTrigger value="pending" className="gap-2">
             <Clock className="h-4 w-4" />

@@ -13,6 +13,9 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  PenTool,
+  Upload,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +51,7 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion, AnimatePresence } from "framer-motion";
 import { useFormik } from "formik";
+import axios from "axios";
 import * as Yup from "yup";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
@@ -57,8 +61,16 @@ import {
   fetchTaskFormFields,
   saveTaskTemplateDraft,
   clearTaskTemplateDraft,
+  saveSignDocument,
+  fetchSignDocument,
 } from "@/store/slices/tasksSlice";
-import type { TaskTemplate, TaskFormFieldType } from "@shared/api";
+import type {
+  TaskTemplate,
+  TaskFormFieldType,
+  SignatureZone,
+} from "@shared/api";
+import PDFSignatureZoneEditor from "@/components/PDFSignatureZoneEditor";
+import { logger } from "@/lib/logger";
 
 interface TaskWizardProps {
   open: boolean;
@@ -94,6 +106,7 @@ interface FormField {
 const taskTypes = [
   { value: "document_collection", label: "Document Collection" },
   { value: "document_verification", label: "Document Verification" },
+  { value: "document_signing", label: "Document Signing" },
   { value: "credit_check", label: "Credit Check" },
   { value: "income_verification", label: "Income Verification" },
   { value: "appraisal_order", label: "Appraisal Order" },
@@ -138,11 +151,22 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
     basic: false,
     documents: false,
     customForm: false,
+    signing: false,
     summary: false,
   });
   const [showDraftPrompt, setShowDraftPrompt] = useState(false);
   const isEditMode = !!editTask;
   const { taskTemplateDraft } = useAppSelector((state) => state.tasks);
+  const brokerUserId = useAppSelector((state) => state.brokerAuth.user?.id);
+
+  // Document signing state
+  const [signingPdfUrl, setSigningPdfUrl] = useState<string>("");
+  const [signingOriginalFilename, setSigningOriginalFilename] =
+    useState<string>("");
+  const [signingFileSize, setSigningFileSize] = useState<number | undefined>();
+  const [signingZones, setSigningZones] = useState<SignatureZone[]>([]);
+  const [isUploadingPdf, setIsUploadingPdf] = useState(false);
+  const [pdfUploadError, setPdfUploadError] = useState<string>("");
 
   const formik = useFormik({
     initialValues: {
@@ -155,6 +179,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
       requires_documents: false,
       document_instructions: "",
       has_custom_form: false,
+      has_signing: false,
     },
     validationSchema,
     enableReinitialize: true,
@@ -175,19 +200,21 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
     },
   });
 
+  const isSigningType = formik.values.task_type === "document_signing";
+
   const performTaskSubmission = async (values: any) => {
     try {
       setIsSubmitting(true);
-      console.log("📝 TaskWizard: Starting task submission...");
-      console.log("📝 TaskWizard: Form values:", values);
-      console.log("📝 TaskWizard: Form fields to create:", formFields);
-      console.log("📝 TaskWizard: Is edit mode?", isEditMode);
+      logger.log("📝 TaskWizard: Starting task submission...");
+      logger.log("📝 TaskWizard: Form values:", values);
+      logger.log("📝 TaskWizard: Form fields to create:", formFields);
+      logger.log("📝 TaskWizard: Is edit mode?", isEditMode);
 
       let taskId: number;
 
       if (isEditMode) {
-        console.log("✏️ TaskWizard: Updating existing task ID:", editTask.id);
-        console.log("✏️ TaskWizard: Update payload:", {
+        logger.log("✏️ TaskWizard: Updating existing task ID:", editTask.id);
+        logger.log("✏️ TaskWizard: Update payload:", {
           id: editTask.id,
           ...values,
         });
@@ -195,13 +222,13 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
           updateTask({ id: editTask.id, ...values }),
         ).unwrap();
         taskId = result.id;
-        console.log("✅ TaskWizard: Task updated successfully, ID:", taskId);
-        console.log("✅ TaskWizard: Updated task data:", result);
+        logger.log("✅ TaskWizard: Task updated successfully, ID:", taskId);
+        logger.log("✅ TaskWizard: Updated task data:", result);
       } else {
-        console.log("➕ TaskWizard: Creating new task...");
+        logger.log("➕ TaskWizard: Creating new task...");
         const result = await dispatch(createTask(values)).unwrap();
         taskId = result.id;
-        console.log("✅ TaskWizard: Task created successfully, ID:", taskId);
+        logger.log("✅ TaskWizard: Task created successfully, ID:", taskId);
       }
 
       // Create/update form fields if custom form is enabled OR requires documents AND fields exist
@@ -211,14 +238,14 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
         formFields.length > 0;
 
       if (shouldHandleFormFields) {
-        console.log(
+        logger.log(
           `📋 TaskWizard: ${isEditMode ? "Updating" : "Creating"} ${formFields.length} form fields for task ${taskId}...`,
         );
-        console.log("📋 TaskWizard: Form fields payload:", {
+        logger.log("📋 TaskWizard: Form fields payload:", {
           taskId,
           form_fields: formFields,
         });
-        console.log("📋 TaskWizard: Should handle form fields because:", {
+        logger.log("📋 TaskWizard: Should handle form fields because:", {
           has_custom_form: values.has_custom_form,
           requires_documents: values.requires_documents,
           formFieldsCount: formFields.length,
@@ -231,12 +258,12 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
           }),
         ).unwrap();
 
-        console.log(
+        logger.log(
           `✅ TaskWizard: Form fields ${isEditMode ? "updated" : "created"} successfully:`,
           fieldsResult,
         );
       } else {
-        console.log("⚠️ TaskWizard: Skipping form fields creation:", {
+        logger.log("⚠️ TaskWizard: Skipping form fields creation:", {
           has_custom_form: values.has_custom_form,
           requires_documents: values.requires_documents,
           formFieldsCount: formFields.length,
@@ -244,23 +271,42 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
         });
       }
 
+      // Save signing document if applicable
+      if (
+        values.task_type === "document_signing" &&
+        signingPdfUrl &&
+        signingZones.length > 0
+      ) {
+        logger.log("🖊️ TaskWizard: Saving signing document...");
+        await dispatch(
+          saveSignDocument({
+            templateId: taskId,
+            file_path: signingPdfUrl,
+            original_filename: signingOriginalFilename,
+            file_size: signingFileSize,
+            signature_zones: signingZones,
+          }),
+        ).unwrap();
+        logger.log("✅ TaskWizard: Signing document saved successfully");
+      }
+
       // Clear draft since task was successfully created
-      console.log("🧹 TaskWizard: Clearing draft and closing wizard...");
+      logger.log("🧹 TaskWizard: Clearing draft and closing wizard...");
       dispatch(clearTaskTemplateDraft());
 
       formik.resetForm();
       setFormFields([]);
       onTaskCreated?.();
       onClose();
-      console.log(
+      logger.log(
         `✅ TaskWizard: Task ${isEditMode ? "update" : "creation"} flow completed successfully!`,
       );
     } catch (error) {
-      console.error(
+      logger.error(
         `❌ TaskWizard: Failed to ${isEditMode ? "update" : "create"} task:`,
         error,
       );
-      console.error("❌ TaskWizard: Error details:", {
+      logger.error("❌ TaskWizard: Error details:", {
         message: error instanceof Error ? error.message : "Unknown error",
         stack: error instanceof Error ? error.stack : undefined,
       });
@@ -282,6 +328,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
         requires_documents: editTask.requires_documents ?? false,
         document_instructions: editTask.document_instructions || "",
         has_custom_form: editTask.has_custom_form ?? false,
+        has_signing: editTask.has_signing ?? false,
       });
 
       // Fetch form fields for editing
@@ -296,11 +343,24 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
         }
       });
 
+      // Fetch sign document if it's a signing type
+      if (editTask.task_type === "document_signing") {
+        dispatch(fetchSignDocument(editTask.id)).then((result) => {
+          if (fetchSignDocument.fulfilled.match(result) && result.payload) {
+            setSigningPdfUrl(result.payload.file_path);
+            setSigningOriginalFilename(result.payload.original_filename);
+            setSigningFileSize(result.payload.file_size || undefined);
+            setSigningZones(result.payload.signature_zones || []);
+          }
+        });
+      }
+
       // Mark steps as completed for edit mode
       setCompletedSteps({
         basic: true,
         documents: true,
         customForm: true,
+        signing: true,
         summary: true,
       });
     } else if (open && !editTask) {
@@ -312,10 +372,14 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
       formik.resetForm();
       setFormFields([]);
       setActiveTab("basic");
+      setSigningPdfUrl("");
+      setSigningZones([]);
+      setSigningOriginalFilename("");
       setCompletedSteps({
         basic: false,
         documents: false,
         customForm: false,
+        signing: false,
         summary: false,
       });
       setShowDraftPrompt(false);
@@ -372,10 +436,21 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
     }
   }, [formFields, formik.values.has_custom_form]);
 
+  const isSigningStepValid = () => {
+    if (formik.values.task_type === "document_signing") {
+      return signingPdfUrl !== "" && signingZones.length > 0;
+    }
+    return true;
+  };
+
   const handleNextStep = () => {
+    const isSigning = formik.values.task_type === "document_signing";
     if (activeTab === "basic" && isBasicStepValid()) {
       setCompletedSteps((prev) => ({ ...prev, basic: true }));
-      setActiveTab("documents");
+      setActiveTab(isSigning ? "signing-document" : "documents");
+    } else if (activeTab === "signing-document") {
+      setCompletedSteps((prev) => ({ ...prev, signing: true }));
+      setActiveTab("summary");
     } else if (activeTab === "documents" && isDocumentsStepValid()) {
       setCompletedSteps((prev) => ({ ...prev, documents: true }));
       setActiveTab("custom-form");
@@ -386,23 +461,31 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
   };
 
   const handlePreviousStep = () => {
+    const isSigning = formik.values.task_type === "document_signing";
     if (activeTab === "documents") {
+      setActiveTab("basic");
+    } else if (activeTab === "signing-document") {
       setActiveTab("basic");
     } else if (activeTab === "custom-form") {
       setActiveTab("documents");
     } else if (activeTab === "summary") {
-      setActiveTab("custom-form");
+      setActiveTab(isSigning ? "signing-document" : "custom-form");
     }
   };
 
   const canProceedToNextStep = () => {
     if (activeTab === "basic") return isBasicStepValid();
+    if (activeTab === "signing-document") return isSigningStepValid();
     if (activeTab === "documents") return isDocumentsStepValid();
     if (activeTab === "custom-form") return isCustomFormStepValid();
     return false;
   };
 
   const isFormComplete = () => {
+    const isSigning = formik.values.task_type === "document_signing";
+    if (isSigning) {
+      return isBasicStepValid() && isSigningStepValid();
+    }
     return (
       isBasicStepValid() && isDocumentsStepValid() && isCustomFormStepValid()
     );
@@ -416,11 +499,11 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
       is_required: true,
       order_index: formFields.length,
     };
-    console.log("➕ TaskWizard: Adding new form field:", newField);
-    console.log("➕ TaskWizard: Current form fields count:", formFields.length);
+    logger.log("➕ TaskWizard: Adding new form field:", newField);
+    logger.log("➕ TaskWizard: Current form fields count:", formFields.length);
     setFormFields([...formFields, newField]);
     setEditingFieldIndex(formFields.length);
-    console.log("➕ TaskWizard: New form fields count:", formFields.length + 1);
+    logger.log("➕ TaskWizard: New form fields count:", formFields.length + 1);
   };
 
   const handleUpdateFormField = (
@@ -429,16 +512,16 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
   ) => {
     const updatedFields = [...formFields];
     updatedFields[index] = { ...updatedFields[index], ...updates };
-    console.log(`✏️ TaskWizard: Updating field ${index}:`, updates);
-    console.log("✏️ TaskWizard: Updated field:", updatedFields[index]);
+    logger.log(`✏️ TaskWizard: Updating field ${index}:`, updates);
+    logger.log("✏️ TaskWizard: Updated field:", updatedFields[index]);
     setFormFields(updatedFields);
   };
 
   const handleRemoveFormField = (index: number) => {
-    console.log(`🗑️ TaskWizard: Removing field ${index}`);
+    logger.log(`🗑️ TaskWizard: Removing field ${index}`);
     setFormFields(formFields.filter((_, i) => i !== index));
     setEditingFieldIndex(null);
-    console.log(
+    logger.log(
       "🗑️ TaskWizard: Remaining form fields count:",
       formFields.length - 1,
     );
@@ -470,10 +553,14 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
     formik.resetForm();
     setFormFields([]);
     setActiveTab("basic");
+    setSigningPdfUrl("");
+    setSigningZones([]);
+    setSigningOriginalFilename("");
     setCompletedSteps({
       basic: false,
       documents: false,
       customForm: false,
+      signing: false,
       summary: false,
     });
     setShowDraftPrompt(false);
@@ -482,7 +569,10 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
 
   const resumeDraft = () => {
     if (taskTemplateDraft) {
-      formik.setValues(taskTemplateDraft.formData);
+      formik.setValues({
+        ...taskTemplateDraft.formData,
+        has_signing: (taskTemplateDraft.formData as any).has_signing ?? false,
+      });
       setFormFields(taskTemplateDraft.formFields);
       setActiveTab(taskTemplateDraft.activeTab);
       setShowDraftPrompt(false);
@@ -505,6 +595,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
         basic: isBasicComplete,
         documents: isDocumentsComplete,
         customForm: isCustomFormComplete,
+        signing: false,
         summary: false,
       });
     }
@@ -601,44 +692,74 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
           className="mt-4"
         >
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="basic" className="relative">
-                Basic Info
-                {completedSteps.basic && (
-                  <CheckCircle2 className="h-4 w-4 ml-2 text-primary" />
-                )}
-              </TabsTrigger>
-              <TabsTrigger
-                value="documents"
-                disabled={!completedSteps.basic}
-                className="relative"
-              >
-                <File className="h-4 w-4 mr-2" />
-                Documents
-                {completedSteps.documents && (
-                  <CheckCircle2 className="h-4 w-4 ml-2 text-primary" />
-                )}
-              </TabsTrigger>
-              <TabsTrigger
-                value="custom-form"
-                disabled={!completedSteps.documents}
-                className="relative"
-              >
-                <FileText className="h-4 w-4 mr-2" />
-                Custom Form
-                {completedSteps.customForm && (
-                  <CheckCircle2 className="h-4 w-4 ml-2 text-primary" />
-                )}
-              </TabsTrigger>
-              <TabsTrigger
-                value="summary"
-                disabled={!completedSteps.customForm}
-                className="relative"
-              >
-                <CheckCircle2 className="h-4 w-4 mr-2" />
-                Review
-              </TabsTrigger>
-            </TabsList>
+            {isSigningType ? (
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="basic" className="relative">
+                  Basic Info
+                  {completedSteps.basic && (
+                    <CheckCircle2 className="h-4 w-4 ml-2 text-primary" />
+                  )}
+                </TabsTrigger>
+                <TabsTrigger
+                  value="signing-document"
+                  disabled={!completedSteps.basic}
+                  className="relative"
+                >
+                  <PenTool className="h-4 w-4 mr-2" />
+                  Signing Doc
+                  {completedSteps.signing && (
+                    <CheckCircle2 className="h-4 w-4 ml-2 text-primary" />
+                  )}
+                </TabsTrigger>
+                <TabsTrigger
+                  value="summary"
+                  disabled={!completedSteps.signing}
+                  className="relative"
+                >
+                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                  Review
+                </TabsTrigger>
+              </TabsList>
+            ) : (
+              <TabsList className="grid w-full grid-cols-4 text-xs sm:text-sm">
+                <TabsTrigger value="basic" className="relative">
+                  Basic Info
+                  {completedSteps.basic && (
+                    <CheckCircle2 className="h-4 w-4 ml-2 text-primary" />
+                  )}
+                </TabsTrigger>
+                <TabsTrigger
+                  value="documents"
+                  disabled={!completedSteps.basic}
+                  className="relative"
+                >
+                  <File className="h-4 w-4 mr-2" />
+                  Documents
+                  {completedSteps.documents && (
+                    <CheckCircle2 className="h-4 w-4 ml-2 text-primary" />
+                  )}
+                </TabsTrigger>
+                <TabsTrigger
+                  value="custom-form"
+                  disabled={!completedSteps.documents}
+                  className="relative"
+                >
+                  <FileText className="h-4 w-4 mr-2" />
+                  Custom Form
+                  {completedSteps.customForm && (
+                    <CheckCircle2 className="h-4 w-4 ml-2 text-primary" />
+                  )}
+                </TabsTrigger>
+                <TabsTrigger
+                  value="summary"
+                  disabled={!completedSteps.customForm}
+                  className="relative"
+                >
+                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                  Review
+                </TabsTrigger>
+              </TabsList>
+            )}
 
             {/* Basic Info Tab */}
             <TabsContent value="basic" className="space-y-6 mt-4">
@@ -892,7 +1013,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                               is_required: true,
                               order_index: formFields.length,
                             };
-                            console.log(
+                            logger.log(
                               "➕ TaskWizard: Adding document upload field:",
                               newField,
                             );
@@ -955,7 +1076,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                                         onValueChange={(
                                           value: TaskFormFieldType,
                                         ) => {
-                                          console.log(
+                                          logger.log(
                                             `🔄 TaskWizard: Changing document type to "${value}"`,
                                           );
                                           handleUpdateFormField(index, {
@@ -1165,7 +1286,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                                       onValueChange={(
                                         value: TaskFormFieldType,
                                       ) => {
-                                        console.log(
+                                        logger.log(
                                           `🔄 TaskWizard: Changing field type from "${field.field_type}" to "${value}"`,
                                         );
                                         handleUpdateFormField(index, {
@@ -1266,6 +1387,180 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
               </div>
             </TabsContent>
 
+            {/* Document Signing Tab */}
+            <TabsContent value="signing-document" className="space-y-6 mt-4">
+              <div className="space-y-6">
+                <div className="flex items-center gap-2 text-primary dark:text-primary">
+                  <PenTool className="h-5 w-5" />
+                  <h3 className="text-lg font-semibold">Signing Document</h3>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Upload the PDF document and define the zones where the client
+                  needs to sign.
+                </p>
+
+                {/* PDF Upload */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Upload className="h-4 w-4" />
+                      Upload PDF Document
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {pdfUploadError && (
+                      <div className="flex items-start gap-2 p-3 rounded-md bg-destructive/10 border border-destructive/20 text-destructive text-sm">
+                        <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                        {pdfUploadError}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-4">
+                      <label
+                        htmlFor="signing-pdf-upload"
+                        className="cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2 px-4 py-2 rounded-md border border-dashed border-muted-foreground/40 hover:border-primary/60 hover:bg-primary/5 transition-colors">
+                          {isUploadingPdf ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <span className="text-sm">Uploading...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Upload className="h-4 w-4" />
+                              <span className="text-sm">
+                                {signingPdfUrl
+                                  ? "Replace PDF"
+                                  : "Choose PDF file"}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                        <input
+                          id="signing-pdf-upload"
+                          type="file"
+                          accept="application/pdf"
+                          className="hidden"
+                          disabled={isUploadingPdf}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            logger.log("📄 PDF upload: starting", {
+                              name: file.name,
+                              size: file.size,
+                              type: file.type,
+                            });
+                            setIsUploadingPdf(true);
+                            setPdfUploadError("");
+                            try {
+                              const formData = new FormData();
+                              const uploadId =
+                                90000 + (brokerUserId ?? Date.now() % 10000);
+                              formData.append(
+                                "main_folder",
+                                "encore-sign-templates",
+                              );
+                              formData.append("id", String(uploadId));
+                              formData.append("pdfs[]", file);
+                              logger.log(
+                                "📄 PDF upload: sending to uploadPDFs.php",
+                                {
+                                  main_folder: "encore-sign-templates",
+                                  id: uploadId,
+                                  file: file.name,
+                                },
+                              );
+                              const { data } = await axios.post(
+                                "https://disruptinglabs.com/data/api/uploadPDFs.php",
+                                formData,
+                                {
+                                  headers: {
+                                    "Content-Type": "multipart/form-data",
+                                  },
+                                },
+                              );
+                              logger.log("📄 PDF upload: raw response", data);
+                              const uploaded = data?.uploaded?.[0];
+                              logger.log(
+                                "📄 PDF upload: first uploaded item",
+                                uploaded,
+                              );
+                              if (uploaded?.path) {
+                                const fullUrl = uploaded.path.startsWith("http")
+                                  ? uploaded.path
+                                  : `https://disruptinglabs.com/data/api${uploaded.path}`;
+                                logger.log("📄 PDF upload: success", fullUrl);
+                                setSigningPdfUrl(fullUrl);
+                                setSigningOriginalFilename(
+                                  uploaded.original_name ||
+                                    uploaded.filename ||
+                                    file.name,
+                                );
+                                setSigningFileSize(file.size);
+                              } else {
+                                logger.error(
+                                  "📄 PDF upload: unexpected response shape",
+                                  data,
+                                );
+                                setPdfUploadError(
+                                  "Upload failed. Please try again.",
+                                );
+                              }
+                            } catch (err: any) {
+                              logger.error("📄 PDF upload: caught error", {
+                                message: err?.message,
+                                status: err?.response?.status,
+                                responseData: err?.response?.data,
+                              });
+                              setPdfUploadError(
+                                "Upload failed. Please try again.",
+                              );
+                            } finally {
+                              setIsUploadingPdf(false);
+                            }
+                          }}
+                        />
+                      </label>
+                      {signingPdfUrl && (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <CheckCircle2 className="h-4 w-4 text-green-500" />
+                          <span className="truncate max-w-[220px]">
+                            {signingOriginalFilename || "Document uploaded"}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Zone Editor */}
+                {signingPdfUrl && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <PenTool className="h-4 w-4" />
+                        Define Signature Zones
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {signingZones.length === 0 && (
+                        <div className="flex items-start gap-2 p-3 mb-4 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-500 text-sm">
+                          <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                          Draw at least one signature zone on the PDF to
+                          proceed.
+                        </div>
+                      )}
+                      <PDFSignatureZoneEditor
+                        pdfUrl={signingPdfUrl}
+                        zones={signingZones}
+                        onChange={setSigningZones}
+                      />
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </TabsContent>
+
             {/* Summary/Review Tab */}
             <TabsContent value="summary" className="space-y-6 mt-4">
               <div className="space-y-6">
@@ -1354,170 +1649,229 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                   </CardContent>
                 </Card>
 
-                {/* Documents Summary */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <File className="h-4 w-4" />
-                      Document Requirements
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {formik.values.requires_documents ? (
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-2 text-primary dark:text-primary">
-                          <CheckCircle2 className="h-4 w-4" />
-                          <span className="text-sm font-medium">
-                            Documents required
-                          </span>
-                        </div>
+                {/* Documents Summary — hidden for signing type */}
+                {!isSigningType && (
+                  <>
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <File className="h-4 w-4" />
+                          Document Requirements
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        {formik.values.requires_documents ? (
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-2 text-primary dark:text-primary">
+                              <CheckCircle2 className="h-4 w-4" />
+                              <span className="text-sm font-medium">
+                                Documents required
+                              </span>
+                            </div>
 
-                        {/* Show document upload fields */}
-                        {formFields.filter(
-                          (f) =>
-                            f.field_type === "file_pdf" ||
-                            f.field_type === "file_image",
-                        ).length > 0 && (
-                          <div className="space-y-2">
-                            <p className="text-sm font-medium text-muted-foreground">
-                              Document Upload Fields (
-                              {
-                                formFields.filter(
-                                  (f) =>
-                                    f.field_type === "file_pdf" ||
-                                    f.field_type === "file_image",
-                                ).length
-                              }
-                              ):
-                            </p>
-                            {formFields
-                              .filter(
-                                (f) =>
-                                  f.field_type === "file_pdf" ||
-                                  f.field_type === "file_image",
-                              )
-                              .map((field, index) => (
-                                <div
-                                  key={index}
-                                  className="flex items-center gap-2 p-2 bg-muted rounded-md"
-                                >
-                                  {field.field_type === "file_pdf"
-                                    ? "📄"
-                                    : "🖼️"}{" "}
-                                  {field.field_label}
-                                  {field.is_required && (
-                                    <Badge
-                                      variant="outline"
-                                      className="text-xs ml-auto"
-                                    >
-                                      Required
-                                    </Badge>
-                                  )}
-                                </div>
-                              ))}
-                          </div>
-                        )}
-
-                        {formik.values.document_instructions && (
-                          <div>
-                            <p className="text-sm font-medium text-muted-foreground mb-1">
-                              General Instructions
-                            </p>
-                            <p className="text-sm bg-muted p-3 rounded-md whitespace-pre-wrap">
-                              {formik.values.document_instructions}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        No documents required for this task
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Custom Form Summary */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <FileText className="h-4 w-4" />
-                      Custom Form Fields
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {formik.values.has_custom_form &&
-                    formFields.filter(
-                      (f) =>
-                        f.field_type !== "file_pdf" &&
-                        f.field_type !== "file_image",
-                    ).length > 0 ? (
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-2 text-primary dark:text-primary">
-                          <CheckCircle2 className="h-4 w-4" />
-                          <span className="text-sm font-medium">
-                            {
-                              formFields.filter(
-                                (f) =>
-                                  f.field_type !== "file_pdf" &&
-                                  f.field_type !== "file_image",
-                              ).length
-                            }{" "}
-                            custom{" "}
+                            {/* Show document upload fields */}
                             {formFields.filter(
                               (f) =>
-                                f.field_type !== "file_pdf" &&
-                                f.field_type !== "file_image",
-                            ).length === 1
-                              ? "field"
-                              : "fields"}{" "}
-                            configured
-                          </span>
-                        </div>
-                        <div className="space-y-2">
-                          {formFields
-                            .filter(
-                              (f) =>
-                                f.field_type !== "file_pdf" &&
-                                f.field_type !== "file_image",
-                            )
-                            .map((field, index) => (
-                              <div
-                                key={index}
-                                className="flex items-center justify-between p-3 bg-muted rounded-md"
-                              >
-                                <div className="flex-1">
-                                  <p className="text-sm font-medium">
-                                    {field.field_label}
-                                  </p>
-                                  <div className="flex items-center gap-2 mt-1">
-                                    <Badge
-                                      variant="outline"
-                                      className="text-xs"
+                                f.field_type === "file_pdf" ||
+                                f.field_type === "file_image",
+                            ).length > 0 && (
+                              <div className="space-y-2">
+                                <p className="text-sm font-medium text-muted-foreground">
+                                  Document Upload Fields (
+                                  {
+                                    formFields.filter(
+                                      (f) =>
+                                        f.field_type === "file_pdf" ||
+                                        f.field_type === "file_image",
+                                    ).length
+                                  }
+                                  ):
+                                </p>
+                                {formFields
+                                  .filter(
+                                    (f) =>
+                                      f.field_type === "file_pdf" ||
+                                      f.field_type === "file_image",
+                                  )
+                                  .map((field, index) => (
+                                    <div
+                                      key={index}
+                                      className="flex items-center gap-2 p-2 bg-muted rounded-md"
                                     >
-                                      {field.field_type.replace("_", " ")}
-                                    </Badge>
-                                    {field.is_required && (
-                                      <Badge
-                                        variant="outline"
-                                        className="text-xs"
-                                      >
-                                        Required
-                                      </Badge>
-                                    )}
-                                  </div>
-                                </div>
+                                      {field.field_type === "file_pdf"
+                                        ? "📄"
+                                        : "🖼️"}{" "}
+                                      {field.field_label}
+                                      {field.is_required && (
+                                        <Badge
+                                          variant="outline"
+                                          className="text-xs ml-auto"
+                                        >
+                                          Required
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  ))}
                               </div>
-                            ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        No custom form fields
-                      </p>
-                    )}
-                  </CardContent>
-                </Card>
+                            )}
+
+                            {formik.values.document_instructions && (
+                              <div>
+                                <p className="text-sm font-medium text-muted-foreground mb-1">
+                                  General Instructions
+                                </p>
+                                <p className="text-sm bg-muted p-3 rounded-md whitespace-pre-wrap">
+                                  {formik.values.document_instructions}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            No documents required for this task
+                          </p>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    {/* Custom Form Summary */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <FileText className="h-4 w-4" />
+                          Custom Form Fields
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        {formik.values.has_custom_form &&
+                        formFields.filter(
+                          (f) =>
+                            f.field_type !== "file_pdf" &&
+                            f.field_type !== "file_image",
+                        ).length > 0 ? (
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-2 text-primary dark:text-primary">
+                              <CheckCircle2 className="h-4 w-4" />
+                              <span className="text-sm font-medium">
+                                {
+                                  formFields.filter(
+                                    (f) =>
+                                      f.field_type !== "file_pdf" &&
+                                      f.field_type !== "file_image",
+                                  ).length
+                                }{" "}
+                                custom{" "}
+                                {formFields.filter(
+                                  (f) =>
+                                    f.field_type !== "file_pdf" &&
+                                    f.field_type !== "file_image",
+                                ).length === 1
+                                  ? "field"
+                                  : "fields"}{" "}
+                                configured
+                              </span>
+                            </div>
+                            <div className="space-y-2">
+                              {formFields
+                                .filter(
+                                  (f) =>
+                                    f.field_type !== "file_pdf" &&
+                                    f.field_type !== "file_image",
+                                )
+                                .map((field, index) => (
+                                  <div
+                                    key={index}
+                                    className="flex items-center justify-between p-3 bg-muted rounded-md"
+                                  >
+                                    <div className="flex-1">
+                                      <p className="text-sm font-medium">
+                                        {field.field_label}
+                                      </p>
+                                      <div className="flex items-center gap-2 mt-1">
+                                        <Badge
+                                          variant="outline"
+                                          className="text-xs"
+                                        >
+                                          {field.field_type.replace("_", " ")}
+                                        </Badge>
+                                        {field.is_required && (
+                                          <Badge
+                                            variant="outline"
+                                            className="text-xs"
+                                          >
+                                            Required
+                                          </Badge>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            No custom form fields
+                          </p>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </>
+                )}
+
+                {/* Signing Document Summary */}
+                {isSigningType && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <PenTool className="h-4 w-4" />
+                        Signing Document
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {signingPdfUrl ? (
+                        <>
+                          <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+                            <CheckCircle2 className="h-4 w-4" />
+                            <span className="text-sm font-medium">
+                              PDF document uploaded
+                            </span>
+                          </div>
+                          {signingOriginalFilename && (
+                            <p className="text-sm text-muted-foreground">
+                              File: {signingOriginalFilename}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="text-xs">
+                              {signingZones.length} signature zone
+                              {signingZones.length !== 1 ? "s" : ""} defined
+                            </Badge>
+                          </div>
+                          {signingZones.length > 0 && (
+                            <div className="space-y-1">
+                              {signingZones.map((zone, i) => (
+                                <div
+                                  key={zone.id}
+                                  className="flex items-center gap-2 p-2 bg-muted rounded-md text-sm"
+                                >
+                                  <PenTool className="h-3 w-3 text-muted-foreground" />
+                                  <span>
+                                    Zone {i + 1}: {zone.label} (Page {zone.page}
+                                    )
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          No signing document uploaded yet
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             </TabsContent>
           </Tabs>
@@ -1623,7 +1977,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                   type="button"
                   onClick={handleNextStep}
                   disabled={!canProceedToNextStep()}
-                  className="bg-emerald-500 hover:bg-emerald-600"
+                  className="bg-primary"
                 >
                   Next
                   <ChevronRight className="h-4 w-4 ml-2" />

@@ -6,6 +6,9 @@ import {
   DollarSign,
   MapPin,
   User,
+  Users,
+  UserX,
+  UserPlus,
   CheckCircle2,
   Clock,
   AlertCircle,
@@ -20,8 +23,18 @@ import {
   Download,
   Trash2,
   Plus,
+  PenTool,
+  Award,
+  Shield,
+  ArrowRightLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Badge } from "@/components/ui/badge";
 import {
   Select,
@@ -65,17 +78,24 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchLoanDetails } from "@/store/slices/pipelineSlice";
+import { fetchBrokers } from "@/store/slices/brokersSlice";
 import { fetchTaskDocuments } from "@/store/slices/clientPortalSlice";
 import {
   deleteTaskInstance,
   updateTaskStatus,
   createTask,
   fetchTasks,
+  fetchTaskSignatures,
 } from "@/store/slices/tasksSlice";
+import PDFSigningViewer from "@/components/PDFSigningViewer";
+import { PreApprovalLetterModal } from "@/components/PreApprovalLetterModal";
+import { fetchEmailTemplates } from "@/store/slices/communicationTemplatesSlice";
+import { fetchPreApprovalLetter } from "@/store/slices/preApprovalSlice";
 import axios from "axios";
 import { toast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
+import { logger } from "@/lib/logger";
 
 interface LoanOverlayProps {
   isOpen: boolean;
@@ -91,14 +111,21 @@ export function LoanOverlay({
   isLoadingDetails,
 }: LoanOverlayProps) {
   const dispatch = useAppDispatch();
-  const { sessionToken } = useAppSelector((state) => state.brokerAuth);
+  const { sessionToken, user } = useAppSelector((state) => state.brokerAuth);
+  const { brokers } = useAppSelector((state) => state.brokers);
   const { tasks: taskTemplates } = useAppSelector((state) => state.tasks);
+  const { emailTemplates } = useAppSelector(
+    (state) => state.communicationTemplates,
+  );
 
   const [taskDocuments, setTaskDocuments] = useState<
     Record<
       number,
       { pdfs: any[]; images: { main: any; extra: any[] }; loading: boolean }
     >
+  >({});
+  const [taskFormResponses, setTaskFormResponses] = useState<
+    Record<number, { loading: boolean; responses: any[] }>
   >({});
   const [expandedTasks, setExpandedTasks] = useState<Record<number, boolean>>(
     {},
@@ -112,6 +139,8 @@ export function LoanOverlay({
   const [taskToDelete, setTaskToDelete] = useState<any>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [reopenReason, setReopenReason] = useState("");
+  const [selectedReopenTemplateId, setSelectedReopenTemplateId] =
+    useState<string>("");
   const [statusChangeDialogOpen, setStatusChangeDialogOpen] = useState(false);
   const [statusChangeComment, setStatusChangeComment] = useState("");
   const [pendingStatusChange, setPendingStatusChange] = useState<{
@@ -125,37 +154,184 @@ export function LoanOverlay({
     new Set(),
   );
   const [isAddingTasks, setIsAddingTasks] = useState(false);
+  const [taskSignatures, setTaskSignatures] = useState<
+    Record<
+      number,
+      { loading: boolean; signatures: any[]; sign_document: any | null }
+    >
+  >({});
+  const [viewSignatureTaskId, setViewSignatureTaskId] = useState<number | null>(
+    null,
+  );
 
-  // Fetch task templates when component mounts
+  const [preApprovalLetterOpen, setPreApprovalLetterOpen] = useState(false);
+
+  const { letters: preApprovalLetters } = useAppSelector(
+    (state) => state.preApproval,
+  );
+  const preApprovalLetter = selectedLoan
+    ? preApprovalLetters[selectedLoan.id]
+    : null;
+
+  const [isAssigning, setIsAssigning] = useState(false);
+  const [isAssigningPartner, setIsAssigningPartner] = useState(false);
+  const [isUpdatingPipelineStatus, setIsUpdatingPipelineStatus] =
+    useState(false);
+  const [approvingTaskId, setApprovingTaskId] = useState<number | null>(null);
+
+  const PIPELINE_STATUSES = [
+    { value: "app_sent", label: "App Sent" },
+    { value: "application_received", label: "Application Received" },
+    { value: "prequalified", label: "Prequalified" },
+    { value: "preapproved", label: "Preapproved" },
+    {
+      value: "under_contract_loan_setup",
+      label: "Under Contract / Loan Setup",
+    },
+    { value: "submitted_to_underwriting", label: "Submitted to Underwriting" },
+    { value: "approved_with_conditions", label: "Approved with Conditions" },
+    { value: "clear_to_close", label: "Clear to Close" },
+    { value: "docs_out", label: "Docs Out" },
+    { value: "loan_funded", label: "Loan Funded" },
+  ];
+
+  const handlePipelineStatusChange = async (newStatus: string) => {
+    if (!selectedLoan || newStatus === selectedLoan.status) return;
+    try {
+      setIsUpdatingPipelineStatus(true);
+      await axios.patch(
+        `/api/loans/${selectedLoan.id}/status`,
+        { status: newStatus },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      toast({
+        title: "Pipeline Status Updated",
+        description: `Loan moved to "${PIPELINE_STATUSES.find((s) => s.value === newStatus)?.label ?? newStatus}".`,
+      });
+      await dispatch(fetchLoanDetails(selectedLoan.id));
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description:
+          error.response?.data?.error || "Failed to update pipeline status",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUpdatingPipelineStatus(false);
+    }
+  };
+
+  const handleAssignBroker = async (brokerId: string) => {
+    if (!selectedLoan) return;
+    try {
+      setIsAssigning(true);
+      await axios.patch(
+        `/api/loans/${selectedLoan.id}/assign-broker`,
+        { broker_id: brokerId === "unassigned" ? null : parseInt(brokerId) },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      toast({
+        title: "Broker Updated",
+        description:
+          brokerId === "unassigned"
+            ? "Broker has been unassigned from this loan."
+            : "Broker has been assigned successfully.",
+      });
+      await dispatch(fetchLoanDetails(selectedLoan.id));
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description:
+          error.response?.data?.error || "Failed to update broker assignment",
+        variant: "destructive",
+      });
+    } finally {
+      setIsAssigning(false);
+    }
+  };
+
+  const handleAssignPartner = async (partnerId: string) => {
+    if (!selectedLoan) return;
+    try {
+      setIsAssigningPartner(true);
+      await axios.patch(
+        `/api/loans/${selectedLoan.id}/assign-partner`,
+        { partner_id: partnerId === "unassigned" ? null : parseInt(partnerId) },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      toast({
+        title: "Partner Updated",
+        description:
+          partnerId === "unassigned"
+            ? "Partner has been unassigned from this loan."
+            : "Partner has been assigned successfully.",
+      });
+      await dispatch(fetchLoanDetails(selectedLoan.id));
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description:
+          error.response?.data?.error || "Failed to update partner assignment",
+        variant: "destructive",
+      });
+    } finally {
+      setIsAssigningPartner(false);
+    }
+  };
+
+  // Fetch task templates, brokers, and pre-approval letter when component mounts
   useEffect(() => {
     if (isOpen) {
       dispatch(fetchTasks());
+      dispatch(fetchBrokers());
     }
   }, [dispatch, isOpen]);
+
+  // Fetch pre-approval letter when a specific loan is selected
+  useEffect(() => {
+    if (isOpen && selectedLoan?.id) {
+      dispatch(fetchPreApprovalLetter(selectedLoan.id));
+    }
+  }, [dispatch, isOpen, selectedLoan?.id]);
 
   const handleViewTaskDocuments = async (taskId: number) => {
     if (taskDocuments[taskId]?.loading) return;
 
     setTaskDocuments((prev) => ({
       ...prev,
-      [taskId]: {
-        pdfs: [],
-        images: { main: null, extra: [] },
-        loading: true,
-      },
+      [taskId]: { pdfs: [], images: { main: null, extra: [] }, loading: true },
+    }));
+    setTaskFormResponses((prev) => ({
+      ...prev,
+      [taskId]: { loading: true, responses: [] },
     }));
 
     try {
-      const result = await dispatch(fetchTaskDocuments(taskId)).unwrap();
+      const [docsResult] = await Promise.all([
+        dispatch(fetchTaskDocuments(taskId)).unwrap(),
+        axios
+          .get(`/api/tasks/${taskId}/responses`, {
+            headers: { Authorization: `Bearer ${sessionToken}` },
+          })
+          .then((r) =>
+            setTaskFormResponses((prev) => ({
+              ...prev,
+              [taskId]: { loading: false, responses: r.data.responses || [] },
+            })),
+          )
+          .catch(() =>
+            setTaskFormResponses((prev) => ({
+              ...prev,
+              [taskId]: { loading: false, responses: [] },
+            })),
+          ),
+      ]);
       setTaskDocuments((prev) => ({
         ...prev,
-        [taskId]: {
-          ...result,
-          loading: false,
-        },
+        [taskId]: { ...docsResult, loading: false },
       }));
     } catch (error) {
-      console.error("Error fetching documents:", error);
+      logger.error("Error fetching documents:", error);
       setTaskDocuments((prev) => ({
         ...prev,
         [taskId]: {
@@ -169,7 +345,7 @@ export function LoanOverlay({
 
   const handleApproveTask = async (taskId: number) => {
     try {
-      setIsSubmitting(true);
+      setApprovingTaskId(taskId);
       await axios.post(
         `/api/tasks/${taskId}/approve`,
         {},
@@ -190,14 +366,14 @@ export function LoanOverlay({
         await dispatch(fetchLoanDetails(selectedLoan.id));
       }
     } catch (error: any) {
-      console.error("Error approving task:", error);
+      logger.error("Error approving task:", error);
       toast({
         title: "Error",
         description: error.response?.data?.error || "Failed to approve task",
         variant: "destructive",
       });
     } finally {
-      setIsSubmitting(false);
+      setApprovingTaskId(null);
     }
   };
 
@@ -253,7 +429,7 @@ export function LoanOverlay({
       setPendingStatusChange(null);
       setStatusChangeComment("");
     } catch (error: any) {
-      console.error("Error updating task status:", error);
+      logger.error("Error updating task status:", error);
       toast({
         title: "Error",
         description: error || "Failed to update task status",
@@ -267,7 +443,9 @@ export function LoanOverlay({
   const handleOpenReopenDialog = (taskId: number) => {
     setSelectedTaskId(taskId);
     setReopenReason("");
+    setSelectedReopenTemplateId("");
     setReopenDialogOpen(true);
+    dispatch(fetchEmailTemplates());
   };
 
   const handleReopenTask = async () => {
@@ -302,13 +480,14 @@ export function LoanOverlay({
       setReopenDialogOpen(false);
       setSelectedTaskId(null);
       setReopenReason("");
+      setSelectedReopenTemplateId("");
 
       // Refresh loan details
       if (selectedLoan) {
         await dispatch(fetchLoanDetails(selectedLoan.id));
       }
     } catch (error: any) {
-      console.error("Error reopening task:", error);
+      logger.error("Error reopening task:", error);
       toast({
         title: "Error",
         description: error.response?.data?.error || "Failed to reopen task",
@@ -344,7 +523,7 @@ export function LoanOverlay({
         await dispatch(fetchLoanDetails(selectedLoan.id));
       }
     } catch (error: any) {
-      console.error("Error deleting task:", error);
+      logger.error("Error deleting task:", error);
       toast({
         title: "Error",
         description: error || "Failed to delete task",
@@ -398,7 +577,7 @@ export function LoanOverlay({
         await dispatch(fetchLoanDetails(selectedLoan.id));
       }
     } catch (error: any) {
-      console.error("Error bulk deleting tasks:", error);
+      logger.error("Error bulk deleting tasks:", error);
       toast({
         title: "Error",
         description: error || "Failed to delete tasks",
@@ -440,7 +619,7 @@ export function LoanOverlay({
         description: "The MISMO file has been generated and downloaded.",
       });
     } catch (error: any) {
-      console.error("Error exporting MISMO:", error);
+      logger.error("Error exporting MISMO:", error);
       toast({
         title: "Export Failed",
         description:
@@ -453,11 +632,40 @@ export function LoanOverlay({
     }
   };
 
-  const toggleTask = (taskId: number) => {
-    setExpandedTasks((prev) => ({
+  const handleViewTaskSignatures = async (taskId: number) => {
+    if (taskSignatures[taskId]?.loading) return;
+    setTaskSignatures((prev) => ({
       ...prev,
-      [taskId]: !prev[taskId],
+      [taskId]: { loading: true, signatures: [], sign_document: null },
     }));
+    try {
+      const result = await dispatch(fetchTaskSignatures(taskId)).unwrap();
+      setTaskSignatures((prev) => ({
+        ...prev,
+        [taskId]: {
+          loading: false,
+          signatures: result.signatures,
+          sign_document: result.sign_document,
+        },
+      }));
+    } catch {
+      setTaskSignatures((prev) => ({
+        ...prev,
+        [taskId]: { loading: false, signatures: [], sign_document: null },
+      }));
+    }
+  };
+
+  const toggleTask = (taskId: number, taskType?: string) => {
+    const willOpen = !expandedTasks[taskId];
+    setExpandedTasks((prev) => ({ ...prev, [taskId]: willOpen }));
+    if (willOpen) {
+      if (taskType === "document_signing") {
+        if (!taskSignatures[taskId]) handleViewTaskSignatures(taskId);
+      } else {
+        if (!taskDocuments[taskId]) handleViewTaskDocuments(taskId);
+      }
+    }
   };
 
   const formatCurrency = (amount: number) => {
@@ -547,7 +755,7 @@ export function LoanOverlay({
       // Refresh loan details to show new tasks
       await dispatch(fetchLoanDetails(selectedLoan.id));
     } catch (error: any) {
-      console.error("Error adding tasks:", error);
+      logger.error("Error adding tasks:", error);
       toast({
         title: "Error",
         description: error.message || "Failed to add tasks.",
@@ -624,11 +832,16 @@ export function LoanOverlay({
 
   // Check if all tasks are fully completed (approved) for MISMO export
   const areAllTasksCompleted = totalTasks > 0 && approvedTasks === totalTasks;
-  const canExportMISMO = sessionToken && areAllTasksCompleted; // Only brokers/admins with completed tasks
+  const canExportMISMO =
+    sessionToken && areAllTasksCompleted && user?.role !== "broker"; // Partners cannot export MISMO
+  const isPartner = user?.role === "broker";
+  const canShowPreApproval = sessionToken && areAllTasksCompleted; // Only when all tasks are approved
+  const partnerAwaitingLetter =
+    isPartner && canShowPreApproval && !preApprovalLetter; // Partner: tasks done but MB hasn't set amount
 
   return (
     <Sheet open={isOpen} onOpenChange={onClose}>
-      <SheetContent className="w-full sm:max-w-3xl overflow-y-auto bg-white">
+      <SheetContent className="w-full sm:max-w-3xl overflow-y-auto bg-white max-h-screen">
         {isLoadingDetails ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
@@ -639,10 +852,10 @@ export function LoanOverlay({
         ) : selectedLoan ? (
           <>
             <SheetHeader className="border-b border-gray-100 pb-4 mb-6">
-              <SheetTitle className="text-2xl font-bold text-gray-900">
+              <SheetTitle className="text-xl sm:text-2xl font-bold text-gray-900 leading-tight">
                 {selectedLoan.client_first_name} {selectedLoan.client_last_name}
               </SheetTitle>
-              <div className="flex items-center gap-3 mt-3 flex-wrap">
+              <div className="flex items-center gap-2 mt-3 flex-wrap">
                 <Badge
                   className={cn(
                     "text-xs font-medium px-3 py-1",
@@ -659,7 +872,9 @@ export function LoanOverlay({
                   {selectedLoan.priority} priority
                 </Badge>
                 <Badge className="bg-gray-100 text-gray-700 border-gray-200 text-xs px-3 py-1">
-                  {selectedLoan.status.replace("_", " ")}
+                  {PIPELINE_STATUSES.find(
+                    (s) => s.value === selectedLoan.status,
+                  )?.label ?? selectedLoan.status.replace(/_/g, " ")}
                 </Badge>
                 {canExportMISMO ? (
                   <Button
@@ -672,33 +887,214 @@ export function LoanOverlay({
                     <Download className="h-3 w-3" />
                     {isSubmitting ? "Generating..." : "Export MISMO"}
                   </Button>
+                ) : user?.role !== "broker" &&
+                  totalTasks > 0 &&
+                  !areAllTasksCompleted ? (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          tabIndex={0}
+                          className="inline-flex cursor-not-allowed"
+                        >
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled
+                            className="gap-2 h-8 px-3 text-xs border-gray-200 text-gray-500 bg-gray-50 pointer-events-none"
+                          >
+                            <Download className="h-3 w-3" />
+                            Export MISMO
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Complete all tasks to export MISMO ({approvedTasks}/
+                        {totalTasks} approved)
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : user?.role !== "broker" && totalTasks === 0 ? (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          tabIndex={0}
+                          className="inline-flex cursor-not-allowed"
+                        >
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled
+                            className="gap-2 h-8 px-3 text-xs border-gray-200 text-gray-500 bg-gray-50 pointer-events-none"
+                          >
+                            <Download className="h-3 w-3" />
+                            Export MISMO
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Add tasks before exporting MISMO
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : null}
+
+                {/* Pre-Approval Letter Button */}
+                {partnerAwaitingLetter ? (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          tabIndex={0}
+                          className="inline-flex cursor-not-allowed"
+                        >
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled
+                            className="gap-2 h-8 px-3 text-xs border-amber-200 text-amber-500 bg-amber-50 pointer-events-none"
+                          >
+                            <Award className="h-3 w-3" />
+                            Pre-Approval Letter
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Waiting for Mortgage Banker to set the approved amount
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : canShowPreApproval ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPreApprovalLetterOpen(true)}
+                    className={cn(
+                      "gap-2 h-8 px-3 text-xs transition-colors duration-200",
+                      preApprovalLetter?.is_active
+                        ? "border-red-200 text-red-700 hover:bg-red-50 hover:border-red-300"
+                        : "border-gray-200 text-gray-600 hover:bg-gray-50",
+                    )}
+                  >
+                    <Award className="h-3 w-3" />
+                    {preApprovalLetter
+                      ? "View Pre-Approval"
+                      : "Pre-Approval Letter"}
+                  </Button>
                 ) : totalTasks > 0 && !areAllTasksCompleted ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled
-                    className="gap-2 h-8 px-3 text-xs border-gray-200 text-gray-500 bg-gray-50 cursor-not-allowed"
-                    title={`Complete all tasks to export MISMO (${approvedTasks}/${totalTasks} approved)`}
-                  >
-                    <Download className="h-3 w-3" />
-                    Export MISMO
-                  </Button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          tabIndex={0}
+                          className="inline-flex cursor-not-allowed"
+                        >
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled
+                            className="gap-2 h-8 px-3 text-xs border-gray-200 text-gray-400 bg-gray-50 pointer-events-none"
+                          >
+                            <Award className="h-3 w-3" />
+                            Pre-Approval Letter
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        All tasks must be approved ({approvedTasks}/{totalTasks}{" "}
+                        done)
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 ) : totalTasks === 0 ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled
-                    className="gap-2 h-8 px-3 text-xs border-gray-200 text-gray-500 bg-gray-50 cursor-not-allowed"
-                    title="Add tasks before exporting MISMO"
-                  >
-                    <Download className="h-3 w-3" />
-                    Export MISMO
-                  </Button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          tabIndex={0}
+                          className="inline-flex cursor-not-allowed"
+                        >
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled
+                            className="gap-2 h-8 px-3 text-xs border-gray-200 text-gray-400 bg-gray-50 pointer-events-none"
+                          >
+                            <Award className="h-3 w-3" />
+                            Pre-Approval Letter
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Add and approve tasks before issuing a Pre-Approval
+                        Letter
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 ) : null}
               </div>
             </SheetHeader>
 
             <div className="space-y-6">
+              {/* Pre-Approval Letter Banner — shown when all tasks done and letter exists */}
+              {areAllTasksCompleted && preApprovalLetter?.is_active && (
+                <div
+                  className="flex items-start sm:items-center justify-between gap-3 p-4 rounded-xl bg-gradient-to-r from-red-50 to-rose-50 border border-red-200 cursor-pointer hover:border-red-300 hover:shadow-sm transition-all duration-200"
+                  onClick={() => setPreApprovalLetterOpen(true)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) =>
+                    e.key === "Enter" && setPreApprovalLetterOpen(true)
+                  }
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-red-100 rounded-lg shrink-0">
+                      <Award className="h-5 w-5 text-red-600" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-red-900">
+                        Pre-Approved:{" "}
+                        {new Intl.NumberFormat("en-US", {
+                          style: "currency",
+                          currency: "USD",
+                          minimumFractionDigits: 0,
+                        }).format(preApprovalLetter.approved_amount)}
+                      </p>
+                      <p className="text-xs text-red-600 flex items-center gap-1 flex-wrap">
+                        <Shield className="h-3 w-3" />
+                        Max:{" "}
+                        {new Intl.NumberFormat("en-US", {
+                          style: "currency",
+                          currency: "USD",
+                          minimumFractionDigits: 0,
+                        }).format(preApprovalLetter.max_approved_amount)}
+                        {preApprovalLetter.expires_at && (
+                          <span className="ml-2">
+                            · Expires{" "}
+                            {new Date(
+                              preApprovalLetter.expires_at.slice(0, 10) +
+                                "T12:00:00",
+                            ).toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                            })}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Badge className="hidden sm:flex bg-red-100 text-red-700 border-red-200 text-xs">
+                      <CheckCircle2 className="h-3 w-3 mr-1" />
+                      Letter Active
+                    </Badge>
+                    <ExternalLink className="h-4 w-4 text-red-400" />
+                  </div>
+                </div>
+              )}
+
               {/* Loan Overview */}
               <Card className="border-gray-200 shadow-sm">
                 <CardHeader className="pb-3 border-b border-gray-100">
@@ -764,6 +1160,181 @@ export function LoanOverlay({
                 </CardContent>
               </Card>
 
+              {/* Broker Assignment */}
+              {(user?.role === "admin" || user?.role === "superadmin") && (
+                <Card className="border-gray-200 shadow-sm">
+                  <CardHeader className="pb-3 border-b border-gray-100">
+                    <CardTitle className="text-lg flex items-center gap-2 text-gray-900">
+                      <UserPlus className="h-5 w-5 text-blue-600" />
+                      Assigned Mortgage Banker
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-4">
+                    {selectedLoan.effective_broker_first_name ||
+                    selectedLoan.broker_first_name ? (
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
+                          <User className="h-4 w-4 text-blue-600" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">
+                            {selectedLoan.effective_broker_first_name ||
+                              selectedLoan.broker_first_name}{" "}
+                            {selectedLoan.effective_broker_last_name ||
+                              selectedLoan.broker_last_name}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {selectedLoan.broker_user_id
+                              ? "Currently assigned"
+                              : "Via partner assignment"}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 mb-3 p-2 rounded-lg bg-amber-50 border border-amber-200">
+                        <UserX className="h-4 w-4 text-amber-600" />
+                        <span className="text-sm text-amber-700 font-medium">
+                          No mortgage banker assigned
+                        </span>
+                      </div>
+                    )}
+                    <Select
+                      value={
+                        selectedLoan.broker_user_id ||
+                        selectedLoan.effective_broker_id
+                          ? String(
+                              selectedLoan.broker_user_id ||
+                                selectedLoan.effective_broker_id,
+                            )
+                          : "unassigned"
+                      }
+                      onValueChange={handleAssignBroker}
+                      disabled={isAssigning}
+                    >
+                      <SelectTrigger className="h-9 text-sm">
+                        <SelectValue placeholder="Select mortgage banker..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="unassigned">Unassigned</SelectItem>
+                        {brokers
+                          .filter(
+                            (b) => b.status === "active" && b.role === "admin",
+                          )
+                          .map((broker) => (
+                            <SelectItem
+                              key={broker.id}
+                              value={String(broker.id)}
+                            >
+                              {broker.first_name} {broker.last_name} (Mortgage
+                              Banker)
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Partner Assignment */}
+              {(user?.role === "admin" || user?.role === "superadmin") && (
+                <Card className="border-gray-200 shadow-sm">
+                  <CardHeader className="pb-3 border-b border-gray-100">
+                    <CardTitle className="text-lg flex items-center gap-2 text-gray-900">
+                      <Users className="h-5 w-5 text-violet-600" />
+                      Assigned Partner
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-4">
+                    {selectedLoan.partner_first_name ? (
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="h-8 w-8 rounded-full bg-violet-100 flex items-center justify-center">
+                          <User className="h-4 w-4 text-violet-600" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">
+                            {selectedLoan.partner_first_name}{" "}
+                            {selectedLoan.partner_last_name}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            Currently assigned
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 mb-3 p-2 rounded-lg bg-amber-50 border border-amber-200">
+                        <UserX className="h-4 w-4 text-amber-600" />
+                        <span className="text-sm text-amber-700 font-medium">
+                          No partner assigned
+                        </span>
+                      </div>
+                    )}
+                    <Select
+                      value={
+                        selectedLoan.partner_broker_id
+                          ? String(selectedLoan.partner_broker_id)
+                          : "unassigned"
+                      }
+                      onValueChange={handleAssignPartner}
+                      disabled={isAssigningPartner}
+                    >
+                      <SelectTrigger className="h-9 text-sm">
+                        <SelectValue placeholder="Select partner..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="unassigned">Unassigned</SelectItem>
+                        {brokers
+                          .filter((b) => b.status === "active")
+                          .map((broker) => (
+                            <SelectItem
+                              key={broker.id}
+                              value={String(broker.id)}
+                            >
+                              {broker.first_name} {broker.last_name}
+                              {broker.role === "admin"
+                                ? " (Mortgage Banker)"
+                                : " (Partner)"}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Pipeline Status — admin/mortgage banker only */}
+              {(user?.role === "admin" || user?.role === "superadmin") && (
+                <Card className="border-gray-200 shadow-sm">
+                  <CardHeader className="pb-3 border-b border-gray-100">
+                    <CardTitle className="text-lg flex items-center gap-2 text-gray-900">
+                      <ArrowRightLeft className="h-5 w-5 text-blue-600" />
+                      Pipeline Status
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-4">
+                    <p className="text-xs text-gray-500 mb-3">
+                      Only mortgage bankers can manually move the pipeline
+                      status.
+                    </p>
+                    <Select
+                      value={selectedLoan.status}
+                      onValueChange={handlePipelineStatusChange}
+                      disabled={isUpdatingPipelineStatus}
+                    >
+                      <SelectTrigger className="h-9 text-sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PIPELINE_STATUSES.map((s) => (
+                          <SelectItem key={s.value} value={s.value}>
+                            {s.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Task Progress */}
               <Card className="border-gray-200 shadow-sm">
                 <CardHeader className="pb-3 border-b border-gray-100">
@@ -797,11 +1368,12 @@ export function LoanOverlay({
                           <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
                           <div className="text-xs">
                             <p className="text-amber-800 font-medium mb-1">
-                              MISMO Export Unavailable
+                              MISMO Export & Preapproval Letter are locked until
+                              all tasks are approved.
                             </p>
                             <p className="text-amber-700">
-                              All tasks must be approved before MISMO export is
-                              available.
+                              All tasks must be approved to ensure data accuracy
+                              and compliance. There are currently
                               {totalTasks - approvedTasks} task
                               {totalTasks - approvedTasks !== 1 ? "s" : ""}{" "}
                               remaining.
@@ -817,12 +1389,12 @@ export function LoanOverlay({
               {/* Tasks Section */}
               <Card className="border-gray-200 shadow-sm">
                 <CardHeader className="pb-3 border-b border-gray-100">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
                     <CardTitle className="text-lg flex items-center gap-2 text-gray-900">
                       <FileText className="h-5 w-5 text-blue-600" />
                       Tasks
                     </CardTitle>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <Button
                         variant="outline"
                         size="sm"
@@ -864,7 +1436,7 @@ export function LoanOverlay({
                       <Collapsible
                         key={task.id}
                         open={expandedTasks[task.id]}
-                        onOpenChange={() => toggleTask(task.id)}
+                        onOpenChange={() => toggleTask(task.id, task.task_type)}
                       >
                         <div className="p-4 border border-gray-200 rounded-lg bg-white hover:shadow-sm transition-shadow">
                           <div className="flex items-start gap-3">
@@ -894,7 +1466,7 @@ export function LoanOverlay({
                               </div>
                             </div>
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-start justify-between gap-2">
+                              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
                                 <h4
                                   className={cn(
                                     "font-medium text-sm text-gray-900",
@@ -918,7 +1490,7 @@ export function LoanOverlay({
                                   >
                                     <SelectTrigger
                                       className={cn(
-                                        "h-7 text-xs w-32 border",
+                                        "h-7 text-xs w-full sm:w-32 border",
                                         getTaskStatusColor(task.status),
                                       )}
                                     >
@@ -979,8 +1551,14 @@ export function LoanOverlay({
                                     size="sm"
                                     className="h-8 text-xs gap-1 text-gray-600 hover:text-dark hover:bg-gray-50 hover:border-gray-300 transition-colors duration-200"
                                   >
-                                    <File className="h-3 w-3" />
-                                    Documents
+                                    {task.task_type === "document_signing" ? (
+                                      <PenTool className="h-3 w-3" />
+                                    ) : (
+                                      <File className="h-3 w-3" />
+                                    )}
+                                    {task.task_type === "document_signing"
+                                      ? "Signatures"
+                                      : "Documents"}
                                     {expandedTasks[task.id] ? (
                                       <ChevronUp className="h-3 w-3" />
                                     ) : (
@@ -989,18 +1567,18 @@ export function LoanOverlay({
                                   </Button>
                                 </CollapsibleTrigger>
 
-                                {/* Approve/Reopen buttons for completed tasks */}
-                                {task.status === "completed" && (
+                                {/* Approve/Reopen buttons for tasks pending approval */}
+                                {task.status === "pending_approval" && (
                                   <>
                                     <Button
                                       variant="outline"
                                       size="sm"
                                       className="h-8 text-xs gap-1 border-green-200 text-green-700 hover:bg-green-50 hover:border-green-300 hover:text-green-800 transition-colors duration-200"
                                       onClick={() => handleApproveTask(task.id)}
-                                      disabled={isSubmitting}
+                                      disabled={approvingTaskId === task.id}
                                     >
                                       <Check className="h-3 w-3" />
-                                      {isSubmitting
+                                      {approvingTaskId === task.id
                                         ? "Approving..."
                                         : "Approve"}
                                     </Button>
@@ -1038,16 +1616,161 @@ export function LoanOverlay({
 
                           <CollapsibleContent className="mt-4 pl-7">
                             <div className="space-y-3 bg-gray-50 p-4 rounded-lg border border-gray-200">
-                              {taskDocuments[task.id]?.loading ? (
+                              {task.task_type === "document_signing" ? (
+                                // ── Signing task: show signature summary ──
+                                taskSignatures[task.id]?.loading ? (
+                                  <p className="text-xs text-gray-500">
+                                    Loading signatures…
+                                  </p>
+                                ) : taskSignatures[task.id]?.sign_document ? (
+                                  <div className="space-y-3">
+                                    <h6 className="text-xs font-semibold text-gray-700 flex items-center gap-1">
+                                      <PenTool className="h-3 w-3 text-purple-600" />
+                                      Signed Document
+                                    </h6>
+                                    <div className="bg-white p-3 rounded border border-gray-200 space-y-2">
+                                      <p className="text-xs text-gray-600">
+                                        <span className="font-medium">
+                                          File:
+                                        </span>{" "}
+                                        {
+                                          taskSignatures[task.id].sign_document
+                                            .original_filename
+                                        }
+                                      </p>
+                                      <p className="text-xs text-gray-600">
+                                        <span className="font-medium">
+                                          Zones signed:
+                                        </span>{" "}
+                                        {
+                                          taskSignatures[task.id].signatures
+                                            .length
+                                        }{" "}
+                                        /{" "}
+                                        {taskSignatures[task.id].sign_document
+                                          .signature_zones?.length ?? 0}
+                                      </p>
+                                      {taskSignatures[task.id].signatures
+                                        .length > 0 && (
+                                        <div className="flex flex-wrap gap-2 mt-2">
+                                          {taskSignatures[
+                                            task.id
+                                          ].signatures.map((sig: any) => {
+                                            const zone = taskSignatures[
+                                              task.id
+                                            ].sign_document.signature_zones?.find(
+                                              (z: any) => z.id === sig.zone_id,
+                                            );
+                                            return (
+                                              <div
+                                                key={sig.id}
+                                                className="flex flex-col items-center gap-1"
+                                              >
+                                                <img
+                                                  src={sig.signature_data}
+                                                  alt={
+                                                    zone?.label ?? "Signature"
+                                                  }
+                                                  className="h-12 w-24 object-contain border border-green-300 rounded bg-white"
+                                                />
+                                                <span className="text-xs text-gray-500">
+                                                  {zone?.label ?? "Zone"}
+                                                </span>
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-7 text-xs gap-1 mt-1"
+                                        onClick={() =>
+                                          setViewSignatureTaskId(task.id)
+                                        }
+                                      >
+                                        <ExternalLink className="h-3 w-3" />
+                                        View in PDF
+                                      </Button>
+                                    </div>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() =>
+                                        handleViewTaskSignatures(task.id)
+                                      }
+                                      className="h-7 text-xs w-full mt-1 hover:bg-gray-100 transition-colors duration-200"
+                                    >
+                                      Refresh
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-2">
+                                    <p className="text-xs text-muted-foreground">
+                                      No signatures submitted yet.
+                                    </p>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() =>
+                                        handleViewTaskSignatures(task.id)
+                                      }
+                                      className="h-7 text-xs w-full hover:bg-gray-100 transition-colors duration-200"
+                                    >
+                                      Refresh
+                                    </Button>
+                                  </div>
+                                )
+                              ) : taskDocuments[task.id]?.loading ? (
                                 <p className="text-xs text-gray-500">
-                                  Loading documents...
+                                  Loading…
                                 </p>
                               ) : (
                                 <>
-                                  {/* PDFs */}
+                                  {/* ── Form Responses ─────────────────── */}
+                                  {taskFormResponses[
+                                    task.id
+                                  ]?.responses?.filter(
+                                    (r) =>
+                                      r.field_value !== null &&
+                                      r.field_value !== undefined &&
+                                      r.field_value !== "",
+                                  ).length > 0 && (
+                                    <div>
+                                      <h6 className="text-xs font-semibold mb-2 text-gray-700 flex items-center gap-1">
+                                        <FileText className="h-3 w-3 text-blue-600" />
+                                        Form Responses
+                                      </h6>
+                                      <div className="space-y-2">
+                                        {taskFormResponses[task.id].responses
+                                          .filter(
+                                            (r) =>
+                                              r.field_value !== null &&
+                                              r.field_value !== undefined &&
+                                              r.field_value !== "",
+                                          )
+                                          .map((r: any) => (
+                                            <div
+                                              key={r.field_id}
+                                              className="bg-white p-2 rounded border border-gray-200"
+                                            >
+                                              <p className="text-xs text-gray-500 font-medium">
+                                                {r.field_label}
+                                              </p>
+                                              <p className="text-xs text-gray-800 mt-0.5 break-words">
+                                                {r.field_value}
+                                              </p>
+                                            </div>
+                                          ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* ── PDF Documents ──────────────────── */}
                                   {taskDocuments[task.id]?.pdfs?.length > 0 && (
                                     <div>
-                                      <h6 className="text-xs font-semibold mb-2 text-gray-700">
+                                      <h6 className="text-xs font-semibold mb-2 text-gray-700 flex items-center gap-1">
+                                        <File className="h-3 w-3 text-red-600" />
                                         PDF Documents
                                       </h6>
                                       <div className="space-y-2">
@@ -1057,17 +1780,17 @@ export function LoanOverlay({
                                               key={idx}
                                               className="flex items-center justify-between bg-white p-2 rounded border border-gray-200"
                                             >
-                                              <div className="flex items-center gap-2">
-                                                <File className="h-3 w-3 text-red-600" />
-                                                <span className="text-xs text-gray-700">
-                                                  {doc.document_name}
+                                              <div className="flex items-center gap-2 min-w-0">
+                                                <File className="h-3 w-3 text-red-600 shrink-0" />
+                                                <span className="text-xs text-gray-700 truncate">
+                                                  {doc.filename}
                                                 </span>
                                               </div>
                                               <a
-                                                href={doc.file_url}
+                                                href={doc.path}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                                                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 shrink-0 ml-2"
                                               >
                                                 <ExternalLink className="h-3 w-3" />
                                                 View
@@ -1079,32 +1802,37 @@ export function LoanOverlay({
                                     </div>
                                   )}
 
-                                  {/* Images */}
+                                  {/* ── Images ─────────────────────────── */}
                                   {(taskDocuments[task.id]?.images?.main ||
                                     taskDocuments[task.id]?.images?.extra
                                       ?.length > 0) && (
                                     <div>
-                                      <h6 className="text-xs font-semibold mb-1">
+                                      <h6 className="text-xs font-semibold mb-2 text-gray-700 flex items-center gap-1">
+                                        <Image className="h-3 w-3 text-blue-600" />
                                         Images
                                       </h6>
                                       <div className="space-y-1">
                                         {taskDocuments[task.id]?.images
                                           ?.main && (
-                                          <div className="flex items-center gap-2">
-                                            <Image className="h-3 w-3 text-blue-600" />
-                                            <span className="text-xs">
-                                              Main image
-                                            </span>
+                                          <div className="flex items-center justify-between bg-white p-2 rounded border border-gray-200">
+                                            <div className="flex items-center gap-2 min-w-0">
+                                              <Image className="h-3 w-3 text-blue-600 shrink-0" />
+                                              <span className="text-xs text-gray-700 truncate">
+                                                {taskDocuments[task.id].images
+                                                  .main.filename || "Image"}
+                                              </span>
+                                            </div>
                                             <a
                                               href={
                                                 taskDocuments[task.id].images
-                                                  .main.file_url
+                                                  .main.path
                                               }
                                               target="_blank"
                                               rel="noopener noreferrer"
-                                              className="text-xs text-primary hover:underline"
+                                              className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 shrink-0 ml-2"
                                             >
                                               <ExternalLink className="h-3 w-3" />
+                                              View
                                             </a>
                                           </div>
                                         )}
@@ -1114,19 +1842,23 @@ export function LoanOverlay({
                                           (img: any, idx: number) => (
                                             <div
                                               key={idx}
-                                              className="flex items-center gap-2"
+                                              className="flex items-center justify-between bg-white p-2 rounded border border-gray-200"
                                             >
-                                              <Image className="h-3 w-3 text-blue-600" />
-                                              <span className="text-xs">
-                                                Extra image {idx + 1}
-                                              </span>
+                                              <div className="flex items-center gap-2 min-w-0">
+                                                <Image className="h-3 w-3 text-blue-600 shrink-0" />
+                                                <span className="text-xs text-gray-700 truncate">
+                                                  {img.filename ||
+                                                    `Image ${idx + 2}`}
+                                                </span>
+                                              </div>
                                               <a
-                                                href={img.file_url}
+                                                href={img.path}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="text-xs text-primary hover:underline"
+                                                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 shrink-0 ml-2"
                                               >
                                                 <ExternalLink className="h-3 w-3" />
+                                                View
                                               </a>
                                             </div>
                                           ),
@@ -1135,25 +1867,33 @@ export function LoanOverlay({
                                     </div>
                                   )}
 
-                                  {/* No documents message */}
+                                  {/* ── Empty state ────────────────────── */}
                                   {!taskDocuments[task.id]?.pdfs?.length &&
                                     !taskDocuments[task.id]?.images?.main &&
                                     !taskDocuments[task.id]?.images?.extra
-                                      ?.length && (
+                                      ?.length &&
+                                    !taskFormResponses[
+                                      task.id
+                                    ]?.responses?.filter((r) => r.field_value)
+                                      .length && (
                                       <p className="text-xs text-muted-foreground">
-                                        No documents uploaded yet
+                                        No documents or form responses yet.
                                       </p>
                                     )}
                                 </>
                               )}
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleViewTaskDocuments(task.id)}
-                                className="h-7 text-xs w-full mt-2 hover:bg-gray-100 transition-colors duration-200"
-                              >
-                                Refresh Documents
-                              </Button>
+                              {task.task_type !== "document_signing" && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() =>
+                                    handleViewTaskDocuments(task.id)
+                                  }
+                                  className="h-7 text-xs w-full mt-2 hover:bg-gray-100 transition-colors duration-200"
+                                >
+                                  Refresh
+                                </Button>
+                              )}
                             </div>
                           </CollapsibleContent>
                         </div>
@@ -1209,6 +1949,52 @@ export function LoanOverlay({
         )}
       </SheetContent>
 
+      {/* View Signed Document Dialog */}
+      {viewSignatureTaskId !== null &&
+        taskSignatures[viewSignatureTaskId]?.sign_document && (
+          <Dialog
+            open={viewSignatureTaskId !== null}
+            onOpenChange={(open) => {
+              if (!open) setViewSignatureTaskId(null);
+            }}
+          >
+            <DialogContent className="w-[calc(100%-2rem)] max-w-3xl max-h-[90vh] overflow-y-auto">
+              <DialogTitle className="flex items-center gap-2">
+                <PenTool className="h-5 w-5 text-purple-600" />
+                Signed Document —{" "}
+                {
+                  taskSignatures[viewSignatureTaskId].sign_document
+                    .original_filename
+                }
+              </DialogTitle>
+              <DialogDescription>
+                Read-only view of the submitted signatures.{" "}
+                {taskSignatures[viewSignatureTaskId].signatures.length} of{" "}
+                {taskSignatures[viewSignatureTaskId].sign_document
+                  .signature_zones?.length ?? 0}{" "}
+                zone(s) signed.
+              </DialogDescription>
+              <PDFSigningViewer
+                pdfUrl={
+                  taskSignatures[viewSignatureTaskId].sign_document.file_path
+                }
+                zones={
+                  taskSignatures[viewSignatureTaskId].sign_document
+                    .signature_zones ?? []
+                }
+                existingSignatures={taskSignatures[
+                  viewSignatureTaskId
+                ].signatures.map((s: any) => ({
+                  zone_id: s.zone_id,
+                  signature_data: s.signature_data,
+                }))}
+                onSubmit={() => {}}
+                readOnly
+              />
+            </DialogContent>
+          </Dialog>
+        )}
+
       {/* Reopen Task Dialog */}
       <Dialog open={reopenDialogOpen} onOpenChange={setReopenDialogOpen}>
         <DialogContent
@@ -1223,12 +2009,59 @@ export function LoanOverlay({
             revised. The client will receive an email with your feedback.
           </DialogDescription>
           <div className="space-y-4 py-4">
-            <Textarea
-              placeholder="Example: The uploaded documents are not clear. Please re-upload high-quality scans..."
-              value={reopenReason}
-              onChange={(e) => setReopenReason(e.target.value)}
-              className="min-h-[100px]"
-            />
+            {/* Template selector */}
+            {/*             {emailTemplates.length > 0 && (
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-foreground">
+                  Use a message template
+                </label>
+                <Select
+                  value={selectedReopenTemplateId}
+                  onValueChange={(value) => {
+                    setSelectedReopenTemplateId(value);
+                    if (value) {
+                      const tpl = emailTemplates.find(
+                        (t) => String(t.id) === value,
+                      );
+                      if (tpl) {
+                        // Use plain text body if available, else strip HTML tags
+                        const body =
+                          tpl.body_text ||
+                          tpl.body_html.replace(/<[^>]*>/g, "").trim();
+                        setReopenReason(body);
+                      }
+                    }
+                  }}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select a template (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {emailTemplates
+                      .filter((t) => t.is_active)
+                      .map((tpl) => (
+                        <SelectItem key={tpl.id} value={String(tpl.id)}>
+                          {tpl.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Selecting a template will pre-fill the message below.
+                </p>
+              </div>
+            )} */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">
+                Feedback message <span className="text-destructive">*</span>
+              </label>
+              <Textarea
+                placeholder="Example: The uploaded documents are not clear. Please re-upload high-quality scans..."
+                value={reopenReason}
+                onChange={(e) => setReopenReason(e.target.value)}
+                className="min-h-[120px]"
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -1356,10 +2189,20 @@ export function LoanOverlay({
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Pre-Approval Letter Modal */}
+      {selectedLoan && (
+        <PreApprovalLetterModal
+          isOpen={preApprovalLetterOpen}
+          onClose={() => setPreApprovalLetterOpen(false)}
+          loanId={selectedLoan.id}
+          loanAmount={selectedLoan.loan_amount ?? 0}
+        />
+      )}
+
       {/* Add Tasks Dialog */}
       <Dialog open={addTasksDialogOpen} onOpenChange={setAddTasksDialogOpen}>
         <DialogContent
-          className="sm:max-w-md"
+          className="w-[calc(100%-2rem)] sm:max-w-md"
           aria-labelledby="add-tasks-dialog-title"
           aria-describedby="add-tasks-dialog-description"
         >

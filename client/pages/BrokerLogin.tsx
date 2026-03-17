@@ -90,6 +90,16 @@ export default function BrokerLogin() {
           transition={{ duration: 0.6 }}
           className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-primary via-primary/90 to-primary/80 relative overflow-hidden"
         >
+          {/* Background Image */}
+          <div className="absolute inset-0">
+            <img
+              src="https://images.unsplash.com/photo-1497366216548-37526070297c?w=1200&auto=format&fit=crop"
+              alt="Modern home"
+              className="w-full h-full object-cover opacity-40"
+            />
+            <div className="absolute inset-0 bg-gradient-to-br from-primary/85 via-primary/80 to-primary/75" />
+          </div>
+
           {/* Animated Background Elements */}
           <div className="absolute inset-0 opacity-10">
             <div className="absolute top-20 left-20 w-72 h-72 bg-white rounded-full blur-3xl animate-pulse"></div>
@@ -103,13 +113,29 @@ export default function BrokerLogin() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
             >
-              <div className="mb-6">
+              <button
+                onClick={() => navigate("/")}
+                className="mb-8 block transition-transform hover:scale-105"
+              >
                 <img
                   src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png"
-                  alt="The Mortgage Professionals CRM"
-                  className="h-16 w-auto filter brightness-0 invert"
+                  alt="The Mortgage Professionals"
+                  className="h-20 w-auto brightness-0 invert"
                 />
+              </button>
+
+              <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-sm px-4 py-2 rounded-full mb-8">
+                <Sparkles className="h-4 w-4" />
+                <span className="text-sm font-medium">Broker Portal</span>
               </div>
+
+              <h1 className="text-5xl font-bold mb-6 leading-tight">
+                Welcome to the
+                <br />
+                <span className="bg-gradient-to-r from-white to-primary-foreground/80 bg-clip-text text-transparent">
+                  Broker Portal
+                </span>
+              </h1>
 
               <p className="text-xl text-primary-foreground/90 mb-12 leading-relaxed">
                 Your powerful dashboard to manage clients, track applications,
@@ -176,11 +202,16 @@ export default function BrokerLogin() {
           >
             {/* Logo for mobile */}
             <div className="lg:hidden mb-8 text-center">
-              <img
-                src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png"
-                alt="The Mortgage Professionals CRM"
-                className="h-12 w-auto mx-auto mb-2"
-              />
+              <button
+                onClick={() => navigate("/")}
+                className="transition-transform hover:scale-105"
+              >
+                <img
+                  src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png"
+                  alt="The Mortgage Professionals"
+                  className="h-10 w-auto mx-auto mb-2"
+                />
+              </button>
               <p className="text-muted-foreground mt-2">Broker Portal</p>
             </div>
 

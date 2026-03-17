@@ -12,19 +12,34 @@ import type {
   CreateSmsTemplateRequest,
   UpdateSmsTemplateRequest,
   SmsTemplateResponse,
+  GetWhatsappTemplatesResponse,
+  WhatsappTemplate,
+  CreateWhatsappTemplateRequest,
+  UpdateWhatsappTemplateRequest,
+  WhatsappTemplateResponse,
+  PipelineStepTemplate,
+  GetPipelineStepTemplatesResponse,
+  UpsertPipelineStepTemplateRequest,
+  UpsertPipelineStepTemplateResponse,
 } from "@shared/api";
 
 interface CommunicationTemplatesState {
   emailTemplates: EmailTemplate[];
   smsTemplates: SmsTemplate[];
+  whatsappTemplates: WhatsappTemplate[];
+  pipelineStepTemplates: PipelineStepTemplate[];
   isLoading: boolean;
+  pipelineLoading: boolean;
   error: string | null;
 }
 
 const initialState: CommunicationTemplatesState = {
   emailTemplates: [],
   smsTemplates: [],
+  whatsappTemplates: [],
+  pipelineStepTemplates: [],
   isLoading: false,
+  pipelineLoading: false,
   error: null,
 };
 
@@ -197,6 +212,149 @@ export const deleteSmsTemplate = createAsyncThunk(
   },
 );
 
+// WhatsApp Templates Thunks
+export const fetchWhatsappTemplates = createAsyncThunk(
+  "communicationTemplates/fetchWhatsappTemplates",
+  async (_, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.get<GetWhatsappTemplatesResponse>(
+        "/api/whatsapp-templates",
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return data.templates;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to fetch WhatsApp templates",
+      );
+    }
+  },
+);
+
+export const createWhatsappTemplate = createAsyncThunk(
+  "communicationTemplates/createWhatsappTemplate",
+  async (
+    payload: CreateWhatsappTemplateRequest,
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.post<WhatsappTemplateResponse>(
+        "/api/whatsapp-templates",
+        payload,
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return data.template;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to create WhatsApp template",
+      );
+    }
+  },
+);
+
+export const updateWhatsappTemplate = createAsyncThunk(
+  "communicationTemplates/updateWhatsappTemplate",
+  async (
+    { id, ...payload }: UpdateWhatsappTemplateRequest & { id: number },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.put<WhatsappTemplateResponse>(
+        `/api/whatsapp-templates/${id}`,
+        payload,
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return data.template;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to update WhatsApp template",
+      );
+    }
+  },
+);
+
+export const deleteWhatsappTemplate = createAsyncThunk(
+  "communicationTemplates/deleteWhatsappTemplate",
+  async (id: number, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      await axios.delete(`/api/whatsapp-templates/${id}`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      return id;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to delete WhatsApp template",
+      );
+    }
+  },
+);
+
+// Pipeline Step Templates Thunks
+export const fetchPipelineStepTemplates = createAsyncThunk(
+  "communicationTemplates/fetchPipelineStepTemplates",
+  async (_, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.get<GetPipelineStepTemplatesResponse>(
+        "/api/pipeline-step-templates",
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return data.assignments;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error ||
+          "Failed to fetch pipeline step templates",
+      );
+    }
+  },
+);
+
+export const upsertPipelineStepTemplate = createAsyncThunk(
+  "communicationTemplates/upsertPipelineStepTemplate",
+  async (
+    payload: UpsertPipelineStepTemplateRequest,
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.put<UpsertPipelineStepTemplateResponse>(
+        "/api/pipeline-step-templates",
+        payload,
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return data.assignment;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to save pipeline step template",
+      );
+    }
+  },
+);
+
+export const deletePipelineStepTemplate = createAsyncThunk(
+  "communicationTemplates/deletePipelineStepTemplate",
+  async (
+    { step, channel }: { step: string; channel: string },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      await axios.delete(`/api/pipeline-step-templates/${step}/${channel}`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      return { step, channel };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error ||
+          "Failed to delete pipeline step template",
+      );
+    }
+  },
+);
+
 const communicationTemplatesSlice = createSlice({
   name: "communicationTemplates",
   initialState,
@@ -204,6 +362,8 @@ const communicationTemplatesSlice = createSlice({
     clearCommunicationTemplates: (state) => {
       state.emailTemplates = [];
       state.smsTemplates = [];
+      state.whatsappTemplates = [];
+      state.pipelineStepTemplates = [];
       state.error = null;
     },
   },
@@ -325,6 +485,117 @@ const communicationTemplatesSlice = createSlice({
       })
       .addCase(deleteSmsTemplate.rejected, (state, action) => {
         state.isLoading = false;
+        state.error = action.payload as string;
+      })
+      // Fetch WhatsApp templates
+      .addCase(fetchWhatsappTemplates.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(fetchWhatsappTemplates.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.whatsappTemplates = action.payload;
+      })
+      .addCase(fetchWhatsappTemplates.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      })
+      // Create WhatsApp template
+      .addCase(createWhatsappTemplate.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(createWhatsappTemplate.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.whatsappTemplates.unshift(action.payload);
+      })
+      .addCase(createWhatsappTemplate.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      })
+      // Update WhatsApp template
+      .addCase(updateWhatsappTemplate.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(updateWhatsappTemplate.fulfilled, (state, action) => {
+        state.isLoading = false;
+        const index = state.whatsappTemplates.findIndex(
+          (t) => t.id === action.payload.id,
+        );
+        if (index !== -1) state.whatsappTemplates[index] = action.payload;
+      })
+      .addCase(updateWhatsappTemplate.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      })
+      // Delete WhatsApp template
+      .addCase(deleteWhatsappTemplate.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(deleteWhatsappTemplate.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.whatsappTemplates = state.whatsappTemplates.filter(
+          (t) => t.id !== action.payload,
+        );
+      })
+      .addCase(deleteWhatsappTemplate.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = action.payload as string;
+      })
+      // Fetch pipeline step templates
+      .addCase(fetchPipelineStepTemplates.pending, (state) => {
+        state.pipelineLoading = true;
+        state.error = null;
+      })
+      .addCase(fetchPipelineStepTemplates.fulfilled, (state, action) => {
+        state.pipelineLoading = false;
+        state.pipelineStepTemplates = action.payload;
+      })
+      .addCase(fetchPipelineStepTemplates.rejected, (state, action) => {
+        state.pipelineLoading = false;
+        state.error = action.payload as string;
+      })
+      // Upsert pipeline step template
+      .addCase(upsertPipelineStepTemplate.pending, (state) => {
+        state.pipelineLoading = true;
+        state.error = null;
+      })
+      .addCase(upsertPipelineStepTemplate.fulfilled, (state, action) => {
+        state.pipelineLoading = false;
+        const idx = state.pipelineStepTemplates.findIndex(
+          (a) =>
+            a.pipeline_step === action.payload.pipeline_step &&
+            a.communication_type === action.payload.communication_type,
+        );
+        if (idx !== -1) {
+          state.pipelineStepTemplates[idx] = action.payload;
+        } else {
+          state.pipelineStepTemplates.push(action.payload);
+        }
+      })
+      .addCase(upsertPipelineStepTemplate.rejected, (state, action) => {
+        state.pipelineLoading = false;
+        state.error = action.payload as string;
+      })
+      // Delete pipeline step template
+      .addCase(deletePipelineStepTemplate.pending, (state) => {
+        state.pipelineLoading = true;
+        state.error = null;
+      })
+      .addCase(deletePipelineStepTemplate.fulfilled, (state, action) => {
+        state.pipelineLoading = false;
+        state.pipelineStepTemplates = state.pipelineStepTemplates.filter(
+          (a) =>
+            !(
+              a.pipeline_step === action.payload.step &&
+              a.communication_type === action.payload.channel
+            ),
+        );
+      })
+      .addCase(deletePipelineStepTemplate.rejected, (state, action) => {
+        state.pipelineLoading = false;
         state.error = action.payload as string;
       });
   },

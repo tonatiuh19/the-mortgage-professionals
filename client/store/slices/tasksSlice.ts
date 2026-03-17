@@ -1,7 +1,13 @@
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
 import axios from "axios";
 import type { RootState } from "../index";
-import type { GetTasksResponse, TaskFormFieldType } from "@shared/api";
+import type {
+  GetTasksResponse,
+  TaskFormFieldType,
+  SignatureZone,
+  TaskSignDocument,
+  TaskSignature,
+} from "@shared/api";
 
 interface FormField {
   id?: number;
@@ -369,6 +375,79 @@ export const submitTaskForm = createAsyncThunk(
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.error || "Failed to submit form",
+      );
+    }
+  },
+);
+
+export const saveSignDocument = createAsyncThunk(
+  "tasks/saveSignDocument",
+  async (
+    {
+      templateId,
+      file_path,
+      original_filename,
+      file_size,
+      signature_zones,
+    }: {
+      templateId: number;
+      file_path: string;
+      original_filename: string;
+      file_size?: number;
+      signature_zones: SignatureZone[];
+    },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.post(
+        `/api/tasks/${templateId}/sign-document`,
+        { file_path, original_filename, file_size, signature_zones },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return data.sign_document as TaskSignDocument;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to save sign document",
+      );
+    }
+  },
+);
+
+export const fetchSignDocument = createAsyncThunk(
+  "tasks/fetchSignDocument",
+  async (templateId: number, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.get(
+        `/api/tasks/${templateId}/sign-document`,
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return data.sign_document as TaskSignDocument | null;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to fetch sign document",
+      );
+    }
+  },
+);
+
+export const fetchTaskSignatures = createAsyncThunk(
+  "tasks/fetchSignatures",
+  async (taskId: number, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.get(`/api/tasks/${taskId}/signatures`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      return {
+        taskId,
+        signatures: data.signatures as TaskSignature[],
+        sign_document: data.sign_document as TaskSignDocument | null,
+      };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to fetch signatures",
       );
     }
   },

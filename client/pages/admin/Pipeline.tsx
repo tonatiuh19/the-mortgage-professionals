@@ -7,11 +7,13 @@ import {
   Filter,
   Calendar,
   User,
+  UserX,
   DollarSign,
   ChevronDown,
   Sparkles,
   TrendingUp,
   Clock,
+  Link2,
 } from "lucide-react";
 import { MetaHelmet } from "@/components/MetaHelmet";
 import { adminPageMeta } from "@/lib/seo-helpers";
@@ -41,6 +43,8 @@ import {
 } from "@/store/slices/pipelineSlice";
 import { LoanOverlay } from "@/components/LoanOverlay";
 import NewLoanWizard from "@/components/NewLoanWizard";
+import BrokerShareLinkModal from "@/components/BrokerShareLinkModal";
+import type { Broker } from "@shared/api";
 
 const Pipeline = () => {
   const dispatch = useAppDispatch();
@@ -63,6 +67,24 @@ const Pipeline = () => {
   const [showFilters, setShowFilters] = useState(false);
   const [activeFiltersCount, setActiveFiltersCount] = useState(0);
   const [isNewLoanOpen, setIsNewLoanOpen] = useState(false);
+  const [shareLinkOpen, setShareLinkOpen] = useState(false);
+  const { user } = useAppSelector((state) => state.brokerAuth);
+  const isPartner = user?.role === "broker";
+  const partnerAsBroker: Broker | null = user
+    ? {
+        id: user.id,
+        email: user.email,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        phone: user.phone ?? null,
+        role: user.role as "broker" | "admin",
+        status: user.status,
+        email_verified: user.email_verified,
+        last_login: user.last_login ?? null,
+        license_number: user.license_number ?? null,
+        specializations: user.specializations ?? null,
+      }
+    : null;
 
   useEffect(() => {
     // Fetch loans with current filters
@@ -113,84 +135,84 @@ const Pipeline = () => {
 
   const columns = [
     {
-      id: "draft",
-      name: "Draft",
+      id: "app_sent",
+      name: "App Sent",
       color: "bg-gray-50",
       headerColor: "bg-gray-100",
       textColor: "text-gray-700",
-      description: "Being prepared",
+      description: "Application sent to client",
     },
     {
-      id: "submitted",
-      name: "Submitted",
+      id: "application_received",
+      name: "Application Received",
       color: "bg-blue-50",
       headerColor: "bg-blue-100",
       textColor: "text-blue-700",
-      description: "Ready for review",
+      description: "Application received & reviewing",
     },
     {
-      id: "under_review",
-      name: "In Review",
+      id: "prequalified",
+      name: "Prequalified",
+      color: "bg-cyan-50",
+      headerColor: "bg-cyan-100",
+      textColor: "text-cyan-700",
+      description: "Client prequalified",
+    },
+    {
+      id: "preapproved",
+      name: "Preapproved",
+      color: "bg-teal-50",
+      headerColor: "bg-teal-100",
+      textColor: "text-teal-700",
+      description: "Client preapproved",
+    },
+    {
+      id: "under_contract_loan_setup",
+      name: "Under Contract / Loan Setup",
       color: "bg-yellow-50",
       headerColor: "bg-yellow-100",
       textColor: "text-yellow-700",
-      description: "Under analysis",
+      description: "Under contract, loan setup",
     },
     {
-      id: "documents_pending",
-      name: "Docs Required",
+      id: "submitted_to_underwriting",
+      name: "Submitted to Underwriting",
       color: "bg-orange-50",
       headerColor: "bg-orange-100",
       textColor: "text-orange-700",
-      description: "Awaiting documents",
+      description: "Submitted to underwriting",
     },
     {
-      id: "underwriting",
-      name: "Underwriting",
+      id: "approved_with_conditions",
+      name: "Approved with Conditions",
       color: "bg-purple-50",
       headerColor: "bg-purple-100",
       textColor: "text-purple-700",
-      description: "In underwriting",
-    },
-    {
-      id: "conditional_approval",
-      name: "Conditional",
-      color: "bg-indigo-50",
-      headerColor: "bg-indigo-100",
-      textColor: "text-indigo-700",
       description: "Conditions pending",
     },
     {
-      id: "approved",
-      name: "Approved",
+      id: "clear_to_close",
+      name: "Clear to Close",
+      color: "bg-indigo-50",
+      headerColor: "bg-indigo-100",
+      textColor: "text-indigo-700",
+      description: "Cleared for closing",
+    },
+    {
+      id: "docs_out",
+      name: "Docs Out",
       color: "bg-green-50",
       headerColor: "bg-green-100",
       textColor: "text-green-700",
-      description: "Ready to close",
+      description: "Closing documents sent",
     },
     {
-      id: "closed",
-      name: "Closed",
+      id: "loan_funded",
+      name: "Loan Funded",
       color: "bg-emerald-50",
       headerColor: "bg-emerald-100",
       textColor: "text-emerald-700",
-      description: "Successfully closed",
-    },
-    {
-      id: "denied",
-      name: "Denied",
-      color: "bg-red-50",
-      headerColor: "bg-red-100",
-      textColor: "text-red-700",
-      description: "Application denied",
-    },
-    {
-      id: "cancelled",
-      name: "Cancelled",
-      color: "bg-slate-50",
-      headerColor: "bg-slate-100",
-      textColor: "text-slate-700",
-      description: "Cancelled by client",
+      description: "Loan successfully funded",
     },
   ];
 
@@ -223,13 +245,13 @@ const Pipeline = () => {
       <div className="min-h-screen bg-gray-50">
         {/* Clean Modern Header */}
         <div className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
-          <div className="px-6 py-4">
-            <div className="flex items-center justify-between">
+          <div className="px-4 sm:px-6 py-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-4">
                   <div>
-                    <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-                      <Kanban className="h-8 w-8 text-primary" />
+                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
+                      <Kanban className="h-6 w-6 sm:h-8 sm:w-8 text-primary" />
                       Pipeline
                     </h1>
                     <div className="flex items-center gap-2">
@@ -243,7 +265,7 @@ const Pipeline = () => {
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                 {/* Clean Search */}
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -251,7 +273,7 @@ const Pipeline = () => {
                     placeholder="Search applications, clients..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10 w-80 h-10 bg-white border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                    className="pl-10 w-full sm:w-80 h-10 bg-white border-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                   />
                   {searchQuery && (
                     <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
@@ -379,12 +401,10 @@ const Pipeline = () => {
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="all">All Types</SelectItem>
-                              <SelectItem value="conventional">
-                                Conventional
+                              <SelectItem value="purchase">Purchase</SelectItem>
+                              <SelectItem value="refinance">
+                                Refinance
                               </SelectItem>
-                              <SelectItem value="fha">FHA</SelectItem>
-                              <SelectItem value="va">VA</SelectItem>
-                              <SelectItem value="usda">USDA</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -421,14 +441,24 @@ const Pipeline = () => {
                   </DropdownMenuContent>
                 </DropdownMenu>
 
-                {/* New Loan Button */}
-                <Button
-                  onClick={() => setIsNewLoanOpen(true)}
-                  className="gap-2 h-10 px-6 bg-primary text-white"
-                >
-                  <Plus className="h-4 w-4" />
-                  New Loan
-                </Button>
+                {/* New Loan / Get My Link Button */}
+                {isPartner ? (
+                  <Button
+                    onClick={() => setShareLinkOpen(true)}
+                    className="gap-2 h-10 px-6 bg-primary text-white"
+                  >
+                    <Link2 className="h-4 w-4" />
+                    Get My Link
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => setIsNewLoanOpen(true)}
+                    className="gap-2 h-10 px-6 bg-primary text-white"
+                  >
+                    <Plus className="h-4 w-4" />
+                    New Loan
+                  </Button>
+                )}
               </div>
             </div>
           </div>
@@ -526,6 +556,26 @@ const Pipeline = () => {
                             </div>
                           )}
 
+                          {/* Broker / Partner */}
+                          <div className="flex items-center gap-1">
+                            {loan.broker_first_name ||
+                            loan.partner_first_name ? (
+                              <>
+                                <User className="h-3 w-3 text-gray-400" />
+                                <span className="text-xs text-gray-500 truncate">
+                                  {loan.broker_first_name
+                                    ? `${loan.broker_first_name} ${loan.broker_last_name}`
+                                    : `${loan.partner_first_name} ${loan.partner_last_name}`}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                                <UserX className="h-3 w-3" />
+                                Unassigned
+                              </span>
+                            )}
+                          </div>
+
                           {/* Footer */}
                           <div className="flex items-center justify-between pt-2 border-t border-gray-100">
                             <div className="flex items-center gap-1">
@@ -601,6 +651,12 @@ const Pipeline = () => {
             });
             dispatch(fetchLoans(filtersToApply));
           }}
+        />
+        <BrokerShareLinkModal
+          open={shareLinkOpen}
+          onOpenChange={setShareLinkOpen}
+          broker={partnerAsBroker}
+          useSelfEndpoint
         />
       </div>
     </>

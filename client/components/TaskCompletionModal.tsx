@@ -4,9 +4,9 @@ import * as Yup from "yup";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,16 +20,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import {
   FileText,
   Upload,
   CheckCircle2,
-  AlertCircle,
   X,
   Loader2,
   Home as HomeIcon,
+  ClipboardList,
+  AlertCircle,
+  PenTool,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
@@ -38,15 +40,20 @@ import {
   uploadTaskDocument,
   saveTaskDocumentMetadata,
   completeTask,
-  saveTaskFormDraft,
-  clearTaskFormDraft,
-  selectTaskFormDraft,
+  submitTaskSignatures,
 } from "@/store/slices/clientPortalSlice";
+import PDFSigningViewer from "@/components/PDFSigningViewer";
 import { toast } from "@/hooks/use-toast";
 
 interface TaskCompletionModalProps {
   taskId: number | null;
   onClose: () => void;
+}
+
+interface UploadedFile {
+  fieldId: number;
+  file: File;
+  fileType: "pdf" | "image";
 }
 
 export const TaskCompletionModal: React.FC<TaskCompletionModalProps> = ({
@@ -57,644 +64,399 @@ export const TaskCompletionModal: React.FC<TaskCompletionModalProps> = ({
   const { taskDetails, taskDetailsLoading } = useAppSelector(
     (state) => state.clientPortal,
   );
-  const savedDraft = useAppSelector(selectTaskFormDraft(taskId || 0));
-  const [uploadedDocuments, setUploadedDocuments] = useState<
-    Array<{ fieldId?: number; file: File; fileType: "pdf" | "image" }>
-  >([]);
+  const [uploadedFiles, setUploadedFiles] = useState<Map<number, UploadedFile>>(
+    new Map(),
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [currentStep, setCurrentStep] = useState<
-    "form" | "documents" | "summary" | "complete"
-  >("form");
-  const [showDraftPrompt, setShowDraftPrompt] = useState(false);
+  const [isDone, setIsDone] = useState(false);
 
   useEffect(() => {
     if (taskId) {
       dispatch(fetchTaskDetails(taskId));
-      // Check if there's a saved draft only when opening the modal
-      const draft = selectTaskFormDraft(taskId)({
-        clientPortal: { taskFormDrafts: {} },
-      } as any);
-      if (savedDraft) {
-        setShowDraftPrompt(true);
-      }
+      setUploadedFiles(new Map());
+      setIsDone(false);
     }
   }, [taskId, dispatch]);
 
-  // Only check draft when taskId changes (modal opens), not when savedDraft updates
-  useEffect(() => {
-    if (taskId && savedDraft && !showDraftPrompt) {
-      // Only show prompt once when modal first opens
-      const hasChecked = sessionStorage.getItem(`draft-checked-${taskId}`);
-      if (!hasChecked) {
-        setShowDraftPrompt(true);
-        sessionStorage.setItem(`draft-checked-${taskId}`, "true");
-      }
-    }
-  }, [taskId]); // Only depend on taskId, not savedDraft
+  // ─── Separate input fields from file fields ────────────────────────────────
+  const allFields = taskDetails?.formFields ?? [];
+  const inputFields = allFields.filter(
+    (f) => !["file_pdf", "file_image", "file_upload"].includes(f.field_type),
+  );
+  const fileFields = allFields.filter((f) =>
+    ["file_pdf", "file_image", "file_upload"].includes(f.field_type),
+  );
+  const hasInputs = inputFields.length > 0;
+  const hasFiles = fileFields.length > 0;
 
-  // Debug: Log task details when they load
-  useEffect(() => {
-    if (taskDetails) {
-      console.log("Task Details Loaded:", taskDetails);
-      console.log("Form Fields:", taskDetails.formFields);
-      console.log("Required Documents:", taskDetails.requiredDocuments);
-    }
-  }, [taskDetails]);
-
-  // Build dynamic validation schema
+  // ─── Yup validation schema (only input fields) ─────────────────────────────
   const buildValidationSchema = () => {
-    if (!taskDetails?.formFields || taskDetails.formFields.length === 0) {
-      return Yup.object({});
-    }
-
-    const schemaFields: any = {};
-    taskDetails.formFields.forEach((field) => {
-      if (field.required) {
-        switch (field.field_type) {
-          case "email":
-            schemaFields[`field_${field.id}`] = Yup.string()
-              .email("Invalid email")
-              .required(`${field.field_label} is required`);
-            break;
-          case "number":
-            schemaFields[`field_${field.id}`] = Yup.number().required(
-              `${field.field_label} is required`,
-            );
-            break;
-          case "checkbox":
-            schemaFields[`field_${field.id}`] = Yup.boolean().oneOf(
-              [true],
-              `${field.field_label} must be checked`,
-            );
-            break;
-          default:
-            schemaFields[`field_${field.id}`] = Yup.string().required(
-              `${field.field_label} is required`,
-            );
-        }
+    if (inputFields.length === 0) return Yup.object({});
+    const shape: Record<string, any> = {};
+    inputFields.forEach((field) => {
+      if (!field.is_required) return;
+      const name = `field_${field.id}`;
+      switch (field.field_type) {
+        case "email":
+          shape[name] = Yup.string()
+            .email("Invalid email address")
+            .required(`${field.field_label} is required`);
+          break;
+        case "number":
+          shape[name] = Yup.number()
+            .typeError("Must be a number")
+            .required(`${field.field_label} is required`);
+          break;
+        case "checkbox":
+          shape[name] = Yup.boolean().oneOf(
+            [true],
+            `${field.field_label} must be checked`,
+          );
+          break;
+        default:
+          shape[name] = Yup.string().required(
+            `${field.field_label} is required`,
+          );
       }
     });
+    return Yup.object(shape);
+  };
 
-    return Yup.object(schemaFields);
+  const buildInitialValues = () => {
+    const vals: Record<string, any> = {};
+    inputFields.forEach((field) => {
+      vals[`field_${field.id}`] = field.field_type === "checkbox" ? false : "";
+    });
+    return vals;
   };
 
   const formik = useFormik({
-    initialValues: {},
+    initialValues: buildInitialValues(),
     validationSchema: buildValidationSchema(),
     enableReinitialize: true,
-    onSubmit: async (values) => {
-      // This is only called from the summary step for final submission
-      setIsSubmitting(true);
-
-      try {
-        // Step 1: Upload all documents first
-        await uploadAllDocuments();
-
-        // Step 2: Submit form responses
-        const responses = Object.entries(values).map(([key, value]) => {
-          const fieldId = parseInt(key.replace("field_", ""));
-          return {
-            field_id: fieldId,
-            response_value: String(value),
-          };
-        });
-
-        if (responses.length > 0) {
-          await dispatch(
-            submitTaskForm({
-              taskId: taskId!,
-              responses,
-            }),
-          ).unwrap();
-        }
-
-        toast({
-          title: "Task Submitted",
-          description: "Your task has been submitted successfully.",
-        });
-
-        // Step 3: Complete task
-        await handleCompleteTask();
-      } catch (error: any) {
-        toast({
-          title: "Submission Failed",
-          description: error || "Failed to submit task",
-          variant: "destructive",
-        });
-      } finally {
-        setIsSubmitting(false);
-      }
-    },
+    onSubmit: () => {}, // handled manually via handleSubmit
   });
 
-  // Auto-save draft when form values change (debounced)
-  useEffect(() => {
-    if (!taskId || !formik.values || Object.keys(formik.values).length === 0) {
-      return;
-    }
-
-    const timeoutId = setTimeout(() => {
-      dispatch(
-        saveTaskFormDraft({
-          taskId,
-          formData: formik.values,
-          currentStep: currentStep as "form" | "documents" | "complete",
-          timestamp: Date.now(),
-        }),
-      );
-    }, 1000); // Debounce for 1 second
-
-    return () => clearTimeout(timeoutId);
-  }, [formik.values, currentStep, taskId, dispatch]);
-
-  const handleFileUpload = (
-    file: File,
-    fileType: "pdf" | "image",
-    fieldId?: number,
-  ) => {
-    // Just store the file locally, don't upload yet
-    const newDoc = { fieldId, file, fileType };
-    setUploadedDocuments((prev) => [...prev, newDoc]);
-
-    toast({
-      title: "Document Added",
-      description: `${file.name} ready to upload.`,
+  // ─── File helpers ───────────────────────────────────────────────────────────
+  const handleFileSelect = (field: any, file: File) => {
+    const fileType = field.field_type === "file_pdf" ? "pdf" : "image";
+    setUploadedFiles((prev) => {
+      const next = new Map(prev);
+      next.set(field.id, { fieldId: field.id, file, fileType });
+      return next;
     });
   };
 
-  const removeDocument = (fileToRemove: File) => {
-    setUploadedDocuments((prev) =>
-      prev.filter((doc) => doc.file !== fileToRemove),
-    );
-    toast({
-      title: "Document Removed",
-      description: `${fileToRemove.name} removed.`,
+  const removeFile = (fieldId: number) => {
+    setUploadedFiles((prev) => {
+      const next = new Map(prev);
+      next.delete(fieldId);
+      return next;
     });
   };
 
-  const uploadAllDocuments = async () => {
-    if (uploadedDocuments.length === 0) {
-      return { success: true };
-    }
+  // ─── Is the form ready to submit? ─────────────────────────────────────────
+  const isFormReady = React.useMemo(() => {
+    // All required input fields must have a non-empty value
+    const inputsOk = inputFields
+      .filter((f) => f.is_required)
+      .every((f) => {
+        const val = formik.values[`field_${f.id}`];
+        if (f.field_type === "checkbox") return val === true;
+        return val !== undefined && val !== null && String(val).trim() !== "";
+      });
 
-    try {
-      // Group documents by type (pdf vs image)
-      const pdfDocs = uploadedDocuments.filter((doc) => doc.fileType === "pdf");
-      const imageDocs = uploadedDocuments.filter(
-        (doc) => doc.fileType === "image",
-      );
+    // All required file fields must have an uploaded file
+    const filesOk = fileFields
+      .filter((f) => f.is_required)
+      .every((f) => uploadedFiles.has(f.id));
 
-      // Upload PDFs if any
-      if (pdfDocs.length > 0) {
-        const pdfFormData = new FormData();
-        pdfFormData.append("main_folder", "encore");
-        pdfFormData.append("id", String(taskId));
+    return inputsOk && filesOk;
+  }, [formik.values, uploadedFiles, inputFields, fileFields]);
 
-        pdfDocs.forEach((doc) => {
-          pdfFormData.append("pdfs[]", doc.file);
-        });
-
-        const pdfResult = await dispatch(
-          uploadTaskDocument({
-            taskId: taskId!,
-            formData: pdfFormData,
-            fileType: "pdf",
-          }),
-        ).unwrap();
-
-        // Save PDF metadata to database
-        if (pdfResult.uploaded && pdfResult.uploaded.length > 0) {
-          await dispatch(
-            saveTaskDocumentMetadata({
-              taskId: taskId!,
-              documentType: "pdf",
-              files: pdfResult.uploaded,
-            }),
-          ).unwrap();
-        }
+  // ─── Parse select options (stored as JSON array or comma-separated string) ─
+  const parseOptions = (raw: any): string[] => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw.map(String);
+    if (typeof raw === "string") {
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed)
+          ? parsed.map(String)
+          : raw.split(",").map((s) => s.trim());
+      } catch {
+        return raw.split(",").map((s) => s.trim());
       }
-
-      // Upload images if any
-      if (imageDocs.length > 0) {
-        const imageFormData = new FormData();
-        imageFormData.append("main_folder", "encore");
-        imageFormData.append("id", String(taskId));
-
-        imageDocs.forEach((doc) => {
-          imageFormData.append("images[]", doc.file);
-        });
-
-        const imageResult = await dispatch(
-          uploadTaskDocument({
-            taskId: taskId!,
-            formData: imageFormData,
-            fileType: "image",
-          }),
-        ).unwrap();
-
-        // Save image metadata to database
-        const allImages = [];
-        if (imageResult.main_image) {
-          allImages.push(imageResult.main_image);
-        }
-        if (imageResult.extra_images && imageResult.extra_images.length > 0) {
-          allImages.push(...imageResult.extra_images);
-        }
-
-        if (allImages.length > 0) {
-          await dispatch(
-            saveTaskDocumentMetadata({
-              taskId: taskId!,
-              documentType: "image",
-              files: allImages,
-            }),
-          ).unwrap();
-        }
-      }
-
-      return { success: true };
-    } catch (error: any) {
-      throw error || "Failed to upload documents";
     }
+    if (typeof raw === "object" && raw.options) return raw.options.map(String);
+    return [];
   };
 
-  const handleNextStep = async () => {
-    // Validate form before moving to next step
+  // ─── Main submit handler ────────────────────────────────────────────────────
+  const handleSubmit = async () => {
+    // Validate text inputs
     const errors = await formik.validateForm();
     if (Object.keys(errors).length > 0) {
       formik.setTouched(
         Object.keys(formik.values).reduce(
-          (acc, key) => ({ ...acc, [key]: true }),
+          (acc, k) => ({ ...acc, [k]: true }),
           {},
         ),
       );
       toast({
-        title: "Validation Error",
+        title: "Required fields missing",
         description: "Please fill in all required fields.",
         variant: "destructive",
       });
       return;
     }
 
-    // Move to next step based on current step
-    if (currentStep === "form") {
-      setCurrentStep("documents");
-    } else if (currentStep === "documents") {
-      setCurrentStep("summary");
-    }
-  };
-
-  const handleCompleteTask = async () => {
-    try {
-      await dispatch(completeTask(taskId!)).unwrap();
+    // Validate required file fields
+    const missingFiles = fileFields.filter(
+      (f) => f.is_required && !uploadedFiles.has(f.id),
+    );
+    if (missingFiles.length > 0) {
       toast({
-        title: "Task Completed! 🎉",
-        description: "Great job! Your task has been marked as complete.",
-      });
-      setCurrentStep("complete");
-      setTimeout(() => {
-        onClose();
-      }, 2000);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error || "Failed to complete task",
+        title: "Missing documents",
+        description: `Please upload: ${missingFiles.map((f) => f.field_label).join(", ")}`,
         variant: "destructive",
       });
+      return;
     }
-  };
 
-  const resumeDraft = () => {
-    if (savedDraft) {
-      formik.setValues(savedDraft.formData);
-      setCurrentStep(savedDraft.currentStep);
-      setShowDraftPrompt(false);
+    setIsSubmitting(true);
+    try {
+      // 1. Submit form responses for input fields
+      if (hasInputs) {
+        const responses = inputFields.map((field) => ({
+          field_id: field.id,
+          response_value: String(formik.values[`field_${field.id}`] ?? ""),
+        }));
+        await dispatch(submitTaskForm({ taskId: taskId!, responses })).unwrap();
+      }
+
+      // 2. Upload each file individually, tied to its field_id
+      for (const [, uploaded] of uploadedFiles.entries()) {
+        const formData = new FormData();
+        formData.append("main_folder", "themortgageprofessionals");
+        formData.append("id", String(taskId));
+
+        if (uploaded.fileType === "pdf") {
+          formData.append("pdfs[]", uploaded.file);
+          const result = await dispatch(
+            uploadTaskDocument({
+              taskId: taskId!,
+              formData,
+              fileType: "pdf",
+            }),
+          ).unwrap();
+          if (result.uploaded?.length > 0) {
+            await dispatch(
+              saveTaskDocumentMetadata({
+                taskId: taskId!,
+                documentType: "pdf",
+                files: result.uploaded.map((f: any) => ({
+                  ...f,
+                  fieldId: uploaded.fieldId,
+                })),
+              }),
+            ).unwrap();
+          }
+        } else {
+          formData.append("images[]", uploaded.file);
+          const result = await dispatch(
+            uploadTaskDocument({
+              taskId: taskId!,
+              formData,
+              fileType: "image",
+            }),
+          ).unwrap();
+          const allImages: any[] = [];
+          if (result.main_image) allImages.push(result.main_image);
+          if (result.extra_images?.length)
+            allImages.push(...result.extra_images);
+          if (allImages.length > 0) {
+            await dispatch(
+              saveTaskDocumentMetadata({
+                taskId: taskId!,
+                documentType: "image",
+                files: allImages.map((f: any) => ({
+                  ...f,
+                  fieldId: uploaded.fieldId,
+                })),
+              }),
+            ).unwrap();
+          }
+        }
+      }
+
+      // 3. Mark task as complete
+      await dispatch(completeTask(taskId!)).unwrap();
+      setIsDone(true);
+      setTimeout(() => onClose(), 2200);
+    } catch (error: any) {
       toast({
-        title: "Draft Restored",
-        description: "Your previous progress has been restored.",
+        title: "Submission failed",
+        description: String(error),
+        variant: "destructive",
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const discardDraft = () => {
-    if (taskId) {
-      dispatch(clearTaskFormDraft(taskId));
-      setShowDraftPrompt(false);
-      sessionStorage.removeItem(`draft-checked-${taskId}`);
-    }
-  };
+  // ─── Render input field ─────────────────────────────────────────────────────
+  const renderInputField = (field: any) => {
+    const name = `field_${field.id}`;
+    const error = formik.touched[name] && formik.errors[name];
+    const isRequired = !!field.is_required;
+    const helpText = field.help_text;
 
-  const handleClose = () => {
-    // Save draft before closing if there's unsaved form data
-    if (
-      taskId &&
-      formik.values &&
-      Object.keys(formik.values).length > 0 &&
-      currentStep !== "complete"
-    ) {
-      dispatch(
-        saveTaskFormDraft({
-          taskId,
-          formData: formik.values,
-          currentStep: currentStep as "form" | "documents" | "complete",
-          timestamp: Date.now(),
-        }),
-      );
-      toast({
-        title: "Draft Saved",
-        description: "Your progress has been saved.",
-      });
-    }
-    onClose();
-  };
-
-  const renderFormField = (field: any) => {
-    const fieldName = `field_${field.id}`;
-    const error = formik.touched[fieldName] && formik.errors[fieldName];
+    const RequiredMark = isRequired ? (
+      <span className="text-destructive ml-1">*</span>
+    ) : null;
+    const HelpText = helpText ? (
+      <p className="text-xs text-muted-foreground">{helpText}</p>
+    ) : null;
+    const ErrorMsg = error ? (
+      <p className="text-xs text-destructive">{error as string}</p>
+    ) : null;
 
     switch (field.field_type) {
       case "text":
       case "email":
       case "number":
+      case "phone":
         return (
-          <div key={field.id} className="space-y-2">
-            <Label htmlFor={fieldName}>
+          <div key={field.id} className="space-y-1.5">
+            <Label htmlFor={name}>
               {field.field_label}
-              {field.required && <span className="text-red-500 ml-1">*</span>}
+              {RequiredMark}
             </Label>
-            {field.field_description && (
-              <p className="text-sm text-muted-foreground">
-                {field.field_description}
-              </p>
-            )}
+            {HelpText}
             <Input
-              id={fieldName}
-              name={fieldName}
-              type={field.field_type}
-              placeholder={field.placeholder}
-              value={formik.values[fieldName] || ""}
+              id={name}
+              name={name}
+              type={
+                field.field_type === "phone"
+                  ? "tel"
+                  : field.field_type === "number"
+                    ? "number"
+                    : field.field_type
+              }
+              placeholder={field.placeholder ?? ""}
+              value={formik.values[name] ?? ""}
               onChange={formik.handleChange}
               onBlur={formik.handleBlur}
-              className={error ? "border-red-500" : ""}
+              className={
+                error ? "border-destructive focus-visible:ring-destructive" : ""
+              }
             />
-            {error && <p className="text-sm text-red-500">{error as string}</p>}
+            {ErrorMsg}
+          </div>
+        );
+
+      case "date":
+        return (
+          <div key={field.id} className="space-y-1.5">
+            <Label htmlFor={name}>
+              {field.field_label}
+              {RequiredMark}
+            </Label>
+            {HelpText}
+            <Input
+              id={name}
+              name={name}
+              type="date"
+              value={formik.values[name] ?? ""}
+              onChange={formik.handleChange}
+              onBlur={formik.handleBlur}
+              className={
+                error ? "border-destructive focus-visible:ring-destructive" : ""
+              }
+            />
+            {ErrorMsg}
           </div>
         );
 
       case "textarea":
         return (
-          <div key={field.id} className="space-y-2">
-            <Label htmlFor={fieldName}>
+          <div key={field.id} className="space-y-1.5">
+            <Label htmlFor={name}>
               {field.field_label}
-              {field.required && <span className="text-red-500 ml-1">*</span>}
+              {RequiredMark}
             </Label>
-            {field.field_description && (
-              <p className="text-sm text-muted-foreground">
-                {field.field_description}
-              </p>
-            )}
+            {HelpText}
             <Textarea
-              id={fieldName}
-              name={fieldName}
-              placeholder={field.placeholder}
-              value={formik.values[fieldName] || ""}
+              id={name}
+              name={name}
+              placeholder={field.placeholder ?? ""}
+              value={formik.values[name] ?? ""}
               onChange={formik.handleChange}
               onBlur={formik.handleBlur}
-              className={error ? "border-red-500" : ""}
-              rows={4}
+              rows={3}
+              className={
+                error ? "border-destructive focus-visible:ring-destructive" : ""
+              }
             />
-            {error && <p className="text-sm text-red-500">{error as string}</p>}
+            {ErrorMsg}
           </div>
         );
 
-      case "select":
+      case "select": {
+        const options = parseOptions(field.field_options);
         return (
-          <div key={field.id} className="space-y-2">
-            <Label htmlFor={fieldName}>
+          <div key={field.id} className="space-y-1.5">
+            <Label>
               {field.field_label}
-              {field.required && <span className="text-red-500 ml-1">*</span>}
+              {RequiredMark}
             </Label>
-            {field.field_description && (
-              <p className="text-sm text-muted-foreground">
-                {field.field_description}
-              </p>
-            )}
+            {HelpText}
             <Select
-              value={formik.values[fieldName]}
-              onValueChange={(value) => formik.setFieldValue(fieldName, value)}
+              value={formik.values[name] ?? ""}
+              onValueChange={(v) => formik.setFieldValue(name, v)}
             >
-              <SelectTrigger className={error ? "border-red-500" : ""}>
+              <SelectTrigger
+                className={
+                  error
+                    ? "border-destructive focus-visible:ring-destructive"
+                    : ""
+                }
+              >
                 <SelectValue
-                  placeholder={field.placeholder || "Select option"}
+                  placeholder={field.placeholder ?? "Select an option"}
                 />
               </SelectTrigger>
               <SelectContent>
-                {field.options?.split(",").map((option: string) => (
-                  <SelectItem key={option.trim()} value={option.trim()}>
-                    {option.trim()}
+                {options.map((opt: string) => (
+                  <SelectItem key={opt} value={opt}>
+                    {opt}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {error && <p className="text-sm text-red-500">{error as string}</p>}
+            {ErrorMsg}
           </div>
         );
+      }
 
       case "checkbox":
         return (
-          <div key={field.id} className="flex items-start space-x-3 space-y-0">
+          <div key={field.id} className="flex items-start gap-3 py-1">
             <Checkbox
-              id={fieldName}
-              checked={formik.values[fieldName] || false}
-              onCheckedChange={(checked) =>
-                formik.setFieldValue(fieldName, checked)
-              }
-              className={error ? "border-red-500" : ""}
+              id={name}
+              checked={!!formik.values[name]}
+              onCheckedChange={(v) => formik.setFieldValue(name, v)}
+              className={error ? "border-destructive" : ""}
             />
-            <div className="space-y-1 leading-none">
-              <Label htmlFor={fieldName} className="cursor-pointer">
+            <div className="space-y-0.5">
+              <Label htmlFor={name} className="cursor-pointer leading-snug">
                 {field.field_label}
-                {field.required && <span className="text-red-500 ml-1">*</span>}
+                {RequiredMark}
               </Label>
-              {field.field_description && (
-                <p className="text-sm text-muted-foreground">
-                  {field.field_description}
-                </p>
-              )}
-              {error && (
-                <p className="text-sm text-red-500">{error as string}</p>
-              )}
+              {HelpText}
+              {ErrorMsg}
             </div>
-          </div>
-        );
-
-      case "file_upload":
-        return (
-          <div key={field.id} className="space-y-2">
-            <Label>
-              {field.field_label}
-              {field.required && <span className="text-red-500 ml-1">*</span>}
-            </Label>
-            {field.field_description && (
-              <p className="text-sm text-muted-foreground">
-                {field.field_description}
-              </p>
-            )}
-            <div className="border-2 border-dashed rounded-lg p-6 text-center hover:border-primary/50 transition-colors">
-              <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-              <Input
-                type="file"
-                id={`file-${field.id}`}
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handleFileUpload(file, "image", field.id);
-                }}
-              />
-              <Label
-                htmlFor={`file-${field.id}`}
-                className="cursor-pointer text-sm text-primary hover:underline"
-              >
-                Click to upload or drag and drop
-              </Label>
-              <p className="text-xs text-muted-foreground mt-1">
-                PDF, PNG, JPG (max 10MB)
-              </p>
-            </div>
-          </div>
-        );
-
-      case "file_pdf":
-        const uploadedPdf = uploadedDocuments.find(
-          (doc) => doc.fieldId === field.id && doc.fileType === "pdf",
-        );
-        return (
-          <div key={field.id} className="space-y-2">
-            <Label>
-              {field.field_label}
-              {field.required && <span className="text-red-500 ml-1">*</span>}
-            </Label>
-            {field.field_description && (
-              <p className="text-sm text-muted-foreground">
-                {field.field_description}
-              </p>
-            )}
-            {uploadedPdf ? (
-              <div className="border rounded-lg p-4 bg-muted/30">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <FileText className="h-8 w-8 text-red-500" />
-                    <div>
-                      <p className="text-sm font-medium">
-                        {uploadedPdf.file.name}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {(uploadedPdf.file.size / 1024 / 1024).toFixed(2)} MB
-                      </p>
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => removeDocument(uploadedPdf.file)}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="border-2 border-dashed rounded-lg p-6 text-center hover:border-primary/50 transition-colors">
-                <FileText className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                <Input
-                  type="file"
-                  id={`pdf-${field.id}`}
-                  className="hidden"
-                  accept=".pdf,application/pdf"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) handleFileUpload(file, "pdf", field.id);
-                  }}
-                />
-                <Label
-                  htmlFor={`pdf-${field.id}`}
-                  className="cursor-pointer text-sm text-primary hover:underline"
-                >
-                  Click to upload PDF
-                </Label>
-                <p className="text-xs text-muted-foreground mt-1">
-                  PDF only (max 5MB)
-                </p>
-              </div>
-            )}
-            {error && <p className="text-sm text-red-500">{error as string}</p>}
-          </div>
-        );
-
-      case "file_image":
-        const uploadedImage = uploadedDocuments.find(
-          (doc) => doc.fieldId === field.id && doc.fileType === "image",
-        );
-        return (
-          <div key={field.id} className="space-y-2">
-            <Label>
-              {field.field_label}
-              {field.required && <span className="text-red-500 ml-1">*</span>}
-            </Label>
-            {field.field_description && (
-              <p className="text-sm text-muted-foreground">
-                {field.field_description}
-              </p>
-            )}
-            {uploadedImage ? (
-              <div className="border rounded-lg p-4 bg-muted/30">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Upload className="h-8 w-8 text-blue-500" />
-                    <div>
-                      <p className="text-sm font-medium">
-                        {uploadedImage.file.name}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {(uploadedImage.file.size / 1024 / 1024).toFixed(2)} MB
-                      </p>
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => removeDocument(uploadedImage.file)}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="border-2 border-dashed rounded-lg p-6 text-center hover:border-primary/50 transition-colors">
-                <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                <Input
-                  type="file"
-                  id={`image-${field.id}`}
-                  className="hidden"
-                  accept="image/png,image/jpeg,image/jpg"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) handleFileUpload(file, "image", field.id);
-                  }}
-                />
-                <Label
-                  htmlFor={`image-${field.id}`}
-                  className="cursor-pointer text-sm text-primary hover:underline"
-                >
-                  Click to upload image
-                </Label>
-                <p className="text-xs text-muted-foreground mt-1">
-                  PNG or JPG only
-                </p>
-              </div>
-            )}
-            {error && <p className="text-sm text-red-500">{error as string}</p>}
           </div>
         );
 
@@ -703,416 +465,304 @@ export const TaskCompletionModal: React.FC<TaskCompletionModalProps> = ({
     }
   };
 
+  // ─── Render file upload field ───────────────────────────────────────────────
+  const renderFileField = (field: any) => {
+    const uploaded = uploadedFiles.get(field.id);
+    const isPdf = field.field_type === "file_pdf";
+    const accept = isPdf
+      ? ".pdf,application/pdf"
+      : "image/png,image/jpeg,image/jpg";
+    const isRequired = !!field.is_required;
+    const inputId = `file-${field.id}`;
+
+    return (
+      <div key={field.id} className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Label className="text-sm font-medium">
+            {field.field_label}
+            {isRequired && <span className="text-destructive ml-1">*</span>}
+          </Label>
+          <Badge variant="outline" className="text-[10px] h-4 px-1.5">
+            {isPdf ? "PDF" : "Image"}
+          </Badge>
+        </div>
+
+        {field.help_text && (
+          <p className="text-xs text-muted-foreground">{field.help_text}</p>
+        )}
+
+        {uploaded ? (
+          // File selected — show preview row
+          <div className="flex items-center justify-between gap-2 p-3 bg-muted/40 border rounded-lg overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
+              {isPdf ? (
+                <FileText className="h-5 w-5 text-red-500 shrink-0" />
+              ) : (
+                <Upload className="h-5 w-5 text-blue-500 shrink-0" />
+              )}
+              <span className="text-sm font-medium truncate min-w-0">
+                {uploaded.file.name}
+              </span>
+              <span className="text-xs text-muted-foreground shrink-0 whitespace-nowrap">
+                {(uploaded.file.size / 1024 / 1024).toFixed(2)} MB
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+              onClick={() => removeFile(field.id)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        ) : (
+          // No file yet — drop zone
+          <label
+            htmlFor={inputId}
+            className="flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-lg p-6 cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-colors group"
+          >
+            {isPdf ? (
+              <FileText className="h-9 w-9 text-muted-foreground/50 group-hover:text-primary/60 transition-colors" />
+            ) : (
+              <Upload className="h-9 w-9 text-muted-foreground/50 group-hover:text-primary/60 transition-colors" />
+            )}
+            <div className="text-center">
+              <p className="text-sm font-medium text-primary">
+                Click to upload {isPdf ? "PDF" : "image"}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {isPdf ? "PDF only — max 10 MB" : "PNG or JPG — max 10 MB"}
+              </p>
+            </div>
+            <input
+              id={inputId}
+              type="file"
+              className="hidden"
+              accept={accept}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFileSelect(field, file);
+                e.target.value = "";
+              }}
+            />
+          </label>
+        )}
+      </div>
+    );
+  };
+
   if (!taskId) return null;
 
   return (
-    <>
-      {/* Draft Prompt Dialog */}
-      {showDraftPrompt && savedDraft && (
-        <Dialog open={showDraftPrompt} onOpenChange={setShowDraftPrompt}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <AlertCircle className="h-5 w-5 text-orange-500" />
-                Resume Draft?
-              </DialogTitle>
-              <DialogDescription>
-                You have unsaved progress from{" "}
-                {new Date(savedDraft.timestamp).toLocaleString()}. Would you
-                like to continue where you left off?
-              </DialogDescription>
-            </DialogHeader>
-            <div className="flex gap-3 mt-4">
-              <Button
-                variant="outline"
-                onClick={discardDraft}
-                className="flex-1"
-              >
-                Start Fresh
-              </Button>
-              <Button onClick={resumeDraft} className="flex-1">
-                Resume Draft
-              </Button>
+    <Dialog
+      open={!!taskId}
+      onOpenChange={(open) => {
+        if (!open && !isSubmitting) onClose();
+      }}
+    >
+      <DialogContent className="max-w-xl max-h-[88vh] overflow-y-auto">
+        {/* ── Loading ────────────────────────────────────────── */}
+        {taskDetailsLoading ? (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+        ) : isDone ? (
+          /* ── Success ────────────────────────────────────────── */
+          <div className="text-center py-14 space-y-4">
+            <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto" />
+            <div>
+              <h2 className="text-xl font-bold">Submitted for Review!</h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                Your submission has been received and is awaiting broker
+                approval.
+              </p>
             </div>
-          </DialogContent>
-        </Dialog>
-      )}
-
-      {/* Main Task Completion Dialog */}
-      <Dialog open={!!taskId && !showDraftPrompt} onOpenChange={handleClose}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          {taskDetailsLoading ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>Loading Task Details</DialogTitle>
-              </DialogHeader>
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              </div>
-            </>
-          ) : currentStep === "complete" ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>Task Completed</DialogTitle>
-              </DialogHeader>
-              <div className="text-center py-12">
-                <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto mb-4" />
-                <h2 className="text-2xl font-bold mb-2">Task Completed!</h2>
-                <p className="text-muted-foreground">
-                  Great work! Your task has been successfully completed.
-                </p>
-              </div>
-            </>
-          ) : (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-primary" />
-                  {taskDetails?.title}
-                </DialogTitle>
-                <DialogDescription>
-                  {taskDetails?.description}
+          </div>
+        ) : (
+          /* ── Main form ────────────────────────────────────────── */
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <FileText className="h-5 w-5 text-primary shrink-0" />
+                {taskDetails?.title ?? "Complete Task"}
+              </DialogTitle>
+              {taskDetails?.description && (
+                <DialogDescription className="text-sm leading-relaxed">
+                  {taskDetails.description}
                 </DialogDescription>
+              )}
 
-                {/* Application/Loan Information */}
-                {taskDetails?.application_number && (
-                  <div className="mt-3 p-3 bg-primary/5 border border-primary/20 rounded-lg">
-                    <div className="flex items-start gap-3">
-                      <HomeIcon className="h-5 w-5 text-primary mt-0.5" />
-                      <div className="flex-1 space-y-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <Badge variant="secondary" className="font-mono">
-                            {taskDetails.application_number}
+              {/* Loan / Application context */}
+              {taskDetails?.application_number && (
+                <div className="mt-3 p-3 bg-primary/5 border border-primary/20 rounded-lg text-sm">
+                  <div className="flex items-start gap-2">
+                    <HomeIcon className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                    <div className="space-y-1.5 min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge
+                          variant="secondary"
+                          className="font-mono text-xs"
+                        >
+                          {taskDetails.application_number}
+                        </Badge>
+                        {taskDetails.loan_type && (
+                          <Badge
+                            variant="outline"
+                            className="capitalize text-xs"
+                          >
+                            {taskDetails.loan_type.replace(/_/g, " ")}
                           </Badge>
-                          {taskDetails.loan_type && (
-                            <Badge variant="outline" className="capitalize">
-                              {taskDetails.loan_type.replace(/_/g, " ")}
-                            </Badge>
-                          )}
-                        </div>
-                        {taskDetails.property_address && (
-                          <p className="text-sm text-muted-foreground">
-                            {taskDetails.property_address}
-                            {taskDetails.property_city && (
-                              <>
-                                , {taskDetails.property_city},{" "}
-                                {taskDetails.property_state}{" "}
-                                {taskDetails.property_zip}
-                              </>
-                            )}
-                          </p>
                         )}
-                        {taskDetails.loan_amount && (
-                          <p className="text-sm font-medium text-primary">
-                            {new Intl.NumberFormat("en-US", {
-                              style: "currency",
-                              currency: "USD",
-                              minimumFractionDigits: 0,
-                            }).format(taskDetails.loan_amount)}
-                          </p>
-                        )}
+                        <Badge
+                          variant={
+                            taskDetails.priority === "urgent"
+                              ? "destructive"
+                              : "secondary"
+                          }
+                          className="capitalize text-xs"
+                        >
+                          {taskDetails.priority}
+                        </Badge>
                       </div>
+                      {taskDetails.property_address && (
+                        <p className="text-xs text-muted-foreground">
+                          {taskDetails.property_address}
+                          {taskDetails.property_city &&
+                            `, ${taskDetails.property_city} ${taskDetails.property_state}`}
+                        </p>
+                      )}
+                      {taskDetails.due_date && (
+                        <p className="text-xs text-muted-foreground">
+                          Due:{" "}
+                          {new Date(taskDetails.due_date).toLocaleDateString()}
+                        </p>
+                      )}
                     </div>
                   </div>
-                )}
+                </div>
+              )}
+            </DialogHeader>
 
-                <div className="flex items-center gap-2 mt-2">
-                  <Badge
-                    variant={
-                      taskDetails?.priority === "urgent"
-                        ? "destructive"
-                        : "secondary"
-                    }
-                  >
-                    {taskDetails?.priority}
-                  </Badge>
-                  {taskDetails?.due_date && (
-                    <span className="text-xs text-muted-foreground">
-                      Due: {new Date(taskDetails.due_date).toLocaleDateString()}
-                    </span>
+            <div className="space-y-6 mt-2">
+              {/* ── SIGNING: Document Signing Type ── */}
+              {taskDetails?.task_type === "document_signing" ? (
+                taskDetails.sign_document ? (
+                  <PDFSigningViewer
+                    pdfUrl={taskDetails.sign_document.file_path}
+                    zones={taskDetails.sign_document.signature_zones ?? []}
+                    existingSignatures={taskDetails.existing_signatures}
+                    isSubmitting={isSubmitting}
+                    onSubmit={async (signatures) => {
+                      if (!taskId) return;
+                      setIsSubmitting(true);
+                      try {
+                        const result = await dispatch(
+                          submitTaskSignatures({ taskId, signatures }),
+                        );
+                        if (submitTaskSignatures.fulfilled.match(result)) {
+                          setIsDone(true);
+                        } else {
+                          toast({
+                            title: "Submission failed",
+                            description:
+                              "Could not submit signatures. Please try again.",
+                            variant: "destructive",
+                          });
+                        }
+                      } finally {
+                        setIsSubmitting(false);
+                      }
+                    }}
+                  />
+                ) : (
+                  <div className="flex items-start gap-3 p-4 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+                    <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                    <p className="text-sm text-amber-700 dark:text-amber-400">
+                      The signing document is not yet ready. Please contact your
+                      broker.
+                    </p>
+                  </div>
+                )
+              ) : (
+                <>
+                  {/* ── SECTION 1: Input Fields ── */}
+                  {hasInputs && (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2">
+                        <ClipboardList className="h-4 w-4 text-primary shrink-0" />
+                        <h3 className="font-semibold text-sm">
+                          Fill in the Information
+                        </h3>
+                      </div>
+                      <Separator />
+                      {inputFields.map((field) => renderInputField(field))}
+                    </div>
                   )}
-                </div>
-              </DialogHeader>
 
-              <div className="space-y-6 mt-6">
-                {/* Progress Steps */}
-                <div className="flex items-center justify-center gap-2 mb-6">
-                  <div
-                    className={`flex items-center gap-2 ${currentStep === "form" ? "text-primary" : "text-muted-foreground"}`}
-                  >
-                    <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center ${currentStep === "form" ? "bg-primary text-white" : "bg-muted"}`}
-                    >
-                      1
-                    </div>
-                    <span className="text-sm font-medium hidden sm:inline">
-                      Form
-                    </span>
-                  </div>
-                  <div className="w-8 h-0.5 bg-border" />
-                  <div
-                    className={`flex items-center gap-2 ${currentStep === "documents" ? "text-primary" : "text-muted-foreground"}`}
-                  >
-                    <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center ${currentStep === "documents" ? "bg-primary text-white" : "bg-muted"}`}
-                    >
-                      2
-                    </div>
-                    <span className="text-sm font-medium hidden sm:inline">
-                      Documents
-                    </span>
-                  </div>
-                  <div className="w-8 h-0.5 bg-border" />
-                  <div
-                    className={`flex items-center gap-2 ${currentStep === "summary" ? "text-primary" : "text-muted-foreground"}`}
-                  >
-                    <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center ${currentStep === "summary" ? "bg-primary text-white" : "bg-muted"}`}
-                    >
-                      3
-                    </div>
-                    <span className="text-sm font-medium hidden sm:inline">
-                      Review
-                    </span>
-                  </div>
-                </div>
-
-                {currentStep === "form" && (
-                  <>
-                    {taskDetails?.formFields &&
-                    taskDetails.formFields.length > 0 ? (
-                      <div className="space-y-4">
-                        {taskDetails.formFields
-                          .filter(
-                            (field) =>
-                              field.field_type !== "file_pdf" &&
-                              field.field_type !== "file_image",
-                          )
-                          .map((field) => renderFormField(field))}
-                        <div className="flex gap-3 pt-4">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={handleClose}
-                            className="flex-1"
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            type="button"
-                            onClick={handleNextStep}
-                            className="flex-1"
-                          >
-                            Next
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="border rounded-lg p-8 bg-muted/30">
-                          <div className="text-center space-y-3">
-                            <FileText className="h-12 w-12 mx-auto text-muted-foreground/50" />
-                            <p className="text-muted-foreground">
-                              No form required for this task.
-                            </p>
-                            <p className="text-sm text-muted-foreground">
-                              {taskDetails?.requiredDocuments &&
-                              taskDetails.requiredDocuments.length > 0
-                                ? "Continue to upload required documents."
-                                : "Click below to complete this task."}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex gap-3 pt-4">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={handleClose}
-                            className="flex-1"
-                          >
-                            Cancel
-                          </Button>
-                          <Button onClick={handleNextStep} className="flex-1">
-                            Next
-                          </Button>
-                        </div>
-                      </>
-                    )}
-                  </>
-                )}
-
-                {currentStep === "documents" && (
-                  <>
-                    {taskDetails?.formFields &&
-                    taskDetails.formFields.filter(
-                      (field) =>
-                        field.field_type === "file_pdf" ||
-                        field.field_type === "file_image",
-                    ).length > 0 ? (
-                      <div className="space-y-4">
-                        <h3 className="font-medium text-lg mb-4">
+                  {/* ── SECTION 2: File Uploads ── */}
+                  {hasFiles && (
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2">
+                        <Upload className="h-4 w-4 text-primary shrink-0" />
+                        <h3 className="font-semibold text-sm">
                           Upload Required Documents
                         </h3>
-                        {taskDetails.formFields
-                          .filter(
-                            (field) =>
-                              field.field_type === "file_pdf" ||
-                              field.field_type === "file_image",
-                          )
-                          .map((field) => renderFormField(field))}
-
-                        {uploadedDocuments.length > 0 && (
-                          <div className="text-sm text-muted-foreground">
-                            {uploadedDocuments.length} document(s) ready to
-                            upload
-                          </div>
-                        )}
+                        <span className="text-xs text-muted-foreground">
+                          ({uploadedFiles.size}/{fileFields.length} uploaded)
+                        </span>
                       </div>
-                    ) : (
-                      <div className="border rounded-lg p-8 bg-muted/30">
-                        <div className="text-center space-y-3">
-                          <FileText className="h-12 w-12 mx-auto text-muted-foreground/50" />
-                          <p className="text-muted-foreground">
-                            No documents required for this task.
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="flex gap-3 pt-4">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setCurrentStep("form")}
-                        className="flex-1"
-                      >
-                        Back
-                      </Button>
-                      <Button
-                        onClick={() => setCurrentStep("summary")}
-                        className="flex-1"
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </>
-                )}
-
-                {currentStep === "summary" && (
-                  <>
-                    <div className="space-y-6">
-                      <div className="bg-muted/30 rounded-lg p-6">
-                        <h3 className="font-semibold text-lg mb-4">
-                          Review Your Submission
-                        </h3>
-
-                        {/* Form Responses */}
-                        {taskDetails?.formFields &&
-                          taskDetails.formFields.length > 0 && (
-                            <div className="space-y-4 mb-6">
-                              <h4 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">
-                                Form Responses
-                              </h4>
-                              {taskDetails.formFields
-                                .filter(
-                                  (field) =>
-                                    field.field_type !== "file_pdf" &&
-                                    field.field_type !== "file_image" &&
-                                    field.field_type !== "file_upload",
-                                )
-                                .map((field) => {
-                                  const fieldName = `field_${field.id}`;
-                                  const value = formik.values[fieldName];
-                                  return (
-                                    <div
-                                      key={field.id}
-                                      className="border-b border-border/50 pb-3"
-                                    >
-                                      <p className="text-sm text-muted-foreground">
-                                        {field.field_label}
-                                      </p>
-                                      <p className="font-medium">
-                                        {field.field_type === "checkbox"
-                                          ? value
-                                            ? "Yes"
-                                            : "No"
-                                          : value || "—"}
-                                      </p>
-                                    </div>
-                                  );
-                                })}
-                            </div>
-                          )}
-
-                        {/* Documents Status */}
-                        {uploadedDocuments.length > 0 && (
-                          <div className="space-y-3">
-                            <h4 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">
-                              Documents to Upload
-                            </h4>
-                            {uploadedDocuments.map((doc, idx) => (
-                              <div
-                                key={idx}
-                                className="flex items-center justify-between border-b border-border/50 pb-2"
-                              >
-                                <div className="flex items-center gap-2">
-                                  {doc.fileType === "pdf" ? (
-                                    <FileText className="h-4 w-4 text-red-500" />
-                                  ) : (
-                                    <Upload className="h-4 w-4 text-blue-500" />
-                                  )}
-                                  <span className="text-sm">
-                                    {doc.file.name}
-                                  </span>
-                                </div>
-                                <Badge variant="secondary" className="gap-1">
-                                  {(doc.file.size / 1024 / 1024).toFixed(2)} MB
-                                </Badge>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900 rounded-lg p-4">
-                        <p className="text-sm text-blue-900 dark:text-blue-100">
-                          Please review all information carefully. Once
-                          submitted, you may not be able to edit your responses.
-                        </p>
+                      <Separator />
+                      <div className="space-y-5">
+                        {fileFields.map((field) => renderFileField(field))}
                       </div>
                     </div>
+                  )}
 
-                    <div className="flex gap-3 pt-4">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setCurrentStep("documents")}
-                        className="flex-1"
-                      >
-                        Back
-                      </Button>
-                      <Button
-                        onClick={() => formik.handleSubmit()}
-                        disabled={isSubmitting}
-                        className="flex-1"
-                      >
-                        {isSubmitting ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            Submitting...
-                          </>
-                        ) : (
-                          "Submit Task"
-                        )}
-                      </Button>
+                  {/* ── No content — direct completion ── */}
+                  {!hasInputs && !hasFiles && !taskDetailsLoading && (
+                    <div className="flex items-center gap-3 p-4 bg-muted/40 border rounded-lg">
+                      <AlertCircle className="h-5 w-5 text-muted-foreground shrink-0" />
+                      <p className="text-sm text-muted-foreground">
+                        No additional information is required. Click below to
+                        mark this task as complete.
+                      </p>
                     </div>
-                  </>
-                )}
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-    </>
+                  )}
+
+                  {/* ── Actions ── */}
+                  <div className="flex gap-3 pt-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={onClose}
+                      disabled={isSubmitting}
+                      className="flex-1"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleSubmit}
+                      disabled={isSubmitting || !isFormReady}
+                      className="flex-1"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Submitting…
+                        </>
+                      ) : (
+                        "Complete Task"
+                      )}
+                    </Button>
+                  </div>
+                </>
+              )}
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 };

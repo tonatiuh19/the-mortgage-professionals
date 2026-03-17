@@ -5,6 +5,9 @@ import {
   createBroker,
   updateBroker,
   deleteBroker,
+  fetchBrokerShareLink,
+  clearBrokerShareLink,
+  updateBrokerProfileByAdmin,
 } from "@/store/slices/brokersSlice";
 import { validateSession } from "@/store/slices/brokerAuthSlice";
 import { useToast } from "@/hooks/use-toast";
@@ -30,6 +33,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { BrokerWizard, type BrokerFormValues } from "@/components/BrokerWizard";
+import BrokerShareLinkModal from "@/components/BrokerShareLinkModal";
 import {
   UserCog,
   Plus,
@@ -38,6 +42,7 @@ import {
   Search,
   Mail,
   Phone,
+  Link2,
 } from "lucide-react";
 import type { Broker } from "@shared/api";
 import { MetaHelmet } from "@/components/MetaHelmet";
@@ -57,6 +62,10 @@ export default function Brokers() {
   const [selectedBroker, setSelectedBroker] = useState<Broker | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [brokerToDelete, setBrokerToDelete] = useState<Broker | null>(null);
+  const [shareLinkModalOpen, setShareLinkModalOpen] = useState(false);
+  const [brokerForShareLink, setBrokerForShareLink] = useState<Broker | null>(
+    null,
+  );
 
   const isAdmin = currentBroker?.role === "admin";
 
@@ -95,10 +104,15 @@ export default function Brokers() {
     setDeleteDialogOpen(true);
   };
 
+  const handleShareLinkClick = (broker: Broker) => {
+    setBrokerForShareLink(broker);
+    setShareLinkModalOpen(true);
+  };
+
   const handleWizardSubmit = async (values: BrokerFormValues) => {
     try {
       if (wizardMode === "create") {
-        await dispatch(
+        const newBroker = await dispatch(
           createBroker({
             email: values.email,
             first_name: values.first_name,
@@ -112,6 +126,41 @@ export default function Brokers() {
                 : undefined,
           }),
         ).unwrap();
+        // Save profile fields if any were filled
+        const hasProfileData =
+          values.bio ||
+          values.office_address ||
+          values.office_city ||
+          values.office_state ||
+          values.office_zip ||
+          values.years_experience ||
+          values.facebook_url ||
+          values.instagram_url ||
+          values.linkedin_url ||
+          values.twitter_url ||
+          values.youtube_url ||
+          values.website_url;
+        if (hasProfileData && newBroker?.id) {
+          await dispatch(
+            updateBrokerProfileByAdmin({
+              id: newBroker.id,
+              bio: values.bio || undefined,
+              office_address: values.office_address || undefined,
+              office_city: values.office_city || undefined,
+              office_state: values.office_state || undefined,
+              office_zip: values.office_zip || undefined,
+              years_experience: values.years_experience
+                ? Number(values.years_experience)
+                : undefined,
+              facebook_url: values.facebook_url || undefined,
+              instagram_url: values.instagram_url || undefined,
+              linkedin_url: values.linkedin_url || undefined,
+              twitter_url: values.twitter_url || undefined,
+              youtube_url: values.youtube_url || undefined,
+              website_url: values.website_url || undefined,
+            }),
+          ).unwrap();
+        }
         toast({
           title: "Success",
           description: "Broker created successfully",
@@ -131,6 +180,41 @@ export default function Brokers() {
                 : undefined,
           }),
         ).unwrap();
+        // Update profile fields if any profile data is present
+        const hasProfileData =
+          values.bio ||
+          values.office_address ||
+          values.office_city ||
+          values.office_state ||
+          values.office_zip ||
+          values.years_experience ||
+          values.facebook_url ||
+          values.instagram_url ||
+          values.linkedin_url ||
+          values.twitter_url ||
+          values.youtube_url ||
+          values.website_url;
+        if (hasProfileData) {
+          await dispatch(
+            updateBrokerProfileByAdmin({
+              id: selectedBroker.id,
+              bio: values.bio || undefined,
+              office_address: values.office_address || undefined,
+              office_city: values.office_city || undefined,
+              office_state: values.office_state || undefined,
+              office_zip: values.office_zip || undefined,
+              years_experience: values.years_experience
+                ? Number(values.years_experience)
+                : undefined,
+              facebook_url: values.facebook_url || undefined,
+              instagram_url: values.instagram_url || undefined,
+              linkedin_url: values.linkedin_url || undefined,
+              twitter_url: values.twitter_url || undefined,
+              youtube_url: values.youtube_url || undefined,
+              website_url: values.website_url || undefined,
+            }),
+          ).unwrap();
+        }
         toast({
           title: "Success",
           description: "Broker updated successfully",
@@ -290,7 +374,9 @@ export default function Brokers() {
                     </TableCell>
                     <TableCell>
                       <Badge className={getRoleBadgeColor(broker.role)}>
-                        {broker.role}
+                        {broker.role === "admin"
+                          ? "Mortgage Banker"
+                          : "Partner"}
                       </Badge>
                     </TableCell>
                     <TableCell>
@@ -333,6 +419,15 @@ export default function Brokers() {
                           <Button
                             variant="ghost"
                             size="sm"
+                            title="Get share link"
+                            onClick={() => handleShareLinkClick(broker)}
+                            className="h-8 w-8 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                          >
+                            <Link2 className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             onClick={() => handleEditBroker(broker)}
                             className="h-8 w-8 p-0"
                           >
@@ -364,6 +459,16 @@ export default function Brokers() {
           onSubmit={handleWizardSubmit}
           broker={selectedBroker}
           mode={wizardMode}
+        />
+
+        {/* Share Link Modal */}
+        <BrokerShareLinkModal
+          open={shareLinkModalOpen}
+          onOpenChange={(open) => {
+            setShareLinkModalOpen(open);
+            if (!open) setBrokerForShareLink(null);
+          }}
+          broker={brokerForShareLink}
         />
 
         {/* Delete Confirmation Dialog */}

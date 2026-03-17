@@ -12,7 +12,38 @@ import type {
   ClientApplication,
   ClientTask,
   ClientProfile,
+  TaskSignDocument,
 } from "@shared/api";
+
+// We declare submitTaskSignatures below (after slice definition import area)
+export const submitTaskSignatures = createAsyncThunk(
+  "clientPortal/submitSignatures",
+  async (
+    {
+      taskId,
+      signatures,
+    }: {
+      taskId: number;
+      signatures: Array<{ zone_id: string; signature_data: string }>;
+    },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const state = getState() as RootState;
+      const token = state.clientAuth.sessionToken;
+      const response = await axios.post(
+        `/api/client/tasks/${taskId}/signatures`,
+        { signatures },
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      return { taskId, ...response.data };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to submit signatures",
+      );
+    }
+  },
+);
 
 export interface TaskDetails {
   id: number;
@@ -43,6 +74,13 @@ export interface TaskDetails {
     description?: string;
     is_uploaded: boolean;
   }>;
+  task_type?: string;
+  sign_document?: TaskSignDocument | null;
+  existing_signatures?: Array<{
+    zone_id: string;
+    signature_data: string;
+    signed_at: string;
+  }>;
 }
 
 export interface TaskFormDraft {
@@ -52,16 +90,39 @@ export interface TaskFormDraft {
   timestamp: number;
 }
 
+export interface ClientDocument {
+  id: number;
+  task_id: number;
+  field_id: number | null;
+  document_type: "pdf" | "image";
+  filename: string;
+  original_filename: string;
+  file_path: string;
+  file_size: number | null;
+  uploaded_at: string;
+  notes: string | null;
+  task_title: string;
+  task_type: string;
+  task_status: string;
+  application_number: string;
+  loan_type: string;
+  property_address: string;
+  property_city?: string;
+  property_state?: string;
+}
+
 interface ClientPortalState {
   applications: ClientApplication[];
   tasks: ClientTask[];
   profile: ClientProfile | null;
   taskDetails: TaskDetails | null;
-  taskFormDrafts: Record<number, TaskFormDraft>; // Keyed by taskId
+  taskFormDrafts: Record<number, TaskFormDraft>;
+  clientDocuments: ClientDocument[];
   loading: boolean;
   tasksLoading: boolean;
   profileLoading: boolean;
   taskDetailsLoading: boolean;
+  documentsLoading: boolean;
   error: string | null;
 }
 
@@ -71,10 +132,12 @@ const initialState: ClientPortalState = {
   profile: null,
   taskDetails: null,
   taskFormDrafts: {},
+  clientDocuments: [],
   loading: false,
   tasksLoading: false,
   profileLoading: false,
   taskDetailsLoading: false,
+  documentsLoading: false,
   error: null,
 };
 
@@ -361,11 +424,14 @@ export const fetchTaskDocuments = createAsyncThunk(
         (doc: any) => doc.document_type === "image",
       );
 
+      const toCdnUrl = (p: string) =>
+        p?.startsWith("http") ? p : `https://disruptinglabs.com/data/api${p}`;
+
       return {
         taskId,
         pdfs: pdfs.map((doc: any) => ({
           filename: doc.filename,
-          path: doc.file_path,
+          path: toCdnUrl(doc.file_path),
           size: doc.file_size,
           uploaded_at: doc.uploaded_at,
         })),
@@ -373,12 +439,12 @@ export const fetchTaskDocuments = createAsyncThunk(
           main: images[0]
             ? {
                 filename: images[0].filename,
-                path: images[0].file_path,
+                path: toCdnUrl(images[0].file_path),
               }
             : null,
           extra: images.slice(1).map((doc: any) => ({
             filename: doc.filename,
-            path: doc.file_path,
+            path: toCdnUrl(doc.file_path),
           })),
         },
       };
@@ -407,6 +473,12 @@ export const saveTaskDocumentMetadata = createAsyncThunk(
       const state = getState() as RootState;
       const token = state.clientAuth.sessionToken;
 
+      // Store relative path in DB — strip CDN base if present
+      const toRelativePath = (p: string) =>
+        p?.startsWith("https://disruptinglabs.com/data/api")
+          ? p.replace("https://disruptinglabs.com/data/api", "")
+          : p;
+
       const uploadPromises = files.map((file) =>
         axios.post(
           `/api/client/tasks/${taskId}/documents`,
@@ -415,7 +487,7 @@ export const saveTaskDocumentMetadata = createAsyncThunk(
             document_type: documentType,
             filename: file.filename,
             original_filename: file.original_name || file.filename,
-            file_path: file.path,
+            file_path: toRelativePath(file.path),
             file_size: file.size,
           },
           {
@@ -429,6 +501,30 @@ export const saveTaskDocumentMetadata = createAsyncThunk(
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.error || "Failed to save document metadata",
+      );
+    }
+  },
+);
+
+/**
+ * Fetch all documents uploaded by the client across all tasks
+ */
+export const fetchClientDocuments = createAsyncThunk(
+  "clientPortal/fetchDocuments",
+  async (_, { getState, rejectWithValue }) => {
+    try {
+      const state = getState() as RootState;
+      const token = state.clientAuth.sessionToken;
+      const response = await axios.get<{
+        success: boolean;
+        documents: ClientDocument[];
+      }>("/api/client/documents", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return response.data.documents;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to fetch documents",
       );
     }
   },
@@ -561,6 +657,29 @@ const clientPortalSlice = createSlice({
       // Clear draft when task is completed
       delete state.taskFormDrafts[action.payload.taskId];
     });
+
+    // Fetch client documents
+    builder
+      .addCase(fetchClientDocuments.pending, (state) => {
+        state.documentsLoading = true;
+        state.error = null;
+      })
+      .addCase(fetchClientDocuments.fulfilled, (state, action) => {
+        state.documentsLoading = false;
+        state.clientDocuments = action.payload;
+      })
+      .addCase(fetchClientDocuments.rejected, (state, action) => {
+        state.documentsLoading = false;
+        state.error = action.payload as string;
+      });
+
+    // Submit signatures
+    builder.addCase(submitTaskSignatures.fulfilled, (state, action) => {
+      const task = state.tasks.find((t) => t.id === action.payload.taskId);
+      if (task) {
+        task.status = "completed";
+      }
+    });
   },
 });
 
@@ -586,5 +705,9 @@ export const selectTasksLoading = (state: RootState) =>
 export const selectProfileLoading = (state: RootState) =>
   state.clientPortal.profileLoading;
 export const selectPortalError = (state: RootState) => state.clientPortal.error;
+export const selectClientDocuments = (state: RootState) =>
+  state.clientPortal.clientDocuments;
+export const selectDocumentsLoading = (state: RootState) =>
+  state.clientPortal.documentsLoading;
 
 export default clientPortalSlice.reducer;

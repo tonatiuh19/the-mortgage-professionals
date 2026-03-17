@@ -19,9 +19,14 @@ import {
   Shield,
   Bell,
   UserCog,
+  Lock,
+  AlarmClock,
+  Menu,
+  X,
+  MessageSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import {
   Tooltip,
@@ -37,7 +42,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { logout, validateSession } from "@/store/slices/brokerAuthSlice";
+import { logout, initAdminSession } from "@/store/slices/brokerAuthSlice";
+import { selectSectionControlsMap } from "@/store/slices/adminSectionControlsSlice";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   AlertDialog,
@@ -49,6 +55,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -57,12 +69,15 @@ interface AdminLayoutProps {
 const AdminLayout = ({ children }: AdminLayoutProps) => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const location = useLocation();
   const { user, sessionToken, isAuthenticated } = useAppSelector(
     (state) => state.brokerAuth,
   );
+
+  const sectionControlsMap = useAppSelector(selectSectionControlsMap);
 
   // Redirect to login if not authenticated
   React.useEffect(() => {
@@ -71,18 +86,20 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
     }
   }, [sessionToken, navigate]);
 
-  // Validate session and load user data on mount
+  // Single bootstrap call — validates session, loads profile + section controls
   React.useEffect(() => {
-    if (!user && sessionToken) {
-      dispatch(validateSession());
+    if (sessionToken) {
+      dispatch(initAdminSession());
     }
-  }, [dispatch, user, sessionToken]);
+  }, [dispatch, sessionToken]);
 
   const handleLogout = async () => {
     setShowLogoutConfirm(false);
     await dispatch(logout());
     navigate("/broker-login");
   };
+
+  const isPartner = user?.role === "broker";
 
   const menuItems = [
     {
@@ -108,65 +125,234 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
       label: "Tasks",
       icon: <CheckCircle2 className="h-4 w-4" />,
       path: "/admin/tasks",
+      hidden: isPartner,
     },
-    {
-      id: "marketing",
-      label: "Marketing & Campaigns",
-      icon: <Megaphone className="h-4 w-4" />,
-      path: "/admin/marketing",
-    },
+    // {
+    //   id: "marketing",
+    //   label: "Marketing & Campaigns",
+    //   icon: <Megaphone className="h-4 w-4" />,
+    //   path: "/admin/marketing",
+    // },
     {
       id: "documents",
       label: "Documents",
       icon: <Briefcase className="h-4 w-4" />,
       path: "/admin/documents",
+      hidden: isPartner,
     },
     {
       id: "communication-templates",
       label: "Communications",
       icon: <Mail className="h-4 w-4" />,
       path: "/admin/communication-templates",
+      hidden: isPartner,
+    },
+    {
+      id: "reminder-flows",
+      label: "Reminder Flows",
+      icon: <AlarmClock className="h-4 w-4" />,
+      path: "/admin/reminder-flows",
+      hidden: isPartner,
     },
     {
       id: "conversations",
       label: "Conversations",
       icon: <MessageCircle className="h-4 w-4" />,
       path: "/admin/conversations",
+      hidden: isPartner,
+    },
+    {
+      id: "contact-submissions",
+      label: "Contact Messages",
+      icon: <MessageSquare className="h-4 w-4" />,
+      path: "/admin/contact-submissions",
+      hidden: isPartner,
     },
     {
       id: "reports",
       label: "Reports & Analytics",
       icon: <TrendingUp className="h-4 w-4" />,
       path: "/admin/reports",
+      hidden: isPartner,
     },
-    {
-      id: "compliance",
-      label: "Compliance",
-      icon: <Shield className="h-4 w-4" />,
-      path: "/admin/compliance",
-    },
-    {
-      id: "notifications",
-      label: "Notifications",
-      icon: <Bell className="h-4 w-4" />,
-      path: "/admin/notifications",
-    },
+    // {
+    //   id: "compliance",
+    //   label: "Compliance",
+    //   icon: <Shield className="h-4 w-4" />,
+    //   path: "/admin/compliance",
+    // },
+    // {
+    //   id: "notifications",
+    //   label: "Notifications",
+    //   icon: <Bell className="h-4 w-4" />,
+    //   path: "/admin/notifications",
+    // },
     {
       id: "brokers",
-      label: "Broker Management",
+      label: "People Management",
       icon: <UserCog className="h-4 w-4" />,
       path: "/admin/brokers",
+      hidden: isPartner,
     },
     {
       id: "settings",
       label: "Settings",
       icon: <Settings className="h-4 w-4" />,
       path: "/admin/settings",
+      hidden: isPartner,
     },
   ];
 
+  // Build effective menu items with disabled state resolved from DB
+  const effectiveMenuItems = menuItems
+    .filter((item) => !(item as any).hidden)
+    .map((item) => {
+      const ctrl = sectionControlsMap[item.id];
+      return {
+        ...item,
+        disabled: ctrl ? ctrl.is_disabled : false,
+        tooltipMessage: ctrl?.tooltip_message ?? "Coming Soon",
+      };
+    });
+
+  // Shared menu renderer used by both desktop sidebar and mobile Sheet
+  const renderMenuItems = (onItemClick?: () => void) =>
+    effectiveMenuItems.map((item) => {
+      const menuButton = (
+        <Button
+          key={item.id}
+          variant={location.pathname === item.path ? "secondary" : "ghost"}
+          className={cn(
+            "w-full gap-3 justify-start",
+            location.pathname === item.path
+              ? "bg-primary/10 text-primary hover:bg-primary/20"
+              : "",
+            item.disabled
+              ? "opacity-60 cursor-not-allowed hover:bg-transparent hover:text-muted-foreground"
+              : "",
+          )}
+          onClick={() => {
+            if (!item.disabled) {
+              navigate(item.path);
+              onItemClick?.();
+            }
+          }}
+          aria-disabled={item.disabled}
+        >
+          {item.icon}
+          <span>{item.label}</span>
+          {item.disabled && <Lock className="h-3.5 w-3.5 ml-auto" />}
+        </Button>
+      );
+
+      if (!item.disabled) return menuButton;
+
+      return (
+        <Tooltip key={item.id} delayDuration={250}>
+          <TooltipTrigger asChild>{menuButton}</TooltipTrigger>
+          <TooltipContent side="right">
+            <p>{item.tooltipMessage}</p>
+          </TooltipContent>
+        </Tooltip>
+      );
+    });
+
   return (
     <div className="flex h-screen bg-muted/20 overflow-hidden">
+      {/* Mobile Top Header */}
+      <div className="md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-4 h-14 bg-background border-b shadow-sm">
+        <img
+          src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png"
+          alt="The Mortgage Professionals CRM"
+          className="h-8 w-auto"
+        />
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setMobileMenuOpen(true)}
+          className="h-9 w-9"
+        >
+          <Menu className="h-5 w-5" />
+        </Button>
+      </div>
+
+      {/* Mobile Navigation Sheet */}
+      <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+        <SheetContent side="left" className="w-72 p-0 flex flex-col">
+          <SheetHeader className="flex flex-row items-center justify-between px-4 h-14 border-b shrink-0">
+            <SheetTitle className="sr-only">Navigation</SheetTitle>
+            <img
+              src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png"
+              alt="The Mortgage Professionals CRM"
+              className="h-9 w-auto"
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setMobileMenuOpen(false)}
+              className="h-8 w-8"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </SheetHeader>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-1">
+            {renderMenuItems(() => setMobileMenuOpen(false))}
+          </div>
+
+          {/* Mobile User Section */}
+          <div className="border-t p-4 shrink-0">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  navigate("/admin/profile");
+                  setMobileMenuOpen(false);
+                }}
+                className="focus:outline-none"
+              >
+                <Avatar className="h-9 w-9 ring-2 ring-primary/20 cursor-pointer hover:ring-primary/50 transition-all">
+                  <AvatarImage
+                    src={user?.avatar_url ?? undefined}
+                    alt="Profile"
+                    className="object-cover"
+                  />
+                  <AvatarFallback className="bg-primary text-primary-foreground">
+                    {user?.first_name?.charAt(0) || "A"}
+                  </AvatarFallback>
+                </Avatar>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  navigate("/admin/profile");
+                  setMobileMenuOpen(false);
+                }}
+                className="flex-1 min-w-0 text-left hover:opacity-80"
+              >
+                <p className="text-sm font-medium truncate">
+                  {user ? `${user.first_name} ${user.last_name}` : "Admin User"}
+                </p>
+                <p className="text-xs text-muted-foreground capitalize">
+                  {user?.role || "broker"}
+                </p>
+              </button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                onClick={() => {
+                  setShowLogoutConfirm(true);
+                  setMobileMenuOpen(false);
+                }}
+              >
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
       {/* Sidebar */}
       <aside
         className={cn(
@@ -206,43 +392,89 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
 
         {/* Menu Items */}
         <div className="flex-1 space-y-1 p-4 overflow-y-auto scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
-          {menuItems.map((item) => (
-            <Button
-              key={item.id}
-              variant={location.pathname === item.path ? "secondary" : "ghost"}
-              className={cn(
-                "w-full gap-3",
-                sidebarCollapsed ? "justify-center px-2" : "justify-start",
-                location.pathname === item.path
-                  ? "bg-primary/10 text-primary hover:bg-primary/20"
-                  : "",
-              )}
-              onClick={() => navigate(item.path)}
-              title={sidebarCollapsed ? item.label : undefined}
-            >
-              {item.icon}
-              {!sidebarCollapsed && item.label}
-            </Button>
-          ))}
+          {effectiveMenuItems.map((item) => {
+            const menuButton = (
+              <Button
+                key={item.id}
+                variant={
+                  location.pathname === item.path ? "secondary" : "ghost"
+                }
+                className={cn(
+                  "w-full gap-3",
+                  sidebarCollapsed ? "justify-center px-2" : "justify-start",
+                  location.pathname === item.path
+                    ? "bg-primary/10 text-primary hover:bg-primary/20"
+                    : "",
+                  item.disabled
+                    ? "opacity-60 cursor-not-allowed hover:bg-transparent hover:text-muted-foreground"
+                    : "",
+                )}
+                onClick={() => {
+                  if (!item.disabled) navigate(item.path);
+                }}
+                aria-disabled={item.disabled}
+                title={
+                  sidebarCollapsed && !item.disabled ? item.label : undefined
+                }
+              >
+                {item.icon}
+                {!sidebarCollapsed && (
+                  <>
+                    <span>{item.label}</span>
+                    {item.disabled && <Lock className="h-3.5 w-3.5 ml-auto" />}
+                  </>
+                )}
+                {sidebarCollapsed && item.disabled && (
+                  <Lock className="h-3.5 w-3.5 absolute top-1.5 right-1.5" />
+                )}
+              </Button>
+            );
+
+            if (!item.disabled) return menuButton;
+
+            return (
+              <Tooltip key={item.id} delayDuration={250}>
+                <TooltipTrigger asChild>{menuButton}</TooltipTrigger>
+                <TooltipContent side={sidebarCollapsed ? "right" : "top"}>
+                  <p>{item.tooltipMessage}</p>
+                </TooltipContent>
+              </Tooltip>
+            );
+          })}
         </div>
 
         {/* User Section */}
         <div className="border-t p-4">
           {!sidebarCollapsed ? (
             <div className="flex items-center gap-3 group">
-              <Avatar className="h-9 w-9 ring-2 ring-primary/20">
-                <AvatarFallback className="bg-primary text-primary-foreground">
-                  {user?.first_name?.charAt(0) || "A"}
-                </AvatarFallback>
-              </Avatar>
-              <div className="flex-1 min-w-0">
+              <button
+                type="button"
+                onClick={() => navigate("/admin/profile")}
+                className="focus:outline-none"
+              >
+                <Avatar className="h-9 w-9 ring-2 ring-primary/20 cursor-pointer hover:ring-primary/50 transition-all">
+                  <AvatarImage
+                    src={user?.avatar_url ?? undefined}
+                    alt="Profile"
+                    className="object-cover"
+                  />
+                  <AvatarFallback className="bg-primary text-primary-foreground">
+                    {user?.first_name?.charAt(0) || "A"}
+                  </AvatarFallback>
+                </Avatar>
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate("/admin/profile")}
+                className="flex-1 min-w-0 text-left hover:opacity-80 transition-opacity"
+              >
                 <p className="text-sm font-medium truncate">
                   {user ? `${user.first_name} ${user.last_name}` : "Admin User"}
                 </p>
                 <p className="text-xs text-muted-foreground capitalize">
                   {user?.role || "broker"}
                 </p>
-              </div>
+              </button>
               <Tooltip delayDuration={300}>
                 <TooltipTrigger asChild>
                   <Button
@@ -265,6 +497,11 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" className="h-9 w-9">
                     <Avatar className="h-9 w-9">
+                      <AvatarImage
+                        src={user?.avatar_url ?? undefined}
+                        alt="Profile"
+                        className="object-cover"
+                      />
                       <AvatarFallback className="bg-primary text-primary-foreground text-xs">
                         {user?.first_name?.charAt(0) || "A"}
                       </AvatarFallback>
@@ -274,6 +511,11 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
                 <DropdownMenuContent side="right" align="end" className="w-56">
                   <div className="flex items-center gap-2 p-2">
                     <Avatar className="h-8 w-8">
+                      <AvatarImage
+                        src={user?.avatar_url ?? undefined}
+                        alt="Profile"
+                        className="object-cover"
+                      />
                       <AvatarFallback className="bg-primary text-primary-foreground">
                         {user?.first_name?.charAt(0) || "A"}
                       </AvatarFallback>
@@ -291,6 +533,14 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
                   </div>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
+                    className="gap-2"
+                    onClick={() => navigate("/admin/profile")}
+                  >
+                    <UserCog className="h-4 w-4" />
+                    My Profile
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
                     className="gap-2 text-destructive focus:text-destructive focus:bg-destructive/10"
                     onClick={() => setShowLogoutConfirm(true)}
                   >
@@ -305,7 +555,9 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto h-screen">{children}</main>
+      <main className="flex-1 overflow-y-auto h-screen pt-14 md:pt-0">
+        {children}
+      </main>
 
       {/* Logout Confirmation Dialog */}
       <AlertDialog open={showLogoutConfirm} onOpenChange={setShowLogoutConfirm}>

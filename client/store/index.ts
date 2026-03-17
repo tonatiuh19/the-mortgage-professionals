@@ -15,6 +15,12 @@ import dashboardReducer from "./slices/dashboardSlice";
 import clientPortalReducer from "./slices/clientPortalSlice";
 import auditLogsReducer from "./slices/auditLogsSlice";
 import reportsReducer from "./slices/reportsSlice";
+import reminderFlowsReducer from "./slices/reminderFlowsSlice";
+import preApprovalReducer from "./slices/preApprovalSlice";
+import applicationWizardReducer from "./slices/applicationWizardSlice";
+import contactSubmissionsReducer from "./slices/contactSubmissionsSlice";
+import settingsReducer from "./slices/settingsSlice";
+import adminSectionControlsReducer from "./slices/adminSectionControlsSlice";
 
 export const store = configureStore({
   reducer: {
@@ -34,6 +40,12 @@ export const store = configureStore({
     clientPortal: clientPortalReducer,
     auditLogs: auditLogsReducer,
     reports: reportsReducer,
+    reminderFlows: reminderFlowsReducer,
+    preApproval: preApprovalReducer,
+    applicationWizard: applicationWizardReducer,
+    contactSubmissions: contactSubmissionsReducer,
+    settings: settingsReducer,
+    adminSectionControls: adminSectionControlsReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

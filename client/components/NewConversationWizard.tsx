@@ -9,14 +9,33 @@ import {
   Zap,
   User,
   ChevronRight,
-  X,
   Eye,
+  Search,
+  X,
+  CheckCircle2,
+  ChevronsUpDown,
+  Check,
 } from "lucide-react";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { fetchClients } from "@/store/slices/clientsSlice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   Card,
   CardContent,
@@ -41,6 +60,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { logger } from "@/lib/logger";
 
 interface Template {
   id: number;
@@ -77,6 +97,11 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
   onSendMessage,
   isSending,
 }) => {
+  const dispatch = useAppDispatch();
+  const { clients, isLoading: clientsLoading } = useAppSelector(
+    (s) => s.clients,
+  );
+
   const [currentStep, setCurrentStep] = useState<Step>("method");
   const [conversationMethod, setConversationMethod] = useState<
     "template" | "blank"
@@ -92,6 +117,17 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
   const [messageSubject, setMessageSubject] = useState("");
   const [messageBody, setMessageBody] = useState("");
   const [previewTemplate, setPreviewTemplate] = useState<Template | null>(null);
+  // Client picker state
+  const [clientSearch, setClientSearch] = useState("");
+  const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
+  const [comboOpen, setComboOpen] = useState(false);
+
+  // Load clients when wizard opens
+  useEffect(() => {
+    if (isOpen) {
+      dispatch(fetchClients());
+    }
+  }, [isOpen, dispatch]);
 
   // Reset state when dialog opens/closes
   useEffect(() => {
@@ -105,6 +141,9 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
       setMessageSubject("");
       setMessageBody("");
       setPreviewTemplate(null);
+      setClientSearch("");
+      setSelectedClientId(null);
+      setComboOpen(false);
     }
   }, [isOpen]);
 
@@ -194,9 +233,7 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
       case "template":
         return conversationMethod === "blank" || selectedTemplate !== null;
       case "recipient":
-        return communicationType === "email"
-          ? recipientEmail.trim().length > 0
-          : recipientPhone.trim().length > 0;
+        return selectedClientId !== null;
       case "compose":
         return messageBody.trim().length > 0;
       case "preview":
@@ -347,7 +384,7 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
                         className="bg-primary from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"
                         onClick={() => {
                           // TODO: Navigate to template management or creation
-                          console.log("Navigate to template creation");
+                          logger.log("Navigate to template creation");
                         }}
                       >
                         <FileText className="h-4 w-4 mr-2" />
@@ -385,7 +422,7 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
                         className="text-blue-600 border-blue-200 hover:bg-blue-50"
                         onClick={() => {
                           // TODO: Navigate to template creation for this specific type
-                          console.log(`Create ${communicationType} template`);
+                          logger.log(`Create ${communicationType} template`);
                         }}
                       >
                         <FileText className="h-4 w-4 mr-2" />
@@ -451,52 +488,145 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
           </div>
         );
 
-      case "recipient":
+      case "recipient": {
+        const field = communicationType === "email" ? "email" : "phone";
+        const selectedClient =
+          clients.find((c) => c.id === selectedClientId) ?? null;
+
+        const handleSelectClient = (c: (typeof clients)[number]) => {
+          setSelectedClientId(c.id);
+          setRecipientEmail(c.email);
+          setRecipientPhone(c.phone ?? "");
+          setComboOpen(false);
+          setClientSearch("");
+        };
+
         return (
-          <div className="space-y-4">
-            <h3 className="text-lg font-semibold flex items-center space-x-2">
+          <div className="flex flex-col gap-4">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
               <User className="h-5 w-5" />
-              <span>Who are you messaging?</span>
+              <span>Select a client</span>
             </h3>
 
-            {communicationType === "email" ? (
-              <div>
-                <Label htmlFor="recipientEmail">Email Address</Label>
-                <Input
-                  id="recipientEmail"
-                  type="email"
-                  placeholder="client@example.com"
-                  value={recipientEmail}
-                  onChange={(e) => setRecipientEmail(e.target.value)}
-                  className="mt-1"
-                />
-              </div>
-            ) : (
-              <div>
-                <Label htmlFor="recipientPhone">Phone Number</Label>
-                <Input
-                  id="recipientPhone"
-                  placeholder="+1 (555) 123-4567"
-                  value={recipientPhone}
-                  onChange={(e) => setRecipientPhone(e.target.value)}
-                  className="mt-1"
-                />
-              </div>
-            )}
+            {/* Combobox picker */}
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Client</Label>
+              <Popover open={comboOpen} onOpenChange={setComboOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    role="combobox"
+                    aria-expanded={comboOpen}
+                    className={cn(
+                      "w-full flex items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background transition-colors",
+                      "hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+                      !selectedClient && "text-muted-foreground",
+                    )}
+                  >
+                    {selectedClient ? (
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className="h-6 w-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
+                          {selectedClient.first_name[0]}
+                          {selectedClient.last_name[0]}
+                        </span>
+                        <span className="font-medium truncate">
+                          {selectedClient.first_name} {selectedClient.last_name}
+                        </span>
+                        <span className="text-muted-foreground truncate text-xs">
+                          &mdash;{" "}
+                          {field === "email"
+                            ? selectedClient.email
+                            : (selectedClient.phone ?? "No phone")}
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-2">
+                        <Search className="h-4 w-4" />
+                        Search client by name, email or phone…
+                      </span>
+                    )}
+                    <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-[--radix-popover-trigger-width] p-0"
+                  align="start"
+                  sideOffset={4}
+                >
+                  <Command shouldFilter={false}>
+                    <CommandInput
+                      placeholder="Search by name, email or phone…"
+                      value={clientSearch}
+                      onValueChange={setClientSearch}
+                    />
+                    <CommandList className="max-h-64">
+                      {clientsLoading ? (
+                        <div className="flex items-center justify-center py-6 gap-2 text-sm text-muted-foreground">
+                          <div className="h-4 w-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                          Loading…
+                        </div>
+                      ) : (
+                        <>
+                          <CommandEmpty>No clients found.</CommandEmpty>
+                          <CommandGroup>
+                            {clients
+                              .filter((c) => {
+                                const q = clientSearch.toLowerCase();
+                                if (!q) return true;
+                                return (
+                                  c.first_name.toLowerCase().includes(q) ||
+                                  c.last_name.toLowerCase().includes(q) ||
+                                  c.email.toLowerCase().includes(q) ||
+                                  (c.phone ?? "").includes(q)
+                                );
+                              })
+                              .slice(0, 50)
+                              .map((c) => (
+                                <CommandItem
+                                  key={c.id}
+                                  value={String(c.id)}
+                                  onSelect={() => handleSelectClient(c)}
+                                  className="flex items-center gap-2.5 cursor-pointer"
+                                >
+                                  <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center shrink-0 text-xs font-bold">
+                                    {c.first_name[0]}
+                                    {c.last_name[0]}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium truncate">
+                                      {c.first_name} {c.last_name}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground truncate">
+                                      {field === "email"
+                                        ? c.email
+                                        : (c.phone ?? "—")}
+                                    </p>
+                                  </div>
+                                  {c.id === selectedClientId && (
+                                    <Check className="h-4 w-4 text-primary shrink-0" />
+                                  )}
+                                </CommandItem>
+                              ))}
+                          </CommandGroup>
+                        </>
+                      )}
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
 
             {selectedTemplate && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <div className="flex items-center space-x-2 mb-2">
-                  <FileText className="h-4 w-4 text-blue-600" />
-                  <span className="font-medium text-blue-900">
-                    Using template: {selectedTemplate.name}
-                  </span>
-                </div>
-                {/* Description removed as not available in ConversationTemplate */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-center gap-2">
+                <FileText className="h-4 w-4 text-blue-600 shrink-0" />
+                <span className="text-sm font-medium text-blue-900 truncate">
+                  Using template: {selectedTemplate.name}
+                </span>
               </div>
             )}
           </div>
         );
+      }
 
       case "compose":
         return (
@@ -611,32 +741,20 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
   return (
     <>
       <Dialog open={isOpen} onOpenChange={onClose}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden">
+        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
           <DialogHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <DialogTitle>Start New Conversation</DialogTitle>
-                <DialogDescription>
-                  Step{" "}
-                  {[
-                    "method",
-                    "template",
-                    "recipient",
-                    "compose",
-                    "preview",
-                  ].indexOf(currentStep) + 1}{" "}
-                  of {conversationMethod === "blank" ? "4" : "5"}
-                </DialogDescription>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onClose}
-                className="h-8 w-8 p-0"
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
+            <DialogTitle>Start New Conversation</DialogTitle>
+            <DialogDescription>
+              Step{" "}
+              {[
+                "method",
+                "template",
+                "recipient",
+                "compose",
+                "preview",
+              ].indexOf(currentStep) + 1}{" "}
+              of {conversationMethod === "blank" ? "4" : "5"}
+            </DialogDescription>
           </DialogHeader>
 
           <Separator />

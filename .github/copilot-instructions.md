@@ -8,6 +8,9 @@
 - **ALL data fetching MUST be done in Redux store (slices) using createAsyncThunk**
 - **Components ONLY dispatch actions and select state from store**
 - **NO EXCEPTIONS to these rules**
+- **NEVER touch schema.sql, any database changes must be made through migration files in `database/migrations/`**
+- **When using any console logging for debugging use logger functions from `client/utils/logger.ts` for consistent formatting and log levels only in UI components**
+- **NEVER Patch issues, always fix the root cause of type errors or bugs immediately**
 
 ### Package Manager
 
@@ -21,8 +24,8 @@
 - Single port (8080) for both frontend/backend in development
 - **CRITICAL: Always reference `database/schema.sql` for database structure and table definitions**
 - **NEVER assume column names - check schema.sql first**
-- **If any database update is made based on schema.sql, generate a migration file** in `database/migrations/` with timestamp prefix (e.g., `YYYYMMDD_HHMMSS_description.sql`)
-- **If a type issue is generated, fix it immediately** - ensure all TypeScript types are correct and consistent across client, server, and shared
+- **If any database update is made based on schema.sql, generate a migration file** in `database/migrations/` with timestamp prefix (e.g., `YYYYMMDD_HHMMSS_description.sql`) for hostgator mysql database version 8.0
+- **If a type issue is generated, fix it immediately** - ensure all TypeScript types are correct and consistent across client, api/index.ts, and shared
 
 ## Project Structure
 
@@ -34,6 +37,7 @@
 - `client/global.css` - TailwindCSS theming and global styles
 - Add cool, engage, modern UI components
 - Need to use cool animations and transitions for smooth UX
+- When console logging for debugging, always use logger functions from `client/utils/logger.ts` for consistent formatting and log levels
 
 ### Shared
 

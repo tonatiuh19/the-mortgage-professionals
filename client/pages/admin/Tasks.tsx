@@ -9,6 +9,7 @@ import {
   Trash2,
   File,
   FileText,
+  PenTool,
 } from "lucide-react";
 import { MetaHelmet } from "@/components/MetaHelmet";
 import { adminPageMeta } from "@/lib/seo-helpers";
@@ -69,6 +70,7 @@ const Tasks = () => {
   const dispatch = useAppDispatch();
   const { tasks, isLoading: loading } = useAppSelector((state) => state.tasks);
   const [filter, setFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskTemplate | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -165,9 +167,17 @@ const Tasks = () => {
   };
 
   const filteredTasks = tasks.filter((task) => {
-    if (filter === "all") return true;
-    if (filter === "active") return task.is_active;
-    if (filter === "inactive") return !task.is_active;
+    if (filter === "active" && !task.is_active) return false;
+    if (filter === "inactive" && task.is_active) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      if (
+        !task.title.toLowerCase().includes(q) &&
+        !(task.description || "").toLowerCase().includes(q) &&
+        !(task.task_type || "").toLowerCase().includes(q)
+      )
+        return false;
+    }
     return true;
   });
 
@@ -192,7 +202,7 @@ const Tasks = () => {
         <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
-              <CheckCircle2 className="h-7 w-7 text-emerald-500" />
+              <CheckCircle2 className="h-7 w-7 text-primary" />
               Task Templates
             </h1>
             <p className="text-sm text-muted-foreground">
@@ -202,11 +212,16 @@ const Tasks = () => {
           <div className="flex items-center gap-3">
             <div className="relative w-full sm:max-w-xs">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Search tasks..." className="pl-9" />
+              <Input
+                placeholder="Search tasks..."
+                className="pl-9"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
             </div>
             <Button
               onClick={() => setWizardOpen(true)}
-              className="bg-emerald-500 hover:bg-emerald-600 gap-2"
+              className="bg-primary gap-2"
             >
               <Plus className="h-4 w-4" />
               <span className="hidden sm:inline">New Task</span>
@@ -238,7 +253,7 @@ const Tasks = () => {
               </p>
               <Button
                 onClick={() => setWizardOpen(true)}
-                className="bg-emerald-500 hover:bg-emerald-600 gap-2"
+                className="bg-primary gap-2"
               >
                 <Plus className="h-4 w-4" />
                 Create Your First Task
@@ -331,9 +346,9 @@ const Tasks = () => {
                         </div>
 
                         <div className="flex flex-wrap gap-2">
-                          <Badge variant="outline" className="text-xs">
+                          {/* <Badge variant="outline" className="text-xs">
                             Order: {task.order_index}
-                          </Badge>
+                          </Badge> */}
                           <Badge
                             className={cn(
                               "text-xs",
@@ -352,7 +367,9 @@ const Tasks = () => {
                           )}
                         </div>
 
-                        {(task.requires_documents || task.has_custom_form) && (
+                        {(task.requires_documents ||
+                          task.has_custom_form ||
+                          task.has_signing) && (
                           <div className="flex items-center gap-1 flex-wrap">
                             {task.requires_documents && (
                               <Badge
@@ -370,6 +387,15 @@ const Tasks = () => {
                               >
                                 <FileText className="h-3 w-3" />
                                 Form
+                              </Badge>
+                            )}
+                            {task.has_signing && (
+                              <Badge
+                                variant="outline"
+                                className="text-xs flex items-center gap-1"
+                              >
+                                <PenTool className="h-3 w-3" />
+                                Signing
                               </Badge>
                             )}
                           </div>
@@ -405,9 +431,9 @@ const Tasks = () => {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="min-w-[50px] whitespace-nowrap">
+                        {/* <TableHead className="min-w-[50px] whitespace-nowrap">
                           Order
-                        </TableHead>
+                        </TableHead> */}
                         <TableHead className="min-w-[200px]">
                           Task Template
                         </TableHead>
@@ -434,11 +460,11 @@ const Tasks = () => {
                     <TableBody>
                       {filteredTasks.map((task) => (
                         <TableRow key={task.id}>
-                          <TableCell className="min-w-[50px] whitespace-nowrap">
+                          {/* <TableCell className="min-w-[50px] whitespace-nowrap">
                             <Badge variant="outline" className="text-xs">
                               {task.order_index}
                             </Badge>
-                          </TableCell>
+                          </TableCell> */}
                           <TableCell className="min-w-[200px] max-w-[300px]">
                             <div className="flex items-center gap-2">
                               <div className="min-w-0">
@@ -495,8 +521,18 @@ const Tasks = () => {
                                   Form
                                 </Badge>
                               )}
+                              {!!task.has_signing && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-xs flex items-center gap-1"
+                                >
+                                  <PenTool className="h-3 w-3" />
+                                  Signing
+                                </Badge>
+                              )}
                               {!task.requires_documents &&
-                                !task.has_custom_form && (
+                                !task.has_custom_form &&
+                                !task.has_signing && (
                                   <span className="text-xs text-muted-foreground">
                                     -
                                   </span>

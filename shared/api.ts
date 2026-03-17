@@ -192,6 +192,12 @@ export interface ClientApplication {
   broker_last_name: string | null;
   broker_phone: string | null;
   broker_email: string | null;
+  broker_avatar_url: string | null;
+  partner_first_name: string | null;
+  partner_last_name: string | null;
+  partner_phone: string | null;
+  partner_email: string | null;
+  partner_avatar_url: string | null;
   completed_tasks: number;
   total_tasks: number;
 }
@@ -486,6 +492,11 @@ export interface LoanApplication {
   actual_close_date: string | null;
   created_at: string;
   updated_at: string;
+  // Partner assignment fields
+  partner_broker_id?: number | null;
+  partner_first_name?: string | null;
+  partner_last_name?: string | null;
+  loan_broker_role?: string | null;
 }
 
 export interface TaskTemplate {
@@ -500,6 +511,7 @@ export interface TaskTemplate {
   requires_documents?: boolean;
   document_instructions?: string | null;
   has_custom_form?: boolean;
+  has_signing?: boolean;
   created_at: string;
   updated_at: string;
   form_fields?: TaskFormField[];
@@ -934,5 +946,808 @@ export interface AnnualMetrics {
   avg_lead_to_credit_pct: number;
   avg_credit_to_preapp_pct: number;
   avg_lead_to_closing_pct: number;
-  lead_sources_annual: { category: string; count: number }[];
+  lead_sources_annual: { category: LeadSourceCategory; count: number }[];
+}
+
+export interface GetAnnualMetricsResponse {
+  success: boolean;
+  annual: AnnualMetrics;
+}
+
+// =============================================================
+// PUBLIC BROKER INFO (share link / application wizard)
+// =============================================================
+
+export interface MortgageBankerPublicInfo {
+  id: number;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string | null;
+  license_number: string | null;
+  bio: string | null;
+  avatar_url: string | null;
+  office_address: string | null;
+  office_city: string | null;
+  office_state: string | null;
+  office_zip: string | null;
+  years_experience: number | null;
+  total_loans_closed: number;
+  facebook_url: string | null;
+  instagram_url: string | null;
+  linkedin_url: string | null;
+  twitter_url: string | null;
+  youtube_url: string | null;
+  website_url: string | null;
+}
+
+export interface BrokerPublicProfile {
+  id: number;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string | null;
+  role: "broker" | "admin";
+  license_number: string | null;
+  specializations: string[] | null;
+  public_token: string;
+  bio: string | null;
+  avatar_url: string | null;
+  office_address: string | null;
+  office_city: string | null;
+  office_state: string | null;
+  office_zip: string | null;
+  years_experience: number | null;
+  total_loans_closed: number;
+  facebook_url: string | null;
+  instagram_url: string | null;
+  linkedin_url: string | null;
+  twitter_url: string | null;
+  youtube_url: string | null;
+  website_url: string | null;
+  mortgage_banker: MortgageBankerPublicInfo | null;
+}
+
+export interface BrokerPublicInfoResponse {
+  success: boolean;
+  broker: BrokerPublicProfile;
+}
+
+export interface MyShareLinkResponse {
+  success: boolean;
+  public_token: string;
+  share_url: string;
+}
+
+export interface RegenerateShareLinkResponse {
+  success: boolean;
+  public_token: string;
+  share_url: string;
+  message: string;
+}
+
+export interface SendShareLinkEmailRequest {
+  client_email: string;
+  client_name?: string;
+  message?: string;
+}
+
+export interface SendShareLinkEmailResponse {
+  success: boolean;
+  message: string;
+}
+
+// =============================================================
+// BROKER PROFILE
+// =============================================================
+
+export interface BrokerProfileDetails {
+  id: number;
+  email: string;
+  first_name: string;
+  last_name: string;
+  phone: string | null;
+  role: string;
+  license_number: string | null;
+  specializations: string[] | null;
+  bio: string | null;
+  avatar_url: string | null;
+  office_address: string | null;
+  office_city: string | null;
+  office_state: string | null;
+  office_zip: string | null;
+  years_experience: number | null;
+  total_loans_closed: number;
+  facebook_url: string | null;
+  instagram_url: string | null;
+  linkedin_url: string | null;
+  twitter_url: string | null;
+  youtube_url: string | null;
+  website_url: string | null;
+}
+
+export interface GetBrokerProfileResponse {
+  success: boolean;
+  profile: BrokerProfileDetails;
+}
+
+export interface UpdateBrokerProfileRequest {
+  first_name?: string;
+  last_name?: string;
+  phone?: string;
+  license_number?: string;
+  specializations?: string[];
+  bio?: string;
+  office_address?: string;
+  office_city?: string;
+  office_state?: string;
+  office_zip?: string;
+  years_experience?: number | null;
+  facebook_url?: string | null;
+  instagram_url?: string | null;
+  linkedin_url?: string | null;
+  twitter_url?: string | null;
+  youtube_url?: string | null;
+  website_url?: string | null;
+}
+
+export interface UpdateBrokerProfileResponse {
+  success: boolean;
+  profile: BrokerProfileDetails;
+}
+
+export interface UpdateBrokerAvatarResponse {
+  success: boolean;
+  avatar_url: string;
+}
+
+export interface AdminBrokerShareLinkResponse {
+  success: boolean;
+  public_token: string;
+  share_url: string;
+}
+
+// =============================================================
+// PRE-APPROVAL LETTER TYPES
+// =============================================================
+
+export interface PreApprovalLetter {
+  id: number;
+  tenant_id: number;
+  application_id: number;
+  approved_amount: number;
+  max_approved_amount: number;
+  html_content: string;
+  letter_date: string;
+  expires_at: string | null;
+  loan_type: string | null;
+  fico_score: number | null;
+  is_active: boolean;
+  created_by_broker_id: number;
+  updated_by_broker_id: number | null;
+  created_at: string;
+  updated_at: string;
+  // Joined broker fields
+  broker_first_name: string | null;
+  broker_last_name: string | null;
+  broker_email: string | null;
+  broker_phone: string | null;
+  broker_license_number: string | null;
+  broker_photo_url: string | null;
+  // Partner fields
+  loan_broker_role: string | null;
+  partner_first_name: string | null;
+  partner_last_name: string | null;
+  partner_email: string | null;
+  partner_phone: string | null;
+  partner_license_number: string | null;
+  partner_photo_url: string | null;
+  // Client / loan fields
+  client_first_name: string | null;
+  client_last_name: string | null;
+  client_email: string | null;
+  property_address: string | null;
+  property_city: string | null;
+  property_state: string | null;
+  property_zip: string | null;
+  application_number: string | null;
+  company_logo_url: string | null;
+  company_name: string | null;
+  company_address: string | null;
+  company_phone: string | null;
+  company_nmls: string | null;
+}
+
+export interface GetPreApprovalLetterResponse {
+  success: boolean;
+  letter: PreApprovalLetter | null;
+}
+
+export interface CreatePreApprovalLetterRequest {
+  max_approved_amount: number;
+  approved_amount: number;
+  html_content: string;
+  letter_date: string;
+  expires_at?: string | null;
+  loan_type?: string;
+  fico_score?: number | null;
+}
+
+export interface CreatePreApprovalLetterResponse {
+  success: boolean;
+  letter: PreApprovalLetter;
+  message: string;
+}
+
+export interface UpdatePreApprovalLetterRequest {
+  approved_amount?: number;
+  html_content?: string;
+  letter_date?: string;
+  expires_at?: string | null;
+  is_active?: boolean;
+  max_approved_amount?: number;
+}
+
+export interface UpdatePreApprovalLetterResponse {
+  success: boolean;
+  letter: PreApprovalLetter;
+  message: string;
+}
+
+export interface SendPreApprovalLetterEmailRequest {
+  subject?: string;
+  custom_message?: string;
+  template_id?: number | null;
+}
+
+export interface SendPreApprovalLetterEmailResponse {
+  success: boolean;
+  message: string;
+  external_id?: string;
+}
+
+// =============================================================
+// REMINDER FLOWS
+// =============================================================
+
+export type ReminderTriggerEvent =
+  | "app_sent"
+  | "application_created"
+  | "application_received"
+  | "prequalified"
+  | "preapproved"
+  | "under_contract_loan_setup"
+  | "submitted_to_underwriting"
+  | "approved_with_conditions"
+  | "loan_approved"
+  | "loan_documents_pending"
+  | "clear_to_close"
+  | "docs_out"
+  | "loan_funded"
+  | "task_pending"
+  | "task_in_progress"
+  | "task_overdue"
+  | "no_activity"
+  | "manual";
+
+export type ReminderStepType =
+  | "trigger"
+  | "wait"
+  | "wait_until_date"
+  | "send_notification"
+  | "send_email"
+  | "send_sms"
+  | "send_whatsapp"
+  | "condition"
+  | "branch"
+  | "wait_for_response"
+  | "end";
+
+export type FlowEdgeType =
+  | "default"
+  | "condition_yes"
+  | "condition_no"
+  | "loan_type_purchase"
+  | "loan_type_refinance"
+  | "no_response"
+  | "responded";
+
+export interface ReminderFlowStepConfig {
+  delay_days?: number;
+  delay_hours?: number;
+  delay_minutes?: number;
+  response_timeout_hours?: number;
+  response_timeout_minutes?: number;
+  message?: string;
+  subject?: string;
+  template_id?: number;
+  condition_type?:
+    | "loan_type"
+    | "task_completed"
+    | "task_pending"
+    | "inactivity_days"
+    | "loan_status"
+    | "loan_status_ne"
+    | "field_not_empty"
+    | "field_empty";
+  condition_value?: string;
+  field_name?: string;
+  date_field?: string;
+}
+
+export interface ReminderFlowStep {
+  id: number;
+  flow_id: number;
+  step_key: string;
+  step_type: ReminderStepType;
+  label: string;
+  description: string | null;
+  config: ReminderFlowStepConfig | null;
+  position_x: number;
+  position_y: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReminderFlowConnection {
+  id: number;
+  flow_id: number;
+  edge_key: string;
+  source_step_key: string;
+  target_step_key: string;
+  label: string | null;
+  edge_type: FlowEdgeType;
+  created_at: string;
+}
+
+export interface ReminderFlow {
+  id: number;
+  tenant_id: number;
+  name: string;
+  description: string | null;
+  trigger_event: ReminderTriggerEvent;
+  trigger_delay_days: number;
+  is_active: boolean;
+  apply_to_all_loans: boolean;
+  loan_type_filter: "all" | "purchase" | "refinance";
+  created_by_broker_id: number | null;
+  created_at: string;
+  updated_at: string;
+  steps?: ReminderFlowStep[];
+  connections?: ReminderFlowConnection[];
+  active_executions_count?: number;
+}
+
+export interface ReminderFlowExecution {
+  id: number;
+  flow_id: number;
+  flow_name: string;
+  loan_application_id: number | null;
+  client_id: number | null;
+  client_name: string | null;
+  application_number: string | null;
+  current_step_key: string | null;
+  status: "active" | "paused" | "completed" | "cancelled" | "failed";
+  next_execution_at: string | null;
+  completed_steps: string[] | null;
+  context_data: Record<string, unknown> | null;
+  last_step_started_at: string | null;
+  responded_at: string | null;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export interface GetReminderFlowsResponse {
+  success: boolean;
+  flows: ReminderFlow[];
+}
+
+export interface GetReminderFlowResponse {
+  success: boolean;
+  flow: ReminderFlow;
+}
+
+export interface CreateReminderFlowRequest {
+  name: string;
+  description?: string;
+  trigger_event: ReminderTriggerEvent;
+  trigger_delay_days?: number;
+  is_active?: boolean;
+  apply_to_all_loans?: boolean;
+  loan_type_filter?: "all" | "purchase" | "refinance";
+}
+
+export interface UpdateReminderFlowRequest {
+  name?: string;
+  description?: string;
+  trigger_event?: ReminderTriggerEvent;
+  trigger_delay_days?: number;
+  is_active?: boolean;
+  apply_to_all_loans?: boolean;
+  loan_type_filter?: "all" | "purchase" | "refinance";
+  steps?: SaveReminderFlowStep[];
+  connections?: SaveReminderFlowConnection[];
+}
+
+export interface SaveReminderFlowStep {
+  step_key: string;
+  step_type: ReminderStepType;
+  label: string;
+  description?: string;
+  config?: ReminderFlowStepConfig;
+  position_x: number;
+  position_y: number;
+}
+
+export interface SaveReminderFlowConnection {
+  edge_key: string;
+  source_step_key: string;
+  target_step_key: string;
+  label?: string;
+  edge_type?: FlowEdgeType;
+}
+
+export interface SaveReminderFlowRequest {
+  name: string;
+  description?: string;
+  trigger_event: ReminderTriggerEvent;
+  trigger_delay_days?: number;
+  is_active?: boolean;
+  apply_to_all_loans?: boolean;
+  loan_type_filter?: "all" | "purchase" | "refinance";
+  steps: SaveReminderFlowStep[];
+  connections: SaveReminderFlowConnection[];
+}
+
+export interface SaveReminderFlowResponse {
+  success: boolean;
+  message: string;
+  flow_id: number;
+}
+
+export interface DeleteReminderFlowResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface GetReminderFlowExecutionsResponse {
+  success: boolean;
+  executions: ReminderFlowExecution[];
+  total: number;
+}
+
+export interface ToggleReminderFlowResponse {
+  success: boolean;
+  message: string;
+  is_active: boolean;
+}
+
+export interface MarkFlowExecutionRespondedResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface ProcessReminderFlowsResponse {
+  success: boolean;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  errors?: string[];
+}
+
+/**
+ * Broker Monthly Metrics Types
+ */
+export type LeadSourceCategory =
+  | "current_client_referral"
+  | "past_client"
+  | "past_client_referral"
+  | "personal_friend"
+  | "realtor"
+  | "advertisement"
+  | "business_partner"
+  | "builder"
+  | "other";
+
+export interface BrokerMonthlyMetrics {
+  year: number;
+  month: number;
+  lead_to_credit_goal: number;
+  credit_to_preapp_goal: number;
+  lead_to_closing_goal: number;
+  leads_goal: number;
+  credit_pulls_goal: number;
+  closings_goal: number;
+  leads_actual: number;
+  credit_pulls_actual: number;
+  pre_approvals_actual: number;
+  closings_actual: number;
+  prev_year_leads: number | null;
+  prev_year_closings: number | null;
+  lead_sources: { category: LeadSourceCategory; count: number }[];
+}
+
+export interface GetBrokerMetricsResponse {
+  success: boolean;
+  metrics: BrokerMonthlyMetrics;
+}
+
+export interface UpdateBrokerMetricsRequest {
+  year: number;
+  month: number;
+  lead_to_credit_goal?: number;
+  credit_to_preapp_goal?: number;
+  lead_to_closing_goal?: number;
+  leads_goal?: number;
+  credit_pulls_goal?: number;
+  closings_goal?: number;
+  credit_pulls_actual?: number;
+  prev_year_leads?: number | null;
+  prev_year_closings?: number | null;
+}
+
+/**
+ * WhatsApp Template Types
+ */
+export interface WhatsappTemplate {
+  id: number;
+  name: string;
+  body: string;
+  template_type:
+    | "reminder"
+    | "status_update"
+    | "update"
+    | "follow_up"
+    | "custom";
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GetWhatsappTemplatesResponse {
+  success: boolean;
+  templates: WhatsappTemplate[];
+}
+
+export interface CreateWhatsappTemplateRequest {
+  name: string;
+  body: string;
+  template_type: string;
+  is_active?: boolean;
+}
+
+export interface UpdateWhatsappTemplateRequest {
+  name?: string;
+  body?: string;
+  template_type?: string;
+  is_active?: boolean;
+}
+
+export interface WhatsappTemplateResponse {
+  success: boolean;
+  template: WhatsappTemplate;
+  message?: string;
+}
+
+export type CommunicationType = "email" | "sms" | "whatsapp";
+
+export type LoanPipelineStep =
+  | "draft"
+  | "submitted"
+  | "under_review"
+  | "documents_pending"
+  | "underwriting"
+  | "conditional_approval"
+  | "approved"
+  | "denied"
+  | "closed"
+  | "cancelled";
+
+export type LoanType = "purchase" | "refinance";
+
+export interface PipelineStepTemplate {
+  id: number;
+  tenant_id: number;
+  pipeline_step: LoanPipelineStep;
+  communication_type: CommunicationType;
+  template_id: number;
+  is_active: boolean;
+  created_by_broker_id: number | null;
+  created_at: string;
+  updated_at: string;
+  template_name?: string;
+  template_body?: string;
+  template_subject?: string | null;
+}
+
+export interface GetPipelineStepTemplatesResponse {
+  success: boolean;
+  assignments: PipelineStepTemplate[];
+}
+
+export interface UpsertPipelineStepTemplateRequest {
+  pipeline_step: LoanPipelineStep;
+  communication_type: CommunicationType;
+  template_id: number;
+  is_active?: boolean;
+}
+
+export interface UpsertPipelineStepTemplateResponse {
+  success: boolean;
+  assignment: PipelineStepTemplate;
+  message?: string;
+}
+
+export interface DeletePipelineStepTemplateResponse {
+  success: boolean;
+  message?: string;
+}
+
+// ─── System Settings ─────────────────────────────────────────────────────────
+
+export interface SystemSetting {
+  id: number;
+  tenant_id: number | null;
+  setting_key: string;
+  setting_value: string | null;
+  setting_type: "string" | "number" | "boolean" | "json";
+  description: string | null;
+  updated_at: string;
+}
+
+export interface GetSettingsResponse {
+  success: boolean;
+  settings: SystemSetting[];
+}
+
+export interface UpdateSettingsRequest {
+  updates: { setting_key: string; setting_value: string }[];
+}
+
+export interface UpdateSettingsResponse {
+  success: boolean;
+  message: string;
+}
+
+// ─── Admin Section Controls ───────────────────────────────────────────────────
+
+export interface AdminSectionControl {
+  id: number;
+  tenant_id: number;
+  section_id: string;
+  is_disabled: boolean;
+  tooltip_message: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GetAdminSectionControlsResponse {
+  success: boolean;
+  controls: AdminSectionControl[];
+}
+
+export interface UpdateAdminSectionControlRequest {
+  section_id: string;
+  is_disabled: boolean;
+  tooltip_message?: string;
+}
+
+export interface UpdateAdminSectionControlsRequest {
+  controls: UpdateAdminSectionControlRequest[];
+}
+
+export interface UpdateAdminSectionControlsResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface AdminInitResponse {
+  success: boolean;
+  profile: BrokerProfileDetails;
+  controls: AdminSectionControl[];
+}
+
+// ─── Contact Form ─────────────────────────────────────────────────────────────
+
+export interface ContactSubmissionRequest {
+  name: string;
+  email: string;
+  phone?: string | null;
+  subject: string;
+  message: string;
+}
+
+export interface ContactSubmissionResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface ContactSubmission {
+  id: number;
+  name: string;
+  email: string;
+  phone: string | null;
+  subject: string;
+  message: string;
+  is_read: boolean;
+  read_by_broker_id: number | null;
+  read_at: string | null;
+  created_at: string;
+}
+
+export interface GetContactSubmissionsResponse {
+  success: boolean;
+  submissions: ContactSubmission[];
+}
+
+/**
+ * Document Signing Types
+ */
+export interface SignatureZone {
+  id: string;
+  page: number;
+  x: number; // percentage (0-100) from left of page
+  y: number; // percentage (0-100) from top of page
+  width: number; // percentage (0-100) of page width
+  height: number; // percentage (0-100) of page height
+  label: string;
+}
+
+export interface TaskSignDocument {
+  id: number;
+  task_template_id: number;
+  file_path: string;
+  original_filename: string;
+  file_size: number | null;
+  signature_zones: SignatureZone[];
+  uploaded_by_broker_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskSignature {
+  id: number;
+  task_id: number;
+  sign_document_id: number;
+  zone_id: string;
+  signature_data: string; // base64 PNG
+  signed_by_user_id: number | null;
+  signed_at: string;
+}
+
+export interface SaveSignDocumentRequest {
+  file_path: string;
+  original_filename: string;
+  file_size?: number;
+  signature_zones: SignatureZone[];
+}
+
+export interface SaveSignDocumentResponse {
+  success: boolean;
+  sign_document: TaskSignDocument;
+  message: string;
+}
+
+export interface GetSignDocumentResponse {
+  success: boolean;
+  sign_document: TaskSignDocument | null;
+}
+
+export interface SubmitSignaturesRequest {
+  signatures: Array<{
+    zone_id: string;
+    signature_data: string; // base64 PNG
+  }>;
+}
+
+export interface SubmitSignaturesResponse {
+  success: boolean;
+  message: string;
+  signatures_count: number;
+}
+
+export interface GetTaskSignaturesResponse {
+  success: boolean;
+  signatures: TaskSignature[];
+  sign_document: TaskSignDocument | null;
 }

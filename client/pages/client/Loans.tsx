@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   ArrowRight,
 } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -207,37 +208,95 @@ const Loans = () => {
                       </div>
                     </div>
 
-                    {/* Broker Information */}
-                    <div className="space-y-3">
-                      <h4 className="font-semibold flex items-center gap-2">
-                        <User className="h-4 w-4 text-primary" />
-                        Your Loan Officer
-                      </h4>
-                      <div className="space-y-2 text-sm">
-                        {app.broker_first_name && (
-                          <p className="font-medium text-base">
-                            {app.broker_first_name} {app.broker_last_name}
-                          </p>
-                        )}
-                        {app.broker_phone && (
-                          <a
-                            href={`tel:${app.broker_phone}`}
-                            className="flex items-center gap-2 text-primary hover:underline"
-                          >
-                            <Phone className="h-4 w-4" />
-                            {app.broker_phone}
-                          </a>
-                        )}
-                        {app.broker_email && (
-                          <a
-                            href={`mailto:${app.broker_email}`}
-                            className="flex items-center gap-2 text-primary hover:underline"
-                          >
-                            <Mail className="h-4 w-4" />
-                            {app.broker_email}
-                          </a>
-                        )}
-                      </div>
+                    {/* Broker / Partner Information */}
+                    <div className="space-y-4">
+                      {app.broker_first_name && (
+                        <div className="space-y-2">
+                          <h4 className="font-semibold flex items-center gap-2">
+                            <User className="h-4 w-4 text-primary" />
+                            Your Mortgage Banker
+                          </h4>
+                          <div className="space-y-2 text-sm">
+                            <div className="flex items-center gap-3">
+                              <Avatar className="h-10 w-10 ring-2 ring-primary/20">
+                                <AvatarImage
+                                  src={app.broker_avatar_url ?? undefined}
+                                  alt={`${app.broker_first_name} ${app.broker_last_name}`}
+                                />
+                                <AvatarFallback className="bg-primary/10 text-primary font-semibold">
+                                  {app.broker_first_name[0]}
+                                  {app.broker_last_name?.[0] ?? ""}
+                                </AvatarFallback>
+                              </Avatar>
+                              <p className="font-medium text-base">
+                                {app.broker_first_name} {app.broker_last_name}
+                              </p>
+                            </div>
+                            {app.broker_phone && (
+                              <a
+                                href={`tel:${app.broker_phone}`}
+                                className="flex items-center gap-2 text-primary hover:underline"
+                              >
+                                <Phone className="h-4 w-4" />
+                                {app.broker_phone}
+                              </a>
+                            )}
+                            {app.broker_email && (
+                              <a
+                                href={`mailto:${app.broker_email}`}
+                                className="flex items-center gap-2 text-primary hover:underline"
+                              >
+                                <Mail className="h-4 w-4" />
+                                {app.broker_email}
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {app.partner_first_name && (
+                        <div className="space-y-2 pt-2 border-t">
+                          <h4 className="font-semibold flex items-center gap-2">
+                            <User className="h-4 w-4 text-primary" />
+                            Your Partner
+                          </h4>
+                          <div className="space-y-2 text-sm">
+                            <div className="flex items-center gap-3">
+                              <Avatar className="h-10 w-10 ring-2 ring-primary/20">
+                                <AvatarImage
+                                  src={app.partner_avatar_url ?? undefined}
+                                  alt={`${app.partner_first_name} ${app.partner_last_name}`}
+                                />
+                                <AvatarFallback className="bg-primary/10 text-primary font-semibold">
+                                  {app.partner_first_name[0]}
+                                  {app.partner_last_name?.[0] ?? ""}
+                                </AvatarFallback>
+                              </Avatar>
+                              <p className="font-medium text-base">
+                                {app.partner_first_name} {app.partner_last_name}
+                              </p>
+                            </div>
+                            {app.partner_phone && (
+                              <a
+                                href={`tel:${app.partner_phone}`}
+                                className="flex items-center gap-2 text-primary hover:underline"
+                              >
+                                <Phone className="h-4 w-4" />
+                                {app.partner_phone}
+                              </a>
+                            )}
+                            {app.partner_email && (
+                              <a
+                                href={`mailto:${app.partner_email}`}
+                                className="flex items-center gap-2 text-primary hover:underline"
+                              >
+                                <Mail className="h-4 w-4" />
+                                {app.partner_email}
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 

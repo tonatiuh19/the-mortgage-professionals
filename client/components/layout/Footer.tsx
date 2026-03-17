@@ -1,98 +1,162 @@
-import { Mail, Phone, MapPin, User } from "lucide-react";
+import React from "react";
+import { Link } from "react-router-dom";
+import {
+  Mail,
+  Phone,
+  MapPin,
+  Twitter,
+  Linkedin,
+  Facebook,
+  LogIn,
+} from "lucide-react";
 
-export default function Footer() {
-  const currentYear = new Date().getFullYear();
-
+const Footer = () => {
   return (
-    <footer className="bg-[#0A2F52] text-white py-16 px-4">
-      <div className="container mx-auto">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-12 mb-12">
-          <div>
-            <img
-              src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png"
-              alt="The Mortgage Professionals"
-              className="h-10 w-auto filter brightness-0 invert mb-4"
-            />
-            <p className="text-blue-200">
-              Making mortgages simple, transparent, and human.
+    <footer className="border-t bg-muted/30">
+      <div className="container py-12 md:py-16">
+        <div className="grid grid-cols-1 gap-8 md:grid-cols-4">
+          <div className="space-y-4">
+            <Link to="/" className="flex items-center">
+              <img
+                src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png"
+                alt="The Mortgage Professionals"
+                className="h-10 w-auto"
+              />
+            </Link>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Your trusted partner in personalized mortgage solutions. Making
+              homeownership dreams come true.
             </p>
+            <div className="flex space-x-4">
+              <a
+                href="#"
+                className="text-muted-foreground hover:text-primary transition-colors"
+              >
+                <Twitter className="h-5 w-5" />
+              </a>
+              <a
+                href="#"
+                className="text-muted-foreground hover:text-primary transition-colors"
+              >
+                <Linkedin className="h-5 w-5" />
+              </a>
+              <a
+                href="#"
+                className="text-muted-foreground hover:text-primary transition-colors"
+              >
+                <Facebook className="h-5 w-5" />
+              </a>
+            </div>
           </div>
 
           <div>
-            <h4 className="font-semibold mb-4 text-amber-400">Company</h4>
-            <ul className="space-y-2 text-blue-200">
+            <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider">
+              Platform
+            </h3>
+            <ul className="space-y-2 text-sm">
               <li>
-                <a href="#" className="hover:text-white transition">
-                  About Us
-                </a>
+                <Link
+                  to="/wizard"
+                  className="text-muted-foreground hover:text-primary transition-colors"
+                >
+                  Apply Now
+                </Link>
               </li>
               <li>
-                <a href="#" className="hover:text-white transition">
-                  Our Team
-                </a>
+                <Link
+                  to="/client-login"
+                  className="text-muted-foreground hover:text-primary transition-colors"
+                >
+                  Track Application
+                </Link>
+              </li>
+              <li>
+                <Link
+                  to="/#loans"
+                  className="text-muted-foreground hover:text-primary transition-colors"
+                >
+                  Loan Options
+                </Link>
               </li>
             </ul>
           </div>
 
           <div>
-            <h4 className="font-semibold mb-4 text-amber-400">Resources</h4>
-            <ul className="space-y-2 text-blue-200">
+            <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider">
+              Resources
+            </h3>
+            <ul className="space-y-2 text-sm">
               <li>
-                <a href="#" className="hover:text-white transition">
-                  Learning Center
-                </a>
+                <Link
+                  to="/#loans"
+                  className="text-muted-foreground hover:text-primary transition-colors"
+                >
+                  Loan Options
+                </Link>
               </li>
               <li>
-                <a href="#" className="hover:text-white transition">
-                  Mortgage Calculator
-                </a>
-              </li>
-              <li>
-                <a href="#" className="hover:text-white transition">
+                <Link
+                  to="/faq"
+                  className="text-muted-foreground hover:text-primary transition-colors"
+                >
                   FAQ
-                </a>
+                </Link>
+              </li>
+              <li>
+                <Link
+                  to="/#about"
+                  className="text-muted-foreground hover:text-primary transition-colors"
+                >
+                  Our Story
+                </Link>
+              </li>
+              <li>
+                <Link
+                  to="/#contact"
+                  className="text-muted-foreground hover:text-primary transition-colors"
+                >
+                  Contact Us
+                </Link>
               </li>
             </ul>
           </div>
 
           <div>
-            <h4 className="font-semibold mb-4 text-amber-400">Contact</h4>
-            <ul className="space-y-2 text-blue-200">
-              <li>1-800-MORTGAGE</li>
-              <li>hello@mortgagepros.com</li>
-              <li className="text-sm">Available Mon-Fri, 8am-8pm PT</li>
+            <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider">
+              Contact
+            </h3>
+            <ul className="space-y-3 text-sm">
+              <li className="flex items-center space-x-2 text-muted-foreground">
+                <Mail className="h-4 w-4" />
+                <span>info@themortgageprofessionals.net</span>
+              </li>
+              <li className="flex items-center space-x-2 text-muted-foreground">
+                <Phone className="h-4 w-4" />
+                <span>(562) 337-0000</span>
+              </li>
+              <li className="flex items-center space-x-2 text-muted-foreground text-pretty">
+                <MapPin className="h-4 w-4 shrink-0" />
+                <span>Serving clients nationwide</span>
+              </li>
             </ul>
           </div>
         </div>
-
-        <div className="border-t border-blue-400/30 pt-8 flex flex-col md:flex-row justify-between items-center">
-          <p className="text-blue-200 text-sm">
-            © {currentYear} The Mortgage Professionals. All rights reserved.
+        <div className="mt-12 border-t pt-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-muted-foreground">
+          <p>
+            © {new Date().getFullYear()} The Mortgage Professionals. All rights
+            reserved. NMLS #1105497
           </p>
-          <div className="flex flex-col md:flex-row gap-4 md:gap-6 mt-4 md:mt-0 items-center">
-            <div className="flex gap-6 text-sm text-blue-200">
-              <a href="#" className="hover:text-white transition">
-                Privacy Policy
-              </a>
-              <a href="#" className="hover:text-white transition">
-                Terms of Service
-              </a>
-              <a href="#" className="hover:text-white transition">
-                Disclosures
-              </a>
-            </div>
-            <div className="flex items-center gap-2">
-              <a
-                href="/broker-login"
-                className="bg-amber-500/20 hover:bg-amber-500/30 border border-amber-300/30 text-amber-200 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 flex items-center gap-2"
-              >
-                <User className="w-4 h-4" />
-                Broker Portal
-              </a>
-            </div>
-          </div>
+          <Link
+            to="/broker-login"
+            className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background px-3 py-1 text-xs font-medium text-muted-foreground hover:border-primary/40 hover:text-primary hover:bg-primary/5 transition-all"
+          >
+            <LogIn className="h-3 w-3" />
+            Broker Portal
+          </Link>
         </div>
       </div>
     </footer>
   );
-}
+};
+
+export default Footer;

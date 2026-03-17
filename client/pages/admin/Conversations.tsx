@@ -16,6 +16,7 @@ import {
   Archive,
   Star,
   Tag,
+  ChevronLeft,
 } from "lucide-react";
 import { MetaHelmet } from "@/components/MetaHelmet";
 import NewConversationWizard from "@/components/NewConversationWizard";
@@ -90,6 +91,7 @@ const Conversations = () => {
   );
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [messageSubject, setMessageSubject] = useState("");
+  const [mobilePanel, setMobilePanel] = useState<"list" | "chat">("list");
 
   // Auto-populate message when template is selected
   useEffect(() => {
@@ -126,6 +128,7 @@ const Conversations = () => {
     dispatch(
       fetchConversationMessages({ conversationId: thread.conversation_id }),
     );
+    setMobilePanel("chat");
 
     // Mark as read if it has unread messages
     if (thread.unread_count > 0) {
@@ -397,10 +400,15 @@ const Conversations = () => {
       )}
 
       {/* Main Content */}
-      <div className="px-6 pb-6">
-        <div className="grid grid-cols-12 gap-6 h-[calc(100vh-280px)]">
+      <div className="px-4 sm:px-6 pb-6">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-6 md:h-[calc(100vh-280px)]">
           {/* Conversations List */}
-          <div className="col-span-4 bg-white/70 backdrop-blur rounded-lg border border-slate-200 shadow-md">
+          <div
+            className={cn(
+              "md:col-span-4 bg-white/70 backdrop-blur rounded-lg border border-slate-200 shadow-md",
+              mobilePanel === "chat" ? "hidden md:block" : "block",
+            )}
+          >
             <div className="p-4 border-b border-slate-200">
               <div className="flex items-center space-x-2 mb-4">
                 <div className="relative flex-1">
@@ -529,13 +537,26 @@ const Conversations = () => {
           </div>
 
           {/* Messages Area */}
-          <div className="col-span-8 bg-white/70 backdrop-blur rounded-lg border border-slate-200 shadow-md flex flex-col">
+          <div
+            className={cn(
+              "md:col-span-8 bg-white/70 backdrop-blur rounded-lg border border-slate-200 shadow-md flex flex-col",
+              mobilePanel === "list" ? "hidden md:flex" : "flex",
+            )}
+          >
             {currentThread ? (
               <>
                 {/* Thread Header */}
                 <div className="p-4 border-b border-slate-200 bg-white/50">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-3">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="md:hidden h-8 w-8 mr-1"
+                        onClick={() => setMobilePanel("list")}
+                      >
+                        <ChevronLeft className="h-5 w-5" />
+                      </Button>
                       <Avatar className="h-10 w-10">
                         <AvatarFallback className="bg-gradient-to-br from-blue-400 to-indigo-500 text-white">
                           {currentThread.client_name

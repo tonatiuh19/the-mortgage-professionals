@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { Users, Search, Mail, Phone, Trash2 } from "lucide-react";
 import { MetaHelmet } from "@/components/MetaHelmet";
 import { adminPageMeta } from "@/lib/seo-helpers";
@@ -42,9 +42,24 @@ const Clients = () => {
   const { clients, isLoading: loading } = useAppSelector(
     (state) => state.clients,
   );
+  const { user } = useAppSelector((state) => state.brokerAuth);
+  const isPartner = user?.role === "broker";
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<any>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredClients = useMemo(() => {
+    if (!searchQuery.trim()) return clients;
+    const q = searchQuery.toLowerCase();
+    return clients.filter(
+      (c) =>
+        c.first_name.toLowerCase().includes(q) ||
+        c.last_name.toLowerCase().includes(q) ||
+        c.email.toLowerCase().includes(q) ||
+        (c.phone || "").toLowerCase().includes(q),
+    );
+  }, [clients, searchQuery]);
 
   useEffect(() => {
     dispatch(fetchClients());
@@ -119,7 +134,12 @@ const Clients = () => {
           <div className="flex items-center gap-3">
             <div className="relative w-full sm:max-w-xs">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Search clients..." className="pl-9" />
+              <Input
+                placeholder="Search clients..."
+                className="pl-9"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
             </div>
           </div>
         </header>
@@ -183,7 +203,8 @@ const Clients = () => {
               <CardHeader>
                 <CardTitle>All Clients</CardTitle>
                 <CardDescription>
-                  Showing {clients.length} clients
+                  Showing {filteredClients.length} of {clients.length} clients
+                  {searchQuery && ` matching "${searchQuery}"`}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -196,76 +217,89 @@ const Clients = () => {
                       <TableHead>Active</TableHead>
                       <TableHead>Date of Birth</TableHead>
                       <TableHead>SSN</TableHead>
-                      <TableHead>Actions</TableHead>
+                      {!isPartner && <TableHead>Actions</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {clients.map((client) => (
-                      <TableRow key={client.id}>
-                        <TableCell>
-                          <div className="flex items-center gap-3">
-                            <Avatar>
-                              <AvatarFallback className="bg-primary/10 text-primary font-semibold">
-                                {getInitials(
-                                  client.first_name,
-                                  client.last_name,
-                                )}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <div className="font-medium">
-                                {client.first_name} {client.last_name}
-                              </div>
-                              <div className="text-xs text-muted-foreground">
-                                Client ID: {client.id}
-                              </div>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2 text-sm">
-                              <Mail className="h-3 w-3 text-muted-foreground" />
-                              <span className="truncate max-w-[200px]">
-                                {client.email}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2 text-sm">
-                              <Phone className="h-3 w-3 text-muted-foreground" />
-                              <span>{client.phone || "No phone"}</span>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-xs">
-                            {client.total_applications} total
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge className="text-xs bg-primary/10 text-primary border-primary/20">
-                            {client.active_applications} active
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <span className="text-sm">N/A</span>
-                        </TableCell>
-                        <TableCell>
-                          <span className="text-sm font-mono">N/A</span>
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleDeleteClick(client)}
-                            disabled={isDeleting}
-                            className="h-7 text-xs gap-1 border-red-500 text-red-600 hover:bg-red-50"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                            Delete
-                          </Button>
+                    {filteredClients.length === 0 ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={7}
+                          className="text-center py-8 text-muted-foreground"
+                        >
+                          No clients match your search.
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ) : (
+                      filteredClients.map((client) => (
+                        <TableRow key={client.id}>
+                          <TableCell>
+                            <div className="flex items-center gap-3">
+                              <Avatar>
+                                <AvatarFallback className="bg-primary/10 text-primary font-semibold">
+                                  {getInitials(
+                                    client.first_name,
+                                    client.last_name,
+                                  )}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <div className="font-medium">
+                                  {client.first_name} {client.last_name}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  Client ID: {client.id}
+                                </div>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 text-sm">
+                                <Mail className="h-3 w-3 text-muted-foreground" />
+                                <span className="truncate max-w-[200px]">
+                                  {client.email}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 text-sm">
+                                <Phone className="h-3 w-3 text-muted-foreground" />
+                                <span>{client.phone || "No phone"}</span>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-xs">
+                              {client.total_applications} total
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge className="text-xs bg-primary/10 text-primary border-primary/20">
+                              {client.active_applications} active
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-sm">N/A</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-sm font-mono">N/A</span>
+                          </TableCell>
+                          {!isPartner && (
+                            <TableCell>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleDeleteClick(client)}
+                                disabled={isDeleting}
+                                className="h-7 text-xs gap-1 border-red-500 text-red-600 hover:bg-red-50"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                                Delete
+                              </Button>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -277,29 +311,52 @@ const Clients = () => {
         <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Delete Client</AlertDialogTitle>
-              <AlertDialogDescription className="space-y-2">
-                <p>
-                  Are you sure you want to delete "{clientToDelete?.first_name}{" "}
-                  {clientToDelete?.last_name}"?
-                </p>
-                {clientToDelete && (
-                  <div className="p-3 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-500">
-                    <div className="text-sm">
-                      <p className="font-semibold">Warning:</p>
-                      <p>
-                        This client has {clientToDelete.total_applications}{" "}
-                        total applications and{" "}
-                        {clientToDelete.active_applications} active
-                        applications.
-                      </p>
-                      <p className="mt-1">
-                        All associated data must be reassigned or completed
-                        before deletion.
-                      </p>
+              <AlertDialogTitle className="text-destructive flex items-center gap-2">
+                <Trash2 className="h-5 w-5" />
+                Delete Client — Permanent Action
+              </AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-3 text-sm text-muted-foreground">
+                  <span className="block">
+                    You are about to permanently delete{" "}
+                    <strong>
+                      {clientToDelete?.first_name} {clientToDelete?.last_name}
+                    </strong>
+                    . This action <strong>cannot be undone</strong>.
+                  </span>
+                  {clientToDelete && (
+                    <div className="p-3 rounded-md bg-red-500/10 border border-red-500/30 text-red-700 dark:text-red-400 space-y-2">
+                      <span className="block font-semibold text-sm">
+                        ⚠️ The following data will be permanently deleted:
+                      </span>
+                      <ul className="text-sm space-y-1 list-disc list-inside">
+                        <li>
+                          <strong>
+                            {clientToDelete.total_applications ?? 0}
+                          </strong>{" "}
+                          loan application(s) (
+                          {clientToDelete.active_applications ?? 0} active)
+                        </li>
+                        {(clientToDelete.total_conversations ?? 0) > 0 && (
+                          <li>
+                            <strong>
+                              {clientToDelete.total_conversations}
+                            </strong>{" "}
+                            conversation thread(s) and all associated messages
+                            (emails, SMS, WhatsApp)
+                          </li>
+                        )}
+                        <li>All client profile data and documents</li>
+                      </ul>
+                      {(clientToDelete.active_applications ?? 0) > 0 && (
+                        <span className="block text-sm font-semibold mt-2 text-red-600 dark:text-red-400">
+                          ⛔ This client has active applications — reassign or
+                          close them before deleting.
+                        </span>
+                      )}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

@@ -3,7 +3,6 @@ import {
   Plus,
   Search,
   MoreVertical,
-  Mail,
   FileText,
   AlertCircle,
   TrendingUp,
@@ -11,7 +10,11 @@ import {
   User,
   Clock,
   CheckCircle2,
+  Eye,
+  ArrowRight,
+  Link2,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { MetaHelmet } from "@/components/MetaHelmet";
 import { adminPageMeta } from "@/lib/seo-helpers";
 import {
@@ -39,44 +42,88 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import NewLoanWizard from "@/components/NewLoanWizard";
+import BrokerShareLinkModal from "@/components/BrokerShareLinkModal";
+import { LoanOverlay } from "@/components/LoanOverlay";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { fetchLoans } from "@/store/slices/pipelineSlice";
-import { fetchDashboardStats } from "@/store/slices/dashboardSlice";
+import { fetchLoans, fetchLoanDetails } from "@/store/slices/pipelineSlice";
+import {
+  fetchDashboardStats,
+  fetchBrokerMetrics,
+} from "@/store/slices/dashboardSlice";
+import { logger } from "@/lib/logger";
+import BrokerMetricsPanel from "@/components/BrokerMetricsPanel";
+import type { Broker } from "@shared/api";
 
 const AdminDashboard = () => {
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [loanOverlayOpen, setLoanOverlayOpen] = useState(false);
+  const [shareLinkOpen, setShareLinkOpen] = useState(false);
+  const [dashboardSearch, setDashboardSearch] = useState("");
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const {
     loans,
     isLoading: loading,
     error: loansError,
+    selectedLoan,
+    isLoadingDetails,
   } = useAppSelector((state) => state.pipeline);
   const {
     stats,
     isLoading: statsLoading,
     error: statsError,
   } = useAppSelector((state) => state.dashboard);
+  const { user, sessionToken } = useAppSelector((state) => state.brokerAuth);
+  const isPartner = user?.role === "broker";
+  const partnerAsBroker: Broker | null = user
+    ? {
+        id: user.id,
+        email: user.email,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        phone: user.phone ?? null,
+        role: user.role as "broker" | "admin",
+        status: user.status,
+        email_verified: user.email_verified,
+        last_login: user.last_login ?? null,
+        license_number: user.license_number ?? null,
+        specializations: user.specializations ?? null,
+      }
+    : null;
 
   useEffect(() => {
+    if (!sessionToken) return;
     try {
       dispatch(fetchLoans({}));
       dispatch(fetchDashboardStats());
+      dispatch(fetchBrokerMetrics(undefined));
     } catch (error) {
-      console.error("Error loading dashboard data:", error);
+      logger.error("Error loading dashboard data:", error);
     }
-  }, [dispatch]);
+  }, [dispatch, sessionToken]);
 
   const handleLoanCreated = () => {
     try {
       dispatch(fetchLoans({}));
       dispatch(fetchDashboardStats());
+      dispatch(fetchBrokerMetrics(undefined));
     } catch (error) {
-      console.error("Error refreshing dashboard data:", error);
+      logger.error("Error refreshing dashboard data:", error);
     }
+  };
+
+  const handleOpenLoan = async (loanId: number) => {
+    await dispatch(fetchLoanDetails(loanId));
+    setLoanOverlayOpen(true);
+  };
+
+  const handleCloseLoan = () => {
+    setLoanOverlayOpen(false);
   };
 
   const getStatusColor = (status: string) => {
@@ -141,6 +188,24 @@ const AdminDashboard = () => {
     : "-2 Days";
   const rateChange = "+2.1%";
 
+  const filteredLoans = React.useMemo(() => {
+    const all = loans || [];
+    if (!dashboardSearch.trim()) return all;
+    const q = dashboardSearch.toLowerCase();
+    return all.filter(
+      (loan) =>
+        `${loan.client_first_name ?? ""} ${loan.client_last_name ?? ""}`
+          .toLowerCase()
+          .includes(q) ||
+        `${loan.broker_first_name ?? ""} ${loan.broker_last_name ?? ""}`
+          .toLowerCase()
+          .includes(q) ||
+        (loan.loan_type ?? "").toLowerCase().includes(q) ||
+        (loan.status ?? "").toLowerCase().includes(q) ||
+        (loan.application_number ?? "").toLowerCase().includes(q),
+    );
+  }, [loans, dashboardSearch]);
+
   return (
     <>
       <MetaHelmet
@@ -159,16 +224,32 @@ const AdminDashboard = () => {
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
             <div className="relative w-full sm:max-w-xs md:w-64">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Search everything..." className="pl-9" />
+              <Input
+                placeholder="Search loans..."
+                className="pl-9"
+                value={dashboardSearch}
+                onChange={(e) => setDashboardSearch(e.target.value)}
+              />
             </div>
-            <Button
-              className="gap-2 whitespace-nowrap"
-              onClick={() => setWizardOpen(true)}
-            >
-              <Plus className="h-4 w-4" />{" "}
-              <span className="hidden sm:inline">New Loan</span>
-              <span className="sm:hidden">New</span>
-            </Button>
+            {isPartner ? (
+              <Button
+                className="gap-2 whitespace-nowrap"
+                onClick={() => setShareLinkOpen(true)}
+              >
+                <Link2 className="h-4 w-4" />{" "}
+                <span className="hidden sm:inline">Get My Link</span>
+                <span className="sm:hidden">My Link</span>
+              </Button>
+            ) : (
+              <Button
+                className="gap-2 whitespace-nowrap"
+                onClick={() => setWizardOpen(true)}
+              >
+                <Plus className="h-4 w-4" />{" "}
+                <span className="hidden sm:inline">New Loan</span>
+                <span className="sm:hidden">New</span>
+              </Button>
+            )}
           </div>
         </header>
 
@@ -176,6 +257,19 @@ const AdminDashboard = () => {
           open={wizardOpen}
           onOpenChange={setWizardOpen}
           onSuccess={handleLoanCreated}
+        />
+        <BrokerShareLinkModal
+          open={shareLinkOpen}
+          onOpenChange={setShareLinkOpen}
+          broker={partnerAsBroker}
+          useSelfEndpoint
+        />
+
+        <LoanOverlay
+          isOpen={loanOverlayOpen}
+          onClose={handleCloseLoan}
+          selectedLoan={selectedLoan}
+          isLoadingDetails={isLoadingDetails}
         />
 
         <div className="space-y-8 animate-in fade-in duration-500">
@@ -378,6 +472,9 @@ const AdminDashboard = () => {
             </Card>
           </div>
 
+          {/* Broker Monthly Metrics */}
+          <BrokerMetricsPanel isPartner={isPartner} />
+
           {/* Recent Pipeline Activity */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
@@ -387,9 +484,36 @@ const AdminDashboard = () => {
                   Recent loan applications and their current status.
                 </CardDescription>
               </div>
-              <Button variant="outline" size="sm">
-                View All
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => navigate("/admin/pipeline")}
+                >
+                  View All
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Button>
+                {isPartner ? (
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => setShareLinkOpen(true)}
+                  >
+                    <Link2 className="h-3.5 w-3.5" />
+                    Get My Link
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => setWizardOpen(true)}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    New Loan
+                  </Button>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
               <div className="relative w-full overflow-x-auto">
@@ -397,9 +521,11 @@ const AdminDashboard = () => {
                   <div className="text-center py-8 text-muted-foreground">
                     Loading...
                   </div>
-                ) : (loans || []).length === 0 ? (
+                ) : filteredLoans.length === 0 ? (
                   <div className="text-center py-8 text-muted-foreground">
-                    No active loans yet. Create your first loan application!
+                    {dashboardSearch
+                      ? `No loans match "${dashboardSearch}".`
+                      : "No active loans yet. Create your first loan application!"}
                   </div>
                 ) : (
                   <table className="w-full caption-bottom text-sm min-w-[640px]">
@@ -429,7 +555,7 @@ const AdminDashboard = () => {
                       </tr>
                     </thead>
                     <tbody className="[&_tr:last-child]:border-0">
-                      {(loans || []).map((loan) => (
+                      {filteredLoans.map((loan) => (
                         <tr
                           key={loan.id}
                           className="border-b transition-colors hover:bg-muted/50"
@@ -498,14 +624,25 @@ const AdminDashboard = () => {
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
-                                <DropdownMenuItem className="gap-2">
-                                  <Mail className="h-4 w-4" /> Message
+                                <DropdownMenuItem
+                                  className="gap-2"
+                                  onClick={() => handleOpenLoan(loan.id)}
+                                >
+                                  <Eye className="h-4 w-4" /> Open Loan
                                 </DropdownMenuItem>
-                                <DropdownMenuItem className="gap-2">
+                                <DropdownMenuItem
+                                  className="gap-2"
+                                  onClick={() => navigate(`/admin/pipeline`)}
+                                >
+                                  <ArrowRight className="h-4 w-4" /> Go to
+                                  Pipeline
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="gap-2"
+                                  onClick={() => navigate("/admin/documents")}
+                                >
                                   <FileText className="h-4 w-4" /> View Docs
-                                </DropdownMenuItem>
-                                <DropdownMenuItem className="gap-2 text-destructive">
-                                  <AlertCircle className="h-4 w-4" /> Flag Issue
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
