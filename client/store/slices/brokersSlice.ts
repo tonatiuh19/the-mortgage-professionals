@@ -12,40 +12,59 @@ import type {
   UpdateBrokerProfileRequest,
   UpdateBrokerProfileResponse,
   AdminBrokerShareLinkResponse,
+  ConvertBrokerToClientRequest,
+  ConvertBrokerToClientResponse,
+  PaginationInfo,
 } from "@shared/api";
 import type { RootState } from "../index";
 
 interface BrokersState {
   brokers: Broker[];
+  pagination: PaginationInfo | null;
   isLoading: boolean;
   error: string | null;
-  /** Full profile details when admin edits a broker */
+  // Mortgage Bankers (admin-role) list for dropdowns
+  mortgageBankers: Broker[];
+  mortgageBankersLoading: boolean;
+  // Selected broker profile (for admin editing)
   selectedBrokerProfile: BrokerProfileDetails | null;
   profileLoading: boolean;
-  /** Share link fetched for a specific broker */
+  // Share link for a specific broker (admin view)
   brokerShareLink: { public_token: string; share_url: string } | null;
   shareLinkLoading: boolean;
 }
 
 const initialState: BrokersState = {
   brokers: [],
+  pagination: null,
   isLoading: false,
   error: null,
+  mortgageBankers: [],
+  mortgageBankersLoading: false,
   selectedBrokerProfile: null,
   profileLoading: false,
   brokerShareLink: null,
   shareLinkLoading: false,
 };
 
+interface FetchBrokersParams {
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: "ASC" | "DESC";
+  search?: string;
+}
+
 export const fetchBrokers = createAsyncThunk(
   "brokers/fetchBrokers",
-  async (_, { getState, rejectWithValue }) => {
+  async (params: FetchBrokersParams = {}, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
       const { data } = await axios.get<GetBrokersResponse>("/api/brokers", {
         headers: { Authorization: `Bearer ${sessionToken}` },
+        params,
       });
-      return data.brokers;
+      return { brokers: data.brokers, pagination: data.pagination };
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.error || "Failed to fetch brokers",
@@ -62,9 +81,7 @@ export const createBroker = createAsyncThunk(
       const { data } = await axios.post<BrokerResponse>(
         "/api/brokers",
         payload,
-        {
-          headers: { Authorization: `Bearer ${sessionToken}` },
-        },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
       );
       return data.broker;
     } catch (error: any) {
@@ -86,9 +103,7 @@ export const updateBroker = createAsyncThunk(
       const { data } = await axios.put<BrokerResponse>(
         `/api/brokers/${id}`,
         payload,
-        {
-          headers: { Authorization: `Bearer ${sessionToken}` },
-        },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
       );
       return data.broker;
     } catch (error: any) {
@@ -116,7 +131,7 @@ export const deleteBroker = createAsyncThunk(
   },
 );
 
-/** Admin: fetch full profile (bio, office, avatar) for any broker */
+/** Admin: fetch full profile (inc. bio, office, avatar) for any broker */
 export const fetchBrokerProfileForEdit = createAsyncThunk(
   "brokers/fetchBrokerProfileForEdit",
   async (brokerId: number, { getState, rejectWithValue }) => {
@@ -135,7 +150,7 @@ export const fetchBrokerProfileForEdit = createAsyncThunk(
   },
 );
 
-/** Admin: update profile fields for any broker */
+/** Admin: update profile fields (bio, office, years_experience) for any broker */
 export const updateBrokerProfileByAdmin = createAsyncThunk(
   "brokers/updateBrokerProfileByAdmin",
   async (
@@ -158,7 +173,7 @@ export const updateBrokerProfileByAdmin = createAsyncThunk(
   },
 );
 
-/** Admin: upload avatar for any broker (uploads to CDN, then stores URL) */
+/** Admin: upload avatar for any broker (uploads to CDN, then stores CDN URL) */
 export const uploadBrokerAvatarByAdmin = createAsyncThunk(
   "brokers/uploadBrokerAvatarByAdmin",
   async (
@@ -167,7 +182,11 @@ export const uploadBrokerAvatarByAdmin = createAsyncThunk(
   ) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
+
+      // Step 1 — Upload image to CDN (same helper used by own-profile upload)
       const avatarUrl = await uploadAvatarToCDN(file, id);
+
+      // Step 2 — Save CDN URL to our DB
       const { data } = await axios.put<{
         success: boolean;
         avatar_url: string;
@@ -187,7 +206,27 @@ export const uploadBrokerAvatarByAdmin = createAsyncThunk(
   },
 );
 
-/** Logged-in broker: fetch their own share link */
+/** Fetch all active Mortgage Bankers (role=admin) for dropdowns — stored separately from the main paginated list */
+export const fetchMortgageBankers = createAsyncThunk(
+  "brokers/fetchMortgageBankers",
+  async (_, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.get<GetBrokersResponse>("/api/brokers", {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+        params: { role: "admin", limit: 100 },
+      });
+      return data.brokers;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to fetch mortgage bankers",
+      );
+    }
+  },
+);
+
+/** Admin: get share link for any broker */
+/** Self-service: fetch the logged-in broker's own share link */
 export const fetchMyShareLink = createAsyncThunk(
   "brokers/fetchMyShareLink",
   async (_, { getState, rejectWithValue }) => {
@@ -206,7 +245,6 @@ export const fetchMyShareLink = createAsyncThunk(
   },
 );
 
-/** Admin: fetch share link for any broker */
 export const fetchBrokerShareLink = createAsyncThunk(
   "brokers/fetchBrokerShareLink",
   async (brokerId: number, { getState, rejectWithValue }) => {
@@ -220,6 +258,31 @@ export const fetchBrokerShareLink = createAsyncThunk(
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.error || "Failed to fetch share link",
+      );
+    }
+  },
+);
+
+export const convertBrokerToClient = createAsyncThunk(
+  "brokers/convertBrokerToClient",
+  async (
+    {
+      brokerId,
+      payload,
+    }: { brokerId: number; payload: ConvertBrokerToClientRequest },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.post<ConvertBrokerToClientResponse>(
+        `/api/brokers/${brokerId}/convert-to-client`,
+        payload,
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return { brokerId, ...data };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to convert broker to client",
       );
     }
   },
@@ -249,7 +312,8 @@ const brokersSlice = createSlice({
       })
       .addCase(fetchBrokers.fulfilled, (state, action) => {
         state.isLoading = false;
-        state.brokers = action.payload;
+        state.brokers = action.payload.brokers;
+        state.pagination = action.payload.pagination;
       })
       .addCase(fetchBrokers.rejected, (state, action) => {
         state.isLoading = false;
@@ -278,9 +342,7 @@ const brokersSlice = createSlice({
         const index = state.brokers.findIndex(
           (b) => b.id === action.payload.id,
         );
-        if (index !== -1) {
-          state.brokers[index] = action.payload;
-        }
+        if (index !== -1) state.brokers[index] = action.payload;
       })
       .addCase(updateBroker.rejected, (state, action) => {
         state.isLoading = false;
@@ -298,6 +360,17 @@ const brokersSlice = createSlice({
       .addCase(deleteBroker.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.payload as string;
+      })
+      // Fetch mortgage bankers
+      .addCase(fetchMortgageBankers.pending, (state) => {
+        state.mortgageBankersLoading = true;
+      })
+      .addCase(fetchMortgageBankers.fulfilled, (state, action) => {
+        state.mortgageBankersLoading = false;
+        state.mortgageBankers = action.payload;
+      })
+      .addCase(fetchMortgageBankers.rejected, (state) => {
+        state.mortgageBankersLoading = false;
       })
       // Fetch broker profile for edit
       .addCase(fetchBrokerProfileForEdit.pending, (state) => {
@@ -353,6 +426,16 @@ const brokersSlice = createSlice({
       })
       .addCase(fetchMyShareLink.rejected, (state) => {
         state.shareLinkLoading = false;
+      })
+      // Convert broker to client
+      .addCase(convertBrokerToClient.fulfilled, (state, action) => {
+        // Remove the converted (now inactive) broker from the list
+        state.brokers = state.brokers.filter(
+          (b) => b.id !== action.payload.brokerId,
+        );
+        if (state.selectedBrokerProfile?.id === action.payload.brokerId) {
+          state.selectedBrokerProfile = null;
+        }
       });
   },
 });

@@ -8,8 +8,14 @@ import {
   Eye,
   RefreshCw,
   Inbox,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
 } from "lucide-react";
 import { MetaHelmet } from "@/components/MetaHelmet";
+import { PageHeader } from "@/components/layout/PageHeader";
+import PhoneLink from "@/components/PhoneLink";
+import EmailLink from "@/components/EmailLink";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +44,7 @@ import { cn } from "@/lib/utils";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchContactSubmissions } from "@/store/slices/contactSubmissionsSlice";
 import type { ContactSubmission } from "@shared/api";
+import { useSortableData } from "@/hooks/use-sortable-data";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -73,7 +80,7 @@ const ContactSubmissions = () => {
   const [selected, setSelected] = useState<ContactSubmission | null>(null);
 
   useEffect(() => {
-    dispatch(fetchContactSubmissions());
+    dispatch(fetchContactSubmissions({}));
   }, [dispatch]);
 
   const filtered = submissions.filter((s) => {
@@ -87,6 +94,17 @@ const ContactSubmissions = () => {
     );
   });
 
+  const {
+    sorted: sortedSubmissions,
+    sortKey: subSortKey,
+    sortDir: subSortDir,
+    requestSort: sortSubs,
+  } = useSortableData(
+    filtered as Record<string, unknown>[],
+    "created_at",
+    "desc",
+  );
+
   const unreadCount = submissions.filter((s) => !s.is_read).length;
 
   return (
@@ -97,32 +115,33 @@ const ContactSubmissions = () => {
       />
 
       {/* Header */}
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <MessageSquare className="h-6 w-6 text-primary" />
+      <PageHeader
+        icon={<MessageSquare className="h-7 w-7 text-primary" />}
+        title={
+          <>
             Contact Submissions
             {unreadCount > 0 && (
               <Badge className="ml-1 bg-primary text-primary-foreground">
                 {unreadCount} new
               </Badge>
             )}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Messages sent from the public contact form
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => dispatch(fetchContactSubmissions())}
-          disabled={isLoading}
-          className="gap-2 self-start sm:self-auto"
-        >
-          <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
-          Refresh
-        </Button>
-      </div>
+          </>
+        }
+        description="Messages sent from the public contact form"
+        className="mb-0"
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => dispatch(fetchContactSubmissions({}))}
+            disabled={isLoading}
+            className="gap-2 self-start sm:self-auto"
+          >
+            <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+            Refresh
+          </Button>
+        }
+      />
 
       {/* Stat cards */}
       <div className="grid gap-4 sm:grid-cols-3">
@@ -206,70 +225,130 @@ const ContactSubmissions = () => {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-6" />
-                    <TableHead>From</TableHead>
-                    <TableHead>Subject</TableHead>
+                    <TableHead>
+                      <button
+                        type="button"
+                        onClick={() => sortSubs("name")}
+                        className="flex items-center gap-1 hover:text-foreground transition-colors"
+                      >
+                        From{" "}
+                        {subSortKey === "name" ? (
+                          subSortDir === "asc" ? (
+                            <ChevronUp className="h-3 w-3" />
+                          ) : (
+                            <ChevronDown className="h-3 w-3" />
+                          )
+                        ) : (
+                          <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                        )}
+                      </button>
+                    </TableHead>
+                    <TableHead>
+                      <button
+                        type="button"
+                        onClick={() => sortSubs("subject")}
+                        className="flex items-center gap-1 hover:text-foreground transition-colors"
+                      >
+                        Subject{" "}
+                        {subSortKey === "subject" ? (
+                          subSortDir === "asc" ? (
+                            <ChevronUp className="h-3 w-3" />
+                          ) : (
+                            <ChevronDown className="h-3 w-3" />
+                          )
+                        ) : (
+                          <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                        )}
+                      </button>
+                    </TableHead>
                     <TableHead className="hidden md:table-cell">
                       Phone
                     </TableHead>
                     <TableHead className="hidden sm:table-cell">
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3.5 w-3.5" /> Date
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => sortSubs("created_at")}
+                        className="flex items-center gap-1 hover:text-foreground transition-colors"
+                      >
+                        <Clock className="h-3.5 w-3.5" /> Date{" "}
+                        {subSortKey === "created_at" ? (
+                          subSortDir === "asc" ? (
+                            <ChevronUp className="h-3 w-3" />
+                          ) : (
+                            <ChevronDown className="h-3 w-3" />
+                          )
+                        ) : (
+                          <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                        )}
+                      </button>
                     </TableHead>
                     <TableHead className="w-16 text-right">View</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.map((sub) => (
-                    <TableRow
-                      key={sub.id}
-                      className={cn(
-                        "cursor-pointer hover:bg-muted/50 transition-colors",
-                        !sub.is_read && "bg-primary/3 font-medium",
-                      )}
-                      onClick={() => setSelected(sub)}
-                    >
-                      <TableCell>
-                        {!sub.is_read && (
-                          <span className="block h-2 w-2 rounded-full bg-primary" />
+                  {(sortedSubmissions as unknown as ContactSubmission[]).map(
+                    (sub) => (
+                      <TableRow
+                        key={sub.id}
+                        className={cn(
+                          "cursor-pointer hover:bg-muted/50 transition-colors",
+                          !sub.is_read && "bg-primary/3 font-medium",
                         )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="text-sm font-semibold leading-none">
-                            {sub.name}
+                        onClick={() => setSelected(sub)}
+                      >
+                        <TableCell>
+                          {!sub.is_read && (
+                            <span className="block h-2 w-2 rounded-full bg-primary" />
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="text-sm font-semibold leading-none">
+                              {sub.name}
+                            </span>
+                            <span className="text-xs text-muted-foreground mt-0.5">
+                              <EmailLink
+                                email={sub.email}
+                                className="text-sm"
+                              />
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm line-clamp-1">
+                            {sub.subject}
                           </span>
-                          <span className="text-xs text-muted-foreground mt-0.5">
-                            {sub.email}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-sm line-clamp-1">
-                          {sub.subject}
-                        </span>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                        {sub.phone || "—"}
-                      </TableCell>
-                      <TableCell className="hidden sm:table-cell text-xs text-muted-foreground whitespace-nowrap">
-                        {formatDate(sub.created_at)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelected(sub);
-                          }}
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
+                          {sub.phone ? (
+                            <PhoneLink
+                              phone={sub.phone}
+                              clientName={sub.name}
+                              className="text-sm"
+                            />
+                          ) : (
+                            "—"
+                          )}
+                        </TableCell>
+                        <TableCell className="hidden sm:table-cell text-xs text-muted-foreground whitespace-nowrap">
+                          {formatDate(sub.created_at)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelected(sub);
+                            }}
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ),
+                  )}
                 </TableBody>
               </Table>
             </div>
@@ -302,22 +381,21 @@ const ContactSubmissions = () => {
                   </div>
                   <div className="flex items-center gap-2 text-sm">
                     <Mail className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                    <a
-                      href={`mailto:${selected.email}`}
-                      className="text-primary hover:underline"
-                    >
-                      {selected.email}
-                    </a>
+                    <EmailLink
+                      email={selected.email}
+                      noIcon
+                      className="text-sm text-primary"
+                    />
                   </div>
                   {selected.phone && (
                     <div className="flex items-center gap-2 text-sm">
                       <Phone className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                      <a
-                        href={`tel:${selected.phone}`}
-                        className="hover:underline"
-                      >
-                        {selected.phone}
-                      </a>
+                      <PhoneLink
+                        phone={selected.phone}
+                        clientName={selected.name}
+                        noIcon
+                        className="text-sm"
+                      />
                     </div>
                   )}
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">

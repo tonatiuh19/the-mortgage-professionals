@@ -15,12 +15,17 @@ import dashboardReducer from "./slices/dashboardSlice";
 import clientPortalReducer from "./slices/clientPortalSlice";
 import auditLogsReducer from "./slices/auditLogsSlice";
 import reportsReducer from "./slices/reportsSlice";
-import reminderFlowsReducer from "./slices/reminderFlowsSlice";
-import preApprovalReducer from "./slices/preApprovalSlice";
 import applicationWizardReducer from "./slices/applicationWizardSlice";
-import contactSubmissionsReducer from "./slices/contactSubmissionsSlice";
+import preApprovalReducer from "./slices/preApprovalSlice";
 import settingsReducer from "./slices/settingsSlice";
+import reminderFlowsReducer from "./slices/reminderFlowsSlice";
 import adminSectionControlsReducer from "./slices/adminSectionControlsSlice";
+import contactSubmissionsReducer from "./slices/contactSubmissionsSlice";
+import schedulerReducer from "./slices/schedulerSlice";
+import calendarEventsReducer from "./slices/calendarEventsSlice";
+import clientDetailReducer from "./slices/clientDetailSlice";
+import voiceReducer from "./slices/voiceSlice";
+import realtorProspectingReducer from "./slices/realtorProspectingSlice";
 
 export const store = configureStore({
   reducer: {
@@ -40,12 +45,17 @@ export const store = configureStore({
     clientPortal: clientPortalReducer,
     auditLogs: auditLogsReducer,
     reports: reportsReducer,
-    reminderFlows: reminderFlowsReducer,
-    preApproval: preApprovalReducer,
     applicationWizard: applicationWizardReducer,
-    contactSubmissions: contactSubmissionsReducer,
+    preApproval: preApprovalReducer,
     settings: settingsReducer,
+    reminderFlows: reminderFlowsReducer,
     adminSectionControls: adminSectionControlsReducer,
+    contactSubmissions: contactSubmissionsReducer,
+    scheduler: schedulerReducer,
+    calendarEvents: calendarEventsReducer,
+    voice: voiceReducer,
+    clientDetail: clientDetailReducer,
+    realtorProspecting: realtorProspectingReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

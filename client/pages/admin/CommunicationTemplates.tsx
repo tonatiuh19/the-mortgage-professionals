@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { FaWhatsapp } from "react-icons/fa";
 import { MetaHelmet } from "@/components/MetaHelmet";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { adminPageMeta } from "@/lib/seo-helpers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -410,18 +411,11 @@ const CommunicationTemplates = () => {
       />
       <div className="p-4 sm:p-6 lg:p-8">
         {/* Header */}
-        <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
-              <MessageSquare className="h-7 w-7 text-primary" />
-              Communication Templates
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Manage message templates and automate communications across the
-              loan pipeline
-            </p>
-          </div>
-        </header>
+        <PageHeader
+          icon={<MessageSquare className="h-7 w-7 text-primary" />}
+          title="Communication Templates"
+          description="Manage message templates and automate communications across the loan pipeline"
+        />
 
         {/* ── Templates ────────────────────────────────────────────────────── */}
         <Tabs

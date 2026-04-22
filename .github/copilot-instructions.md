@@ -7,10 +7,19 @@
 - **NEVER fetch data directly in components with axios or fetch**
 - **ALL data fetching MUST be done in Redux store (slices) using createAsyncThunk**
 - **Components ONLY dispatch actions and select state from store**
-- **NO EXCEPTIONS to these rules**
 - **NEVER touch schema.sql, any database changes must be made through migration files in `database/migrations/`**
 - **When using any console logging for debugging use logger functions from `client/utils/logger.ts` for consistent formatting and log levels only in UI components**
 - **NEVER Patch issues, always fix the root cause of type errors or bugs immediately**
+- **if any update is made to api/index.ts, update swagger.yaml accordingly**
+- **if any revelant change update DESIGN_SYSTEM.md**
+- **For email templates in `api/index.ts`, always use The Mortgage Professionals brand tokens (`#0A2F52`, `#F9A826`, `#FFF8EB`) and never keep legacy Encore red tokens (`#e8192c`, `#c0111f`, `#fff0f2`, `#fecdd3`)**
+- **For email templates in `api/index.ts`, keep CTA button style consistent across all templates: `background-color:#0A2F52`, `padding:14px 44px`, `border-radius:10px`, `font-size:15px`, `font-weight:700`, `letter-spacing:0.3px`**
+- **During code migration/sync from real-state, preserve TMP styling and UX polish (grid alignment, spacing rhythm, typography scale, avatar/card treatment, button sizing/radius). Do not blindly overwrite UI classes when behavior can be merged without visual regression.**
+- **When a migrated file contains both behavior updates and styling conflicts, keep behavior fixes from real-state but retain TMP visual styling unless explicitly told to re-theme.**
+- **Always think about mobile responsiveness and cool, engaging UI/UX when making frontend changes**
+- **if there is an opportunity to add reusable components or utilities, do it immediately to avoid technical debt**
+- **Avoid any breaking changes**
+- **NO EXCEPTIONS to these rules**
 
 ### Package Manager
 
@@ -24,8 +33,48 @@
 - Single port (8080) for both frontend/backend in development
 - **CRITICAL: Always reference `database/schema.sql` for database structure and table definitions**
 - **NEVER assume column names - check schema.sql first**
-- **If any database update is made based on schema.sql, generate a migration file** in `database/migrations/` with timestamp prefix (e.g., `YYYYMMDD_HHMMSS_description.sql`) for hostgator mysql database version 8.0
+- **If any database update is made based on schema.sql, generate a migration file** in `database/migrations/` with timestamp prefix (e.g., `YYYYMMDD_HHMMSS_description.sql`) for **TiDB Cloud Serverless** (MySQL 8.0 compatible)
 - **If a type issue is generated, fix it immediately** - ensure all TypeScript types are correct and consistent across client, api/index.ts, and shared
+
+### Running Migrations (TiDB Cloud)
+
+DB credentials are in `.env` at the project root. To apply a migration:
+
+```bash
+# 1. Check if already applied (table check example)
+DB_PASS=$(grep "^DB_PASSWORD" .env | cut -d'=' -f2-) && \
+DB_HOST=$(grep "^DB_HOST" .env | cut -d'=' -f2-) && \
+DB_PORT=$(grep "^DB_PORT" .env | cut -d'=' -f2-) && \
+DB_USER=$(grep "^DB_USER" .env | cut -d'=' -f2-) && \
+DB_NAME=$(grep "^DB_NAME" .env | cut -d'=' -f2-) && \
+mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" \
+  --ssl-mode=REQUIRED --protocol=TCP \
+  -e "SHOW TABLES LIKE 'your_table_name';" 2>&1
+
+# 2. Apply the migration
+DB_PASS=$(grep "^DB_PASSWORD" .env | cut -d'=' -f2-) && \
+DB_HOST=$(grep "^DB_HOST" .env | cut -d'=' -f2-) && \
+DB_PORT=$(grep "^DB_PORT" .env | cut -d'=' -f2-) && \
+DB_USER=$(grep "^DB_USER" .env | cut -d'=' -f2-) && \
+DB_NAME=$(grep "^DB_NAME" .env | cut -d'=' -f2-) && \
+mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" \
+  --ssl-mode=REQUIRED --protocol=TCP \
+  < database/migrations/YOUR_MIGRATION_FILE.sql 2>&1
+
+# 3. Verify
+DB_PASS=$(grep "^DB_PASSWORD" .env | cut -d'=' -f2-) && \
+DB_HOST=$(grep "^DB_HOST" .env | cut -d'=' -f2-) && \
+DB_PORT=$(grep "^DB_PORT" .env | cut -d'=' -f2-) && \
+DB_USER=$(grep "^DB_USER" .env | cut -d'=' -f2-) && \
+DB_NAME=$(grep "^DB_NAME" .env | cut -d'=' -f2-) && \
+mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" \
+  --ssl-mode=REQUIRED --protocol=TCP \
+  -e "DESCRIBE your_table_name;" 2>&1
+```
+
+- All DB connection values are in `.env` (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME)
+- Always use `--ssl-mode=REQUIRED --protocol=TCP`
+- After applying, **update `database/schema.sql`** to reflect the new table/column
 
 ## Project Structure
 

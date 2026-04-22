@@ -30,6 +30,7 @@ import {
   Camera,
   Globe,
   Share2,
+  Building2,
 } from "lucide-react";
 import {
   FaFacebook,
@@ -45,6 +46,7 @@ import {
   fetchBrokerProfileForEdit,
   uploadBrokerAvatarByAdmin,
   clearSelectedBrokerProfile,
+  fetchMortgageBankers,
 } from "@/store/slices/brokersSlice";
 import { useToast } from "@/hooks/use-toast";
 import ImageCropUploader from "@/components/ImageCropUploader";
@@ -67,6 +69,8 @@ export interface BrokerFormValues {
   role: "broker" | "admin";
   license_number: string;
   specializations: string[];
+  /** Assigned Mortgage Banker (only for role=broker) */
+  created_by_broker_id: number | null;
   // Profile fields
   bio: string;
   office_address: string;
@@ -97,6 +101,7 @@ const validationSchema = Yup.object({
   role: Yup.string().oneOf(["broker", "admin"]).required("Required"),
   license_number: Yup.string().optional(),
   specializations: Yup.array().of(Yup.string()).optional(),
+  created_by_broker_id: Yup.number().nullable().optional(),
   bio: Yup.string().max(500, "Max 500 characters").optional(),
   office_address: Yup.string().optional(),
   office_city: Yup.string().optional(),
@@ -143,14 +148,16 @@ export function BrokerWizard({
   const [activeTab, setActiveTab] = useState<WizardTab>("info");
   const [avatarUploading, setAvatarUploading] = useState(false);
 
-  const { selectedBrokerProfile, profileLoading } = useAppSelector(
-    (state) => state.brokers,
-  );
+  const { selectedBrokerProfile, profileLoading, mortgageBankers } =
+    useAppSelector((state) => state.brokers);
 
   // Fetch full profile when editing
   useEffect(() => {
     if (open && mode === "edit" && broker?.id) {
       dispatch(fetchBrokerProfileForEdit(broker.id));
+    }
+    if (open) {
+      dispatch(fetchMortgageBankers());
     }
     if (!open) {
       setActiveTab("info");
@@ -170,6 +177,7 @@ export function BrokerWizard({
         broker?.specializations && Array.isArray(broker.specializations)
           ? broker.specializations
           : [],
+      created_by_broker_id: broker?.created_by_broker_id ?? null,
       bio: "",
       office_address: "",
       office_city: "",
@@ -465,6 +473,47 @@ export function BrokerWizard({
                         />
                       </div>
                     </div>
+
+                    {/* Assigned Mortgage Banker — only for partners */}
+                    {formik.values.role === "broker" && (
+                      <div className="space-y-1.5">
+                        <Label
+                          htmlFor="created_by_broker_id"
+                          className="flex items-center gap-1.5"
+                        >
+                          <Building2 className="h-3.5 w-3.5 text-purple-500" />
+                          Assigned Mortgage Banker
+                        </Label>
+                        <Select
+                          value={
+                            formik.values.created_by_broker_id != null
+                              ? String(formik.values.created_by_broker_id)
+                              : ""
+                          }
+                          onValueChange={(val) =>
+                            formik.setFieldValue(
+                              "created_by_broker_id",
+                              val ? Number(val) : null,
+                            )
+                          }
+                        >
+                          <SelectTrigger id="created_by_broker_id">
+                            <SelectValue placeholder="Select mortgage banker…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {mortgageBankers.map((mb) => (
+                              <SelectItem key={mb.id} value={String(mb.id)}>
+                                {mb.first_name} {mb.last_name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-gray-400">
+                          This Mortgage Banker will appear co-branded on the
+                          partner's public apply page.
+                        </p>
+                      </div>
+                    )}
                   </section>
 
                   {/* Specializations */}

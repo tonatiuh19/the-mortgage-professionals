@@ -10,8 +10,12 @@ import {
   File,
   FileText,
   PenTool,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
 } from "lucide-react";
 import { MetaHelmet } from "@/components/MetaHelmet";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { adminPageMeta } from "@/lib/seo-helpers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +69,7 @@ import {
 import TaskWizard from "@/components/TaskWizard";
 import type { TaskTemplate } from "@shared/api";
 import { toast } from "@/hooks/use-toast";
+import { useSortableData } from "@/hooks/use-sortable-data";
 
 const Tasks = () => {
   const dispatch = useAppDispatch();
@@ -77,7 +82,7 @@ const Tasks = () => {
   const [taskToDelete, setTaskToDelete] = useState<TaskTemplate | null>(null);
 
   useEffect(() => {
-    dispatch(fetchTasks());
+    dispatch(fetchTasks({}));
   }, [dispatch]);
 
   const handleUpdateStatus = async (taskId: number, newStatus: string) => {
@@ -87,7 +92,7 @@ const Tasks = () => {
   const handleTaskCreated = () => {
     setWizardOpen(false);
     setEditingTask(null);
-    dispatch(fetchTasks());
+    dispatch(fetchTasks({}));
   };
 
   const handleEditTask = (task: TaskTemplate) => {
@@ -181,6 +186,16 @@ const Tasks = () => {
     return true;
   });
 
+  const {
+    sorted: sortedTasks,
+    sortKey: taskSortKey,
+    sortDir: taskSortDir,
+    requestSort: sortTasks,
+  } = useSortableData(
+    filteredTasks as unknown as Record<string, unknown>[],
+    "title",
+  );
+
   const taskStats = {
     total: tasks.length,
     active: tasks.filter((t) => t.is_active).length,
@@ -199,45 +214,41 @@ const Tasks = () => {
         )}
       />
       <div className="p-4 sm:p-6 lg:p-8">
-        <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
-              <CheckCircle2 className="h-7 w-7 text-primary" />
-              Task Templates
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Manage task templates used for loan workflows
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="relative w-full sm:max-w-xs">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search tasks..."
-                className="pl-9"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
+        <PageHeader
+          icon={<CheckCircle2 className="h-7 w-7 text-primary" />}
+          title="Task Templates"
+          description="Manage task templates used for loan workflows"
+          actions={
+            <div className="flex items-center gap-3">
+              <div className="relative w-full sm:max-w-xs">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search tasks..."
+                  className="pl-9"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <Button
+                onClick={() => setWizardOpen(true)}
+                className="bg-primary gap-2"
+              >
+                <Plus className="h-4 w-4" />
+                <span className="hidden sm:inline">New Task</span>
+              </Button>
+              <Select value={filter} onValueChange={setFilter}>
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Templates</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            <Button
-              onClick={() => setWizardOpen(true)}
-              className="bg-primary gap-2"
-            >
-              <Plus className="h-4 w-4" />
-              <span className="hidden sm:inline">New Task</span>
-            </Button>
-            <Select value={filter} onValueChange={setFilter}>
-              <SelectTrigger className="w-[140px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Templates</SelectItem>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="inactive">Inactive</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </header>
+          }
+        />
 
         {loading ? (
           <div className="text-center py-12 text-muted-foreground">
@@ -262,56 +273,6 @@ const Tasks = () => {
           </Card>
         ) : (
           <div className="space-y-6">
-            {/* Task Stats */}
-            <div className="grid gap-4 md:grid-cols-4">
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Total Templates
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{taskStats.total}</div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Active
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-emerald-500">
-                    {taskStats.active}
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Inactive
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-gray-500">
-                    {taskStats.inactive}
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    High Priority
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-red-500">
-                    {taskStats.high_priority}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
             {/* Tasks Table */}
             <Card>
               <CardHeader>
@@ -323,7 +284,7 @@ const Tasks = () => {
               <CardContent>
                 {/* Mobile Card View */}
                 <div className="block lg:hidden space-y-3">
-                  {filteredTasks.map((task) => (
+                  {(sortedTasks as unknown as TaskTemplate[]).map((task) => (
                     <Card key={task.id} className="p-4">
                       <div className="space-y-3">
                         <div className="flex items-start justify-between gap-2">
@@ -435,16 +396,76 @@ const Tasks = () => {
                           Order
                         </TableHead> */}
                         <TableHead className="min-w-[200px]">
-                          Task Template
+                          <button
+                            type="button"
+                            onClick={() => sortTasks("title")}
+                            className="flex items-center gap-1 hover:text-foreground transition-colors"
+                          >
+                            Task Template{" "}
+                            {taskSortKey === "title" ? (
+                              taskSortDir === "asc" ? (
+                                <ChevronUp className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )
+                            ) : (
+                              <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                            )}
+                          </button>
                         </TableHead>
                         <TableHead className="min-w-[120px] whitespace-nowrap">
-                          Type
+                          <button
+                            type="button"
+                            onClick={() => sortTasks("task_type")}
+                            className="flex items-center gap-1 hover:text-foreground transition-colors"
+                          >
+                            Type{" "}
+                            {taskSortKey === "task_type" ? (
+                              taskSortDir === "asc" ? (
+                                <ChevronUp className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )
+                            ) : (
+                              <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                            )}
+                          </button>
                         </TableHead>
                         <TableHead className="min-w-[100px] whitespace-nowrap">
-                          Priority
+                          <button
+                            type="button"
+                            onClick={() => sortTasks("priority")}
+                            className="flex items-center gap-1 hover:text-foreground transition-colors"
+                          >
+                            Priority{" "}
+                            {taskSortKey === "priority" ? (
+                              taskSortDir === "asc" ? (
+                                <ChevronUp className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )
+                            ) : (
+                              <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                            )}
+                          </button>
                         </TableHead>
                         <TableHead className="min-w-[100px] whitespace-nowrap">
-                          Due Days
+                          <button
+                            type="button"
+                            onClick={() => sortTasks("default_due_days")}
+                            className="flex items-center gap-1 hover:text-foreground transition-colors"
+                          >
+                            Due Days{" "}
+                            {taskSortKey === "default_due_days" ? (
+                              taskSortDir === "asc" ? (
+                                <ChevronUp className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )
+                            ) : (
+                              <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                            )}
+                          </button>
                         </TableHead>
                         <TableHead className="min-w-[120px] whitespace-nowrap">
                           Requirements
@@ -458,119 +479,123 @@ const Tasks = () => {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredTasks.map((task) => (
-                        <TableRow key={task.id}>
-                          {/* <TableCell className="min-w-[50px] whitespace-nowrap">
+                      {(sortedTasks as unknown as TaskTemplate[]).map(
+                        (task) => (
+                          <TableRow key={task.id}>
+                            {/* <TableCell className="min-w-[50px] whitespace-nowrap">
                             <Badge variant="outline" className="text-xs">
                               {task.order_index}
                             </Badge>
                           </TableCell> */}
-                          <TableCell className="min-w-[200px] max-w-[300px]">
-                            <div className="flex items-center gap-2">
-                              <div className="min-w-0">
-                                <span className="font-medium block truncate">
-                                  {task.title}
-                                </span>
-                                {task.description && (
-                                  <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                                    {task.description}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell className="min-w-[120px] whitespace-nowrap">
-                            <span className="text-sm">
-                              {task.task_type?.replace(/_/g, " ")}
-                            </span>
-                          </TableCell>
-                          <TableCell className="min-w-[100px] whitespace-nowrap">
-                            <Badge
-                              className={cn(
-                                "text-xs whitespace-nowrap",
-                                getPriorityColor(task.priority),
-                              )}
-                            >
-                              {task.priority}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="min-w-[100px] whitespace-nowrap">
-                            <span className="text-sm">
-                              {task.default_due_days
-                                ? `${task.default_due_days} days`
-                                : "No due date"}
-                            </span>
-                          </TableCell>
-                          <TableCell className="min-w-[120px]">
-                            <div className="flex items-center gap-1 flex-wrap">
-                              {!!task.requires_documents && (
-                                <Badge
-                                  variant="outline"
-                                  className="text-xs flex items-center gap-1"
-                                >
-                                  <File className="h-3 w-3" />
-                                  Docs
-                                </Badge>
-                              )}
-                              {!!task.has_custom_form && (
-                                <Badge
-                                  variant="outline"
-                                  className="text-xs flex items-center gap-1"
-                                >
-                                  <FileText className="h-3 w-3" />
-                                  Form
-                                </Badge>
-                              )}
-                              {!!task.has_signing && (
-                                <Badge
-                                  variant="outline"
-                                  className="text-xs flex items-center gap-1"
-                                >
-                                  <PenTool className="h-3 w-3" />
-                                  Signing
-                                </Badge>
-                              )}
-                              {!task.requires_documents &&
-                                !task.has_custom_form &&
-                                !task.has_signing && (
-                                  <span className="text-xs text-muted-foreground">
-                                    -
+                            <TableCell className="min-w-[200px] max-w-[300px]">
+                              <div className="flex items-center gap-2">
+                                <div className="min-w-0">
+                                  <span className="font-medium block truncate">
+                                    {task.title}
                                   </span>
+                                  {task.description && (
+                                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                                      {task.description}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell className="min-w-[120px] whitespace-nowrap">
+                              <span className="text-sm">
+                                {task.task_type?.replace(/_/g, " ")}
+                              </span>
+                            </TableCell>
+                            <TableCell className="min-w-[100px] whitespace-nowrap">
+                              <Badge
+                                className={cn(
+                                  "text-xs whitespace-nowrap",
+                                  getPriorityColor(task.priority),
                                 )}
-                            </div>
-                          </TableCell>
-                          <TableCell className="min-w-[100px] whitespace-nowrap">
-                            <Badge
-                              variant={task.is_active ? "default" : "secondary"}
-                              className="text-xs"
-                            >
-                              {task.is_active ? "Active" : "Inactive"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="min-w-[120px] text-right whitespace-nowrap">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => handleEditTask(task)}
-                                title="Edit template"
                               >
-                                <Edit2 className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                onClick={() => handleDeleteClick(task)}
-                                title="Delete template"
+                                {task.priority}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="min-w-[100px] whitespace-nowrap">
+                              <span className="text-sm">
+                                {task.default_due_days
+                                  ? `${task.default_due_days} days`
+                                  : "No due date"}
+                              </span>
+                            </TableCell>
+                            <TableCell className="min-w-[120px]">
+                              <div className="flex items-center gap-1 flex-wrap">
+                                {!!task.requires_documents && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-xs flex items-center gap-1"
+                                  >
+                                    <File className="h-3 w-3" />
+                                    Docs
+                                  </Badge>
+                                )}
+                                {!!task.has_custom_form && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-xs flex items-center gap-1"
+                                  >
+                                    <FileText className="h-3 w-3" />
+                                    Form
+                                  </Badge>
+                                )}
+                                {!!task.has_signing && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-xs flex items-center gap-1"
+                                  >
+                                    <PenTool className="h-3 w-3" />
+                                    Signing
+                                  </Badge>
+                                )}
+                                {!task.requires_documents &&
+                                  !task.has_custom_form &&
+                                  !task.has_signing && (
+                                    <span className="text-xs text-muted-foreground">
+                                      -
+                                    </span>
+                                  )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="min-w-[100px] whitespace-nowrap">
+                              <Badge
+                                variant={
+                                  task.is_active ? "default" : "secondary"
+                                }
+                                className="text-xs"
                               >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                                {task.is_active ? "Active" : "Inactive"}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="min-w-[120px] text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={() => handleEditTask(task)}
+                                  title="Edit template"
+                                >
+                                  <Edit2 className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                  onClick={() => handleDeleteClick(task)}
+                                  title="Delete template"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ),
+                      )}
                     </TableBody>
                   </Table>
                 </div>

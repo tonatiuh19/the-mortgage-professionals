@@ -7,6 +7,8 @@ import {
   Shield,
   Sparkles,
   TrendingUp,
+  MessageSquare,
+  Phone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +22,7 @@ import {
 } from "@/store/slices/brokerAuthSlice";
 import { MetaHelmet } from "@/components/MetaHelmet";
 import { authPageMeta } from "@/lib/seo-helpers";
+import { ResendCodeButton } from "@/components/ResendCodeButton";
 
 export default function BrokerLogin() {
   const navigate = useNavigate();
@@ -40,6 +43,10 @@ export default function BrokerLogin() {
   const [code, setCode] = useState("");
   const [success, setSuccess] = useState("");
   const [emailError, setEmailError] = useState("");
+  const [isSendingCode, setIsSendingCode] = useState(false);
+  const [deliveryMethod, setDeliveryMethod] = useState<
+    "email" | "sms" | "call"
+  >("email");
 
   const validateEmail = (email: string): boolean => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -59,11 +66,46 @@ export default function BrokerLogin() {
       return;
     }
 
-    const result = await dispatch(sendVerificationCode(trimmedEmail));
+    setIsSendingCode(true);
+    const result = await dispatch(
+      sendVerificationCode({
+        email: trimmedEmail,
+        delivery_method: deliveryMethod,
+      }),
+    );
+    setIsSendingCode(false);
 
     if (sendVerificationCode.fulfilled.match(result)) {
-      setSuccess("Verification code sent to your email");
+      setSuccess(
+        deliveryMethod === "sms"
+          ? "Verification code sent to your phone"
+          : deliveryMethod === "call"
+            ? "We're calling your registered phone number now"
+            : "Verification code sent to your email",
+      );
       setStep("code");
+    }
+  };
+
+  const handleResendCode = async () => {
+    setSuccess("");
+    dispatch(clearError());
+    setIsSendingCode(true);
+    const result = await dispatch(
+      sendVerificationCode({
+        email: email.trim().toLowerCase(),
+        delivery_method: deliveryMethod,
+      }),
+    );
+    setIsSendingCode(false);
+    if (sendVerificationCode.fulfilled.match(result)) {
+      setSuccess(
+        deliveryMethod === "sms"
+          ? "Code resent to your phone"
+          : deliveryMethod === "call"
+            ? "Calling your phone again now"
+            : "Code resent to your email",
+      );
     }
   };
 
@@ -81,7 +123,7 @@ export default function BrokerLogin() {
 
   return (
     <>
-      <MetaHelmet {...authPageMeta("Broker Login")} />
+      <MetaHelmet {...authPageMeta("Admin Login")} />
       <div className="h-screen w-full flex overflow-hidden">
         {/* Left Column - Colored Background with Branding */}
         <motion.div
@@ -126,14 +168,14 @@ export default function BrokerLogin() {
 
               <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-sm px-4 py-2 rounded-full mb-8">
                 <Sparkles className="h-4 w-4" />
-                <span className="text-sm font-medium">Broker Portal</span>
+                <span className="text-sm font-medium">Admin Portal</span>
               </div>
 
               <h1 className="text-5xl font-bold mb-6 leading-tight">
                 Welcome to the
                 <br />
                 <span className="bg-gradient-to-r from-white to-primary-foreground/80 bg-clip-text text-transparent">
-                  Broker Portal
+                  Admin Portal
                 </span>
               </h1>
 
@@ -212,7 +254,7 @@ export default function BrokerLogin() {
                   className="h-10 w-auto mx-auto mb-2"
                 />
               </button>
-              <p className="text-muted-foreground mt-2">Broker Portal</p>
+              <p className="text-muted-foreground mt-2">Admin Portal</p>
             </div>
 
             <div className="mb-8">
@@ -221,7 +263,7 @@ export default function BrokerLogin() {
               </h2>
               <p className="text-gray-600">
                 {step === "email"
-                  ? "Enter your broker email to get started"
+                  ? "Enter your admin email to get started"
                   : "Check your email for the verification code"}
               </p>
             </div>
@@ -229,7 +271,22 @@ export default function BrokerLogin() {
             {/* Error Alert */}
             {error && (
               <Alert variant="destructive" className="mb-6">
-                <AlertDescription>{error}</AlertDescription>
+                <AlertDescription className="flex flex-col gap-2">
+                  <span>{error}</span>
+                  {(deliveryMethod === "sms" || deliveryMethod === "call") &&
+                    step === "email" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeliveryMethod("email");
+                          dispatch(clearError());
+                        }}
+                        className="mt-1 self-start text-xs font-semibold underline underline-offset-2 hover:opacity-80"
+                      >
+                        Try with email instead →
+                      </button>
+                    )}
+                </AlertDescription>
               </Alert>
             )}
 
@@ -264,7 +321,7 @@ export default function BrokerLogin() {
                     <Input
                       id="email"
                       type="email"
-                      placeholder="broker@themortgageprofessionals.net"
+                      placeholder="admin@themortgageprofessionals.net"
                       value={email}
                       onChange={(e) => {
                         setEmail(e.target.value);
@@ -277,12 +334,61 @@ export default function BrokerLogin() {
                   </div>
                 </div>
 
+                {/* Delivery Method Toggle */}
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold text-gray-700">
+                    Send code via
+                  </p>
+                  <div className="grid grid-cols-3 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryMethod("email")}
+                      className={`flex items-center justify-center gap-2 h-11 rounded-lg border-2 text-sm font-medium transition-all ${
+                        deliveryMethod === "email"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-gray-200 text-gray-500 hover:border-gray-300"
+                      }`}
+                    >
+                      <Mail className="h-4 w-4" />
+                      Email
+                    </button>
+                    <button
+                      type="button"
+                      disabled
+                      title="Coming soon"
+                      className="flex items-center justify-center gap-2 h-11 rounded-lg border-2 text-sm font-medium border-gray-100 text-gray-300 cursor-not-allowed bg-gray-50"
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                      SMS
+                    </button>
+                    <button
+                      type="button"
+                      disabled
+                      title="Coming soon"
+                      className="flex items-center justify-center gap-2 h-11 rounded-lg border-2 text-sm font-medium border-gray-100 text-gray-300 cursor-not-allowed bg-gray-50"
+                    >
+                      <Phone className="h-4 w-4" />
+                      Call
+                    </button>
+                  </div>
+                  {deliveryMethod === "sms" && (
+                    <p className="text-xs text-gray-500">
+                      Code will be sent to your registered phone number.
+                    </p>
+                  )}
+                  {deliveryMethod === "call" && (
+                    <p className="text-xs text-gray-500">
+                      We'll call your registered phone and read the code aloud.
+                    </p>
+                  )}
+                </div>
+
                 <Button
                   type="submit"
                   className="w-full h-12 text-base shadow-lg transition-all duration-300"
-                  disabled={loading || !email}
+                  disabled={isSendingCode || !email}
                 >
-                  {loading ? (
+                  {isSendingCode ? (
                     <span className="flex items-center gap-2">
                       <div className="h-5 w-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
                       Sending Code...
@@ -332,9 +438,64 @@ export default function BrokerLogin() {
                     />
                   </div>
                   <p className="text-xs text-gray-500 text-center pt-1">
-                    Code sent to{" "}
-                    <span className="font-semibold text-gray-700">{email}</span>
+                    Code sent to your{" "}
+                    <span className="font-semibold text-gray-700">
+                      {deliveryMethod === "sms" || deliveryMethod === "call"
+                        ? "phone"
+                        : "email"}
+                    </span>
+                    {deliveryMethod === "email" && <> ({email})</>}
+                    {deliveryMethod === "call" && <> via voice call</>}
                   </p>
+                </div>
+
+                {/* Change delivery method */}
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold text-gray-500 text-center">
+                    Didn't receive it? Try a different method:
+                  </p>
+                  <div className="grid grid-cols-3 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryMethod("email")}
+                      className={`flex items-center justify-center gap-2 h-10 rounded-lg border-2 text-sm font-medium transition-all ${
+                        deliveryMethod === "email"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-gray-200 text-gray-500 hover:border-gray-300"
+                      }`}
+                    >
+                      <Mail className="h-4 w-4" />
+                      Email
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryMethod("sms")}
+                      className={`flex items-center justify-center gap-2 h-10 rounded-lg border-2 text-sm font-medium transition-all ${
+                        deliveryMethod === "sms"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-gray-200 text-gray-500 hover:border-gray-300"
+                      }`}
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                      SMS
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryMethod("call")}
+                      className={`flex items-center justify-center gap-2 h-10 rounded-lg border-2 text-sm font-medium transition-all ${
+                        deliveryMethod === "call"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-gray-200 text-gray-500 hover:border-gray-300"
+                      }`}
+                    >
+                      <Phone className="h-4 w-4" />
+                      Call
+                    </button>
+                  </div>
+                  <ResendCodeButton
+                    onResend={handleResendCode}
+                    loading={isSendingCode}
+                  />
                 </div>
 
                 <Button
@@ -361,6 +522,7 @@ export default function BrokerLogin() {
                     setCode("");
                     dispatch(clearError());
                     setSuccess("");
+                    setDeliveryMethod("email");
                   }}
                   disabled={loading}
                 >

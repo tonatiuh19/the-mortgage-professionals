@@ -114,7 +114,7 @@ const Profile = () => {
 
         <div className="relative flex items-center gap-6">
           <Avatar className="h-24 w-24 border-4 border-white/30 shadow-2xl">
-            <AvatarFallback className="bg-gradient-to-br from-white/20 to-white/10 text-white text-3xl font-bold">
+            <AvatarFallback className="bg-dark text-white text-3xl font-bold">
               {getInitials()}
             </AvatarFallback>
           </Avatar>
@@ -127,17 +127,6 @@ const Profile = () => {
               {profile.email}
             </p>
             <div className="flex items-center gap-2 mt-2">
-              {profile.email_verified ? (
-                <Badge className="bg-green-500/20 text-white border-white/30">
-                  <Shield className="h-3 w-3 mr-1" />
-                  Verified
-                </Badge>
-              ) : (
-                <Badge className="bg-orange-500/20 text-white border-white/30">
-                  <Shield className="h-3 w-3 mr-1" />
-                  Unverified
-                </Badge>
-              )}
               <Badge className="bg-white/20 text-white border-white/30">
                 {profile.status}
               </Badge>
@@ -261,7 +250,16 @@ const Profile = () => {
                       />
                     ) : (
                       <p className="text-lg font-medium">
-                        {profile.phone || "Not provided"}
+                        {profile.phone ? (
+                          <a
+                            href={`tel:${profile.phone}`}
+                            className="hover:underline"
+                          >
+                            {profile.phone}
+                          </a>
+                        ) : (
+                          "Not provided"
+                        )}
                       </p>
                     )}
                   </div>

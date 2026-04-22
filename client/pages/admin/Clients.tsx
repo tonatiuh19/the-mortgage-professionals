@@ -1,6 +1,11 @@
-import React, { useEffect, useState, useMemo } from "react";
-import { Users, Search, Mail, Phone, Trash2 } from "lucide-react";
+import React, { useEffect, useState, useCallback } from "react";
+import { Users, Search, Phone, Trash2, Plus } from "lucide-react";
+import PhoneLink from "@/components/PhoneLink";
+import EmailLink from "@/components/EmailLink";
+import ClientFormDialog from "@/components/ClientFormDialog";
+import ClientDetailPanel from "@/components/ClientDetailPanel";
 import { MetaHelmet } from "@/components/MetaHelmet";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { adminPageMeta } from "@/lib/seo-helpers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,14 +18,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -31,39 +28,70 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { cn } from "@/lib/utils";
+import { DataGrid, type DataGridColumn } from "@/components/ui/data-grid";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchClients, deleteClient } from "@/store/slices/clientsSlice";
 import { useToast } from "@/hooks/use-toast";
+import type { GetClientsResponse } from "@shared/api";
+
+type ClientRow = GetClientsResponse["clients"][0];
 
 const Clients = () => {
   const dispatch = useAppDispatch();
   const { toast } = useToast();
-  const { clients, isLoading: loading } = useAppSelector(
-    (state) => state.clients,
-  );
+  const {
+    clients,
+    isLoading: loading,
+    pagination,
+  } = useAppSelector((state) => state.clients);
   const { user } = useAppSelector((state) => state.brokerAuth);
   const isPartner = user?.role === "broker";
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<any>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState("first_name");
+  const [sortDir, setSortDir] = useState<"ASC" | "DESC">("ASC");
+  const [formOpen, setFormOpen] = useState(false);
+  const [detailClientId, setDetailClientId] = useState<number | null>(null);
 
-  const filteredClients = useMemo(() => {
-    if (!searchQuery.trim()) return clients;
-    const q = searchQuery.toLowerCase();
-    return clients.filter(
-      (c) =>
-        c.first_name.toLowerCase().includes(q) ||
-        c.last_name.toLowerCase().includes(q) ||
-        c.email.toLowerCase().includes(q) ||
-        (c.phone || "").toLowerCase().includes(q),
-    );
-  }, [clients, searchQuery]);
+  const doFetch = useCallback(
+    (params: {
+      page?: number;
+      sortBy?: string;
+      sortOrder?: "ASC" | "DESC";
+      search?: string;
+    }) => {
+      dispatch(fetchClients({ limit: 30, ...params }));
+    },
+    [dispatch],
+  );
 
   useEffect(() => {
-    dispatch(fetchClients());
+    doFetch({
+      page: 1,
+      sortBy,
+      sortOrder: sortDir,
+      search: searchQuery || undefined,
+    });
   }, [dispatch]);
+
+  const handleSort = (field: string) => {
+    const newDir = sortBy === field && sortDir === "ASC" ? "DESC" : "ASC";
+    setSortBy(field);
+    setSortDir(newDir);
+    doFetch({
+      page: 1,
+      sortBy: field,
+      sortOrder: newDir,
+      search: searchQuery || undefined,
+    });
+  };
+
+  const handleSearch = (q: string) => {
+    setSearchQuery(q);
+    doFetch({ page: 1, sortBy, sortOrder: sortDir, search: q || undefined });
+  };
 
   const getInitials = (firstName: string, lastName: string) => {
     return `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
@@ -100,8 +128,133 @@ const Clients = () => {
     }
   };
 
+  const columns: DataGridColumn<ClientRow>[] = [
+    {
+      key: "first_name",
+      label: "Client",
+      sortable: true,
+      sticky: true,
+      className: "min-w-[160px]",
+      render: (client) => (
+        <div className="flex items-center gap-3 min-w-0">
+          <Avatar className="shrink-0">
+            <AvatarFallback className="bg-primary/10 text-primary font-semibold">
+              {getInitials(client.first_name, client.last_name)}
+            </AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <div className="font-medium truncate">
+              {client.first_name} {client.last_name}
+            </div>
+            <div className="text-xs text-muted-foreground">ID: {client.id}</div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "email",
+      label: "Contact",
+      sortable: true,
+      className: "min-w-[180px]",
+      render: (client) => (
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-sm">
+            <EmailLink
+              email={client.email}
+              className="text-sm text-foreground"
+            />
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            {client.phone ? (
+              <PhoneLink
+                phone={client.phone}
+                clientName={`${client.first_name} ${client.last_name}`}
+                clientId={client.id}
+                className="text-sm text-foreground"
+              />
+            ) : (
+              <span className="flex items-center gap-1.5 text-muted-foreground">
+                <Phone className="h-3 w-3" />
+                No phone
+              </span>
+            )}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "total_applications",
+      label: "Applications",
+      sortable: true,
+      shrink: true,
+      render: (client) => (
+        <Badge variant="outline" className="text-xs">
+          {client.total_applications} total
+        </Badge>
+      ),
+    },
+    {
+      key: "active_applications",
+      label: "Active",
+      sortable: true,
+      shrink: true,
+      render: (client) => (
+        <Badge className="text-xs bg-primary/10 text-primary border-primary/20">
+          {client.active_applications} active
+        </Badge>
+      ),
+    },
+    {
+      key: "date_of_birth",
+      label: "Date of Birth",
+      sortable: true,
+      shrink: true,
+      className: "text-sm",
+      render: (client) =>
+        client.date_of_birth ? (
+          new Date(client.date_of_birth).toLocaleDateString()
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
+    },
+    {
+      key: "created_at",
+      label: "Joined",
+      sortable: true,
+      shrink: true,
+      className: "text-sm text-muted-foreground",
+      render: (client) => new Date(client.created_at).toLocaleDateString(),
+    },
+    ...(!isPartner
+      ? [
+          {
+            key: "actions",
+            label: "Actions",
+            shrink: true,
+            render: (client: ClientRow) => (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteClick(client);
+                  }}
+                  disabled={isDeleting}
+                  className="h-7 text-xs gap-1 border-red-500 text-red-600 hover:bg-red-50"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  Delete
+                </Button>
+              </div>
+            ),
+          } as DataGridColumn<ClientRow>,
+        ]
+      : []),
+  ];
+
   const clientStats = {
-    total: clients.length,
+    total: pagination?.total ?? clients.length,
     totalApplications: clients.reduce(
       (sum, c) => sum + c.total_applications,
       0,
@@ -121,28 +274,35 @@ const Clients = () => {
         )}
       />
       <div className="p-4 sm:p-6 lg:p-8">
-        <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
-              <Users className="h-7 w-7 text-primary" />
-              Clients
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Manage your client relationships and applications
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="relative w-full sm:max-w-xs">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search clients..."
-                className="pl-9"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
+        <PageHeader
+          icon={<Users className="h-7 w-7 text-primary" />}
+          title="Clients"
+          description="Manage your client relationships and applications"
+          actions={
+            <div className="flex items-center gap-3">
+              <div className="relative w-full sm:max-w-xs">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search by name, email, or phone..."
+                  className="pl-9"
+                  value={searchQuery}
+                  onChange={(e) => handleSearch(e.target.value)}
+                />
+              </div>
+              {!isPartner && (
+                <Button
+                  onClick={() => {
+                    setFormOpen(true);
+                  }}
+                  className="gap-1.5 whitespace-nowrap"
+                >
+                  <Plus className="h-4 w-4" />
+                  New Client
+                </Button>
+              )}
             </div>
-          </div>
-        </header>
+          }
+        />
 
         {loading ? (
           <div className="text-center py-12 text-muted-foreground">
@@ -160,152 +320,114 @@ const Clients = () => {
           </Card>
         ) : (
           <div className="space-y-6">
-            {/* Client Stats */}
-            <div className="grid gap-4 md:grid-cols-3">
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Total Clients
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{clientStats.total}</div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Total Applications
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">
-                    {clientStats.totalApplications}
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Active Applications
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-primary">
-                    {Number(clientStats.activeApplications)}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
             {/* Clients Table */}
             <Card>
               <CardHeader>
                 <CardTitle>All Clients</CardTitle>
                 <CardDescription>
-                  Showing {filteredClients.length} of {clients.length} clients
+                  {pagination
+                    ? `Showing ${(pagination.page - 1) * pagination.limit + 1}–${Math.min(pagination.page * pagination.limit, pagination.total)} of ${pagination.total} clients`
+                    : `${clients.length} clients`}
                   {searchQuery && ` matching "${searchQuery}"`}
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Client</TableHead>
-                      <TableHead>Contact</TableHead>
-                      <TableHead>Applications</TableHead>
-                      <TableHead>Active</TableHead>
-                      <TableHead>Date of Birth</TableHead>
-                      <TableHead>SSN</TableHead>
-                      {!isPartner && <TableHead>Actions</TableHead>}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredClients.length === 0 ? (
-                      <TableRow>
-                        <TableCell
-                          colSpan={7}
-                          className="text-center py-8 text-muted-foreground"
-                        >
-                          No clients match your search.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      filteredClients.map((client) => (
-                        <TableRow key={client.id}>
-                          <TableCell>
-                            <div className="flex items-center gap-3">
-                              <Avatar>
-                                <AvatarFallback className="bg-primary/10 text-primary font-semibold">
-                                  {getInitials(
-                                    client.first_name,
-                                    client.last_name,
-                                  )}
-                                </AvatarFallback>
-                              </Avatar>
-                              <div>
-                                <div className="font-medium">
-                                  {client.first_name} {client.last_name}
-                                </div>
-                                <div className="text-xs text-muted-foreground">
-                                  Client ID: {client.id}
-                                </div>
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2 text-sm">
-                                <Mail className="h-3 w-3 text-muted-foreground" />
-                                <span className="truncate max-w-[200px]">
-                                  {client.email}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2 text-sm">
-                                <Phone className="h-3 w-3 text-muted-foreground" />
-                                <span>{client.phone || "No phone"}</span>
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="text-xs">
-                              {client.total_applications} total
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge className="text-xs bg-primary/10 text-primary border-primary/20">
-                              {client.active_applications} active
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <span className="text-sm">N/A</span>
-                          </TableCell>
-                          <TableCell>
-                            <span className="text-sm font-mono">N/A</span>
-                          </TableCell>
-                          {!isPartner && (
-                            <TableCell>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleDeleteClick(client)}
-                                disabled={isDeleting}
-                                className="h-7 text-xs gap-1 border-red-500 text-red-600 hover:bg-red-50"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                                Delete
-                              </Button>
-                            </TableCell>
-                          )}
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
+                <DataGrid<ClientRow>
+                  data={clients}
+                  rowKey={(c) => c.id}
+                  columns={columns}
+                  sortBy={sortBy}
+                  sortDir={sortDir}
+                  onSort={handleSort}
+                  onRowClick={(client) => setDetailClientId(client.id)}
+                  pagination={pagination}
+                  onPageChange={(page) =>
+                    doFetch({
+                      page,
+                      sortBy,
+                      sortOrder: sortDir,
+                      search: searchQuery || undefined,
+                    })
+                  }
+                  isLoading={loading}
+                  emptyMessage="No clients match your search."
+                  mobileCard={(client) => (
+                    <div className="rounded-lg border p-4 space-y-2 bg-white shadow-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-3">
+                          <Avatar>
+                            <AvatarFallback className="bg-primary/10 text-primary font-semibold text-xs">
+                              {getInitials(client.first_name, client.last_name)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <p className="font-medium text-sm">
+                              {client.first_name} {client.last_name}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              ID: {client.id}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          <Badge variant="outline" className="text-xs">
+                            {client.total_applications} apps
+                          </Badge>
+                          <Badge className="text-xs bg-primary/10 text-primary border-primary/20">
+                            {client.active_applications} active
+                          </Badge>
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <EmailLink
+                            email={client.email}
+                            className="text-xs text-muted-foreground"
+                          />
+                        </div>
+                        {client.phone && (
+                          <PhoneLink
+                            phone={client.phone}
+                            clientName={`${client.first_name} ${client.last_name}`}
+                            clientId={client.id}
+                            className="text-xs text-muted-foreground"
+                          />
+                        )}
+                      </div>
+                      {!isPartner && (
+                        <div className="flex justify-end gap-1 pt-1">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleDeleteClick(client)}
+                            disabled={isDeleting}
+                            className="h-7 text-xs gap-1 border-red-500 text-red-600 hover:bg-red-50"
+                          >
+                            <Trash2 className="h-3 w-3" /> Delete
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                />
               </CardContent>
             </Card>
           </div>
         )}
+
+        {/* Create Client Dialog */}
+        <ClientFormDialog
+          open={formOpen}
+          onClose={() => setFormOpen(false)}
+          client={null}
+        />
+
+        {/* Client Detail Panel */}
+        <ClientDetailPanel
+          isOpen={detailClientId !== null}
+          onClose={() => setDetailClientId(null)}
+          clientId={detailClientId}
+        />
 
         {/* Delete Confirmation Dialog */}
         <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

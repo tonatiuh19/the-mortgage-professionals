@@ -14,13 +14,14 @@ import type {
 } from "@shared/api";
 import type { RootState } from "../index";
 
-const DRAFT_KEY = "tmp_wizard_draft";
+const DRAFT_KEY = "themortgageprofessionals_wizard_draft";
 
 export interface WizardDraft {
   values: Omit<PublicApplicationPayload, "broker_token">;
   currentStep: number;
   brokerToken?: string;
   savedAt: string;
+  draftApplicationId?: number;
 }
 
 export interface PublicApplicationPayload {
@@ -52,7 +53,7 @@ export interface PublicApplicationPayload {
   employer_name: string;
   years_employed: string;
   // Step 1 – Citizenship / immigration
-  citizenship_status: string;
+  citizenship_status: string; // 'us_citizen' | 'permanent_resident' | 'non_resident' | 'other'
   // Optional broker association (from share link)
   broker_token?: string;
 }
@@ -75,6 +76,7 @@ interface ApplicationWizardState {
   sendShareEmailError: string | null;
   // Draft (persisted to localStorage)
   draft: WizardDraft | null;
+  draftApplicationId: number | null;
 }
 
 const initialState: ApplicationWizardState = {
@@ -92,18 +94,93 @@ const initialState: ApplicationWizardState = {
   sendingShareEmail: false,
   sendShareEmailError: null,
   draft: null,
+  draftApplicationId: null,
 };
+
+export const saveDraftToServer = createAsyncThunk(
+  "applicationWizard/saveDraftToServer",
+  async (
+    payload: {
+      values: Omit<PublicApplicationPayload, "broker_token">;
+      currentStep: number;
+      brokerToken?: string;
+    },
+    { getState, dispatch },
+  ) => {
+    const { values, currentStep, brokerToken } = payload;
+    // Need at minimum email + name to create a server record
+    if (
+      !values.email?.trim() ||
+      !values.first_name?.trim() ||
+      !values.last_name?.trim()
+    ) {
+      // Not enough data yet — save only to localStorage
+      dispatch(
+        saveDraft({
+          values,
+          currentStep,
+          brokerToken,
+          savedAt: new Date().toISOString(),
+        }),
+      );
+      return null;
+    }
+
+    const state = getState() as RootState;
+    const draftApplicationId = state.applicationWizard.draftApplicationId;
+
+    try {
+      const { data } = await axios.post<{
+        success: boolean;
+        draft_id: number;
+        application_number: string;
+      }>("/api/apply/draft", {
+        ...values,
+        broker_token: brokerToken,
+        wizard_step: currentStep,
+        draft_id: draftApplicationId || undefined,
+      });
+      dispatch(
+        saveDraft({
+          values,
+          currentStep,
+          brokerToken,
+          savedAt: new Date().toISOString(),
+          draftApplicationId: data.draft_id,
+        }),
+      );
+      return data;
+    } catch {
+      // Server save failed — still persist locally
+      dispatch(
+        saveDraft({
+          values,
+          currentStep,
+          brokerToken,
+          savedAt: new Date().toISOString(),
+          draftApplicationId: draftApplicationId ?? undefined,
+        }),
+      );
+      return null;
+    }
+  },
+);
 
 export const submitPublicApplication = createAsyncThunk(
   "applicationWizard/submit",
-  async (payload: PublicApplicationPayload, { rejectWithValue }) => {
+  async (payload: PublicApplicationPayload, { rejectWithValue, getState }) => {
     try {
+      const { draftApplicationId } = (getState() as RootState)
+        .applicationWizard;
       const { data } = await axios.post<{
         success: boolean;
         application_number: string;
         application_id: number;
         client_id: number;
-      }>("/api/apply", payload);
+      }>("/api/apply", {
+        ...payload,
+        draft_id: draftApplicationId ?? undefined,
+      });
       return data;
     } catch (error: any) {
       return rejectWithValue(
@@ -195,6 +272,9 @@ const applicationWizardSlice = createSlice({
     },
     saveDraft(state, action: PayloadAction<WizardDraft>) {
       state.draft = action.payload;
+      if (action.payload.draftApplicationId) {
+        state.draftApplicationId = action.payload.draftApplicationId;
+      }
       try {
         localStorage.setItem(DRAFT_KEY, JSON.stringify(action.payload));
       } catch {}
@@ -202,11 +282,18 @@ const applicationWizardSlice = createSlice({
     loadDraft(state) {
       try {
         const raw = localStorage.getItem(DRAFT_KEY);
-        if (raw) state.draft = JSON.parse(raw) as WizardDraft;
+        if (raw) {
+          const parsed = JSON.parse(raw) as WizardDraft;
+          state.draft = parsed;
+          if (parsed.draftApplicationId) {
+            state.draftApplicationId = parsed.draftApplicationId;
+          }
+        }
       } catch {}
     },
     clearDraft(state) {
       state.draft = null;
+      state.draftApplicationId = null;
       try {
         localStorage.removeItem(DRAFT_KEY);
       } catch {}
@@ -235,6 +322,7 @@ const applicationWizardSlice = createSlice({
         state.loading = false;
         state.error = action.payload as string;
       })
+      // fetchBrokerPublicInfo
       .addCase(fetchBrokerPublicInfo.pending, (state) => {
         state.brokerInfoLoading = true;
         state.brokerInfoError = null;
@@ -247,6 +335,7 @@ const applicationWizardSlice = createSlice({
         state.brokerInfoLoading = false;
         state.brokerInfoError = action.payload as string;
       })
+      // fetchMyShareLink
       .addCase(fetchMyShareLink.pending, (state) => {
         state.shareLinkLoading = true;
         state.shareLinkError = null;
@@ -260,6 +349,7 @@ const applicationWizardSlice = createSlice({
         state.shareLinkLoading = false;
         state.shareLinkError = action.payload as string;
       })
+      // regenerateShareLink
       .addCase(regenerateShareLink.pending, (state) => {
         state.shareLinkLoading = true;
         state.shareLinkError = null;
@@ -273,6 +363,7 @@ const applicationWizardSlice = createSlice({
         state.shareLinkLoading = false;
         state.shareLinkError = action.payload as string;
       })
+      // sendShareLinkEmail
       .addCase(sendShareLinkEmail.pending, (state) => {
         state.sendingShareEmail = true;
         state.sendShareEmailError = null;
@@ -295,5 +386,4 @@ export const {
   clearBrokerInfo,
   clearShareLinkError,
 } = applicationWizardSlice.actions;
-
 export default applicationWizardSlice.reducer;

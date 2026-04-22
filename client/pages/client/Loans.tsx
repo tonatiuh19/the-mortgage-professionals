@@ -14,8 +14,8 @@ import {
   CheckCircle2,
   ArrowRight,
 } from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
@@ -102,7 +102,7 @@ const Loans = () => {
             <FileText className="h-16 w-16 text-muted-foreground/50 mb-4" />
             <h3 className="text-xl font-semibold mb-2">No Loan Applications</h3>
             <p className="text-muted-foreground text-center max-w-md">
-              You don't have any loan applications yet. Contact your broker to
+              You don't have any loan applications yet. Contact your realtor to
               get started on your journey to homeownership!
             </p>
           </CardContent>

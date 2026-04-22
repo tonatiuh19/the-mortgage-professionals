@@ -12,6 +12,9 @@ import {
   Home as HomeIcon,
   Sparkles,
   Trophy,
+  CalendarDays,
+  Video,
+  Phone,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,9 +24,11 @@ import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   fetchClientApplications,
   fetchClientTasks,
+  fetchClientMeetings,
   updateClientTask,
   selectClientApplications,
   selectClientTasks,
+  selectClientMeetings,
 } from "@/store/slices/clientPortalSlice";
 import { selectClient } from "@/store/slices/clientAuthSlice";
 import { TaskCompletionModal } from "@/components/TaskCompletionModal";
@@ -33,11 +38,13 @@ const Dashboard = () => {
   const client = useAppSelector(selectClient);
   const applications = useAppSelector(selectClientApplications);
   const tasks = useAppSelector(selectClientTasks);
+  const meetings = useAppSelector(selectClientMeetings);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
 
   useEffect(() => {
     dispatch(fetchClientApplications());
     dispatch(fetchClientTasks());
+    dispatch(fetchClientMeetings());
   }, [dispatch]);
 
   const activeApplications = applications.filter(
@@ -91,6 +98,19 @@ const Dashboard = () => {
     };
     return colors[priority] || "outline";
   };
+
+  const formatMeetingTime = (t: string) => {
+    const [h, m] = t.split(":").map(Number);
+    const ampm = h >= 12 ? "PM" : "AM";
+    return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
+  };
+
+  const formatMeetingDate = (d: string) =>
+    new Date(d + "T12:00:00").toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
 
   return (
     <div className="space-y-8">
@@ -390,6 +410,69 @@ const Dashboard = () => {
         taskId={selectedTaskId}
         onClose={handleTaskModalClose}
       />
+
+      {/* Upcoming Meetings */}
+      {meetings.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.7 }}
+        >
+          <Card className="border-primary/20 bg-gradient-to-br from-primary/5 to-transparent">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-primary">
+                <CalendarDays className="h-5 w-5" />
+                Upcoming Meetings
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {meetings.map((meeting) => (
+                <div
+                  key={meeting.id}
+                  className="rounded-xl border border-primary/20 bg-background/60 p-4 flex flex-col sm:flex-row sm:items-center gap-3"
+                >
+                  <div className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary">
+                    {meeting.meeting_type === "video" ? (
+                      <Video className="h-5 w-5" />
+                    ) : (
+                      <Phone className="h-5 w-5" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm">
+                      {meeting.meeting_type === "video"
+                        ? "Zoom Video Call"
+                        : "Phone Call"}{" "}
+                      with{" "}
+                      <span className="text-primary">
+                        {meeting.broker_name}
+                      </span>
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {formatMeetingDate(meeting.meeting_date)} ·{" "}
+                      {formatMeetingTime(meeting.meeting_time)} –{" "}
+                      {formatMeetingTime(meeting.meeting_end_time)}
+                    </p>
+                  </div>
+                  {meeting.meeting_type === "video" &&
+                    meeting.zoom_join_url && (
+                      <a
+                        href={meeting.zoom_join_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <Button size="sm" className="shrink-0">
+                          <Video className="h-3.5 w-3.5 mr-1.5" />
+                          Join Zoom
+                        </Button>
+                      </a>
+                    )}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
     </div>
   );
 };

@@ -1,8 +1,8 @@
 import { Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
-import ApplicationWizard from "./pages/ApplicationWizard";
 import BrokerLogin from "./pages/BrokerLogin";
 import ClientLogin from "./pages/ClientLogin";
+import ApplicationWizard from "./pages/ApplicationWizard";
 import NotFound from "./pages/NotFound";
 import AppLayout from "./components/layout/AppLayout";
 import AdminLayout from "./components/layout/AdminLayout";
@@ -11,29 +11,33 @@ import AdminDashboard from "./pages/admin/Dashboard";
 import Pipeline from "./pages/admin/Pipeline";
 import Clients from "./pages/admin/Clients";
 import Tasks from "./pages/admin/Tasks";
-import Marketing from "./pages/admin/Marketing";
+// import Marketing from "./pages/admin/Marketing";
 import Documents from "./pages/admin/Documents";
 import Settings from "./pages/admin/Settings";
 import CommunicationTemplates from "./pages/admin/CommunicationTemplates";
 import Conversations from "./pages/admin/Conversations";
 import Reports from "./pages/admin/Reports";
-import Compliance from "./pages/admin/Compliance";
-import Notifications from "./pages/admin/Notifications";
+// import Compliance from "./pages/admin/Compliance";
+// import Notifications from "./pages/admin/Notifications";
 import Brokers from "./pages/admin/Brokers";
-import Profile from "./pages/admin/Profile";
-import ReminderFlows from "./pages/admin/ReminderFlows";
 import BrokerProfile from "./pages/admin/BrokerProfile";
+import ReminderFlows from "./pages/admin/ReminderFlows";
 import ContactSubmissions from "./pages/admin/ContactSubmissions";
 import ClientDashboard from "./pages/client/Dashboard";
 import ClientLoans from "./pages/client/Loans";
 import ClientTasks from "./pages/client/Tasks";
 import ClientProfile from "./pages/client/Profile";
-import ClientCalculator from "./pages/client/Calculator";
 import ClientDocuments from "./pages/client/Documents";
+import ClientCalculator from "./pages/client/Calculator";
 import FAQ from "./pages/FAQ";
 import LoanOptions from "./pages/LoanOptions";
 import About from "./pages/About";
 import Contact from "./pages/Contact";
+import SchedulerPage from "./pages/Scheduler";
+import SchedulerReschedule from "./pages/SchedulerReschedule";
+import AdminScheduler from "./pages/admin/Scheduler";
+import AdminCalendar from "./pages/admin/Calendar";
+import IncomeCalculator from "./pages/admin/IncomeCalculator";
 
 const AppRoutes = () => (
   <Routes>
@@ -41,7 +45,7 @@ const AppRoutes = () => (
     <Route
       path="/"
       element={
-        <AppLayout showHeader={false} showFooter={true}>
+        <AppLayout showHeader={true} showFooter={true}>
           <Index />
         </AppLayout>
       }
@@ -76,6 +80,32 @@ const AppRoutes = () => (
         <ClientLayout>
           <ClientProfile />
         </ClientLayout>
+      }
+    />
+    <Route
+      path="/portal/documents"
+      element={
+        <ClientLayout>
+          <ClientDocuments />
+        </ClientLayout>
+      }
+    />
+    <Route
+      path="/portal/calculator"
+      element={
+        <ClientLayout>
+          <ClientCalculator />
+        </ClientLayout>
+      }
+    />
+    <Route
+      path="/calculator"
+      element={
+        <AppLayout showHeader={true} showFooter={true}>
+          <div className="container max-w-7xl mx-auto px-4 py-10">
+            <ClientCalculator />
+          </div>
+        </AppLayout>
       }
     />
     <Route
@@ -135,6 +165,7 @@ const AppRoutes = () => (
         </AppLayout>
       }
     />
+    {/* Broker share link – unique link per broker, pre-loads broker profile */}
     <Route
       path="/apply/:brokerToken"
       element={
@@ -177,14 +208,14 @@ const AppRoutes = () => (
         </AdminLayout>
       }
     />
-    <Route
+    {/* <Route
       path="/admin/marketing"
       element={
         <AdminLayout>
           <Marketing />
         </AdminLayout>
       }
-    />
+    /> */}
     <Route
       path="/admin/documents"
       element={
@@ -217,19 +248,35 @@ const AppRoutes = () => (
         </AdminLayout>
       }
     />
-    <Route
+    {/* <Route
       path="/admin/compliance"
       element={
         <AdminLayout>
           <Compliance />
         </AdminLayout>
       }
-    />
-    <Route
+    /> */}
+    {/* <Route
       path="/admin/notifications"
       element={
         <AdminLayout>
           <Notifications />
+        </AdminLayout>
+      }
+    /> */}
+    <Route
+      path="/admin/reminder-flows"
+      element={
+        <AdminLayout>
+          <ReminderFlows />
+        </AdminLayout>
+      }
+    />
+    <Route
+      path="/admin/contact-submissions"
+      element={
+        <AdminLayout>
+          <ContactSubmissions />
         </AdminLayout>
       }
     />
@@ -253,49 +300,45 @@ const AppRoutes = () => (
       path="/admin/profile"
       element={
         <AdminLayout>
-          <Profile />
-        </AdminLayout>
-      }
-    />
-    <Route
-      path="/admin/reminder-flows"
-      element={
-        <AdminLayout>
-          <ReminderFlows />
-        </AdminLayout>
-      }
-    />
-    <Route
-      path="/admin/broker/:brokerId"
-      element={
-        <AdminLayout>
           <BrokerProfile />
         </AdminLayout>
       }
     />
+
+    {/* Admin Scheduler (legacy path kept for backward compat) */}
     <Route
-      path="/admin/contact-submissions"
+      path="/admin/scheduler"
       element={
         <AdminLayout>
-          <ContactSubmissions />
+          <AdminCalendar />
         </AdminLayout>
       }
     />
+    {/* Admin Calendar */}
     <Route
-      path="/client/calculator"
+      path="/admin/calendar"
       element={
-        <ClientLayout>
-          <ClientCalculator />
-        </ClientLayout>
+        <AdminLayout>
+          <AdminCalendar />
+        </AdminLayout>
       }
     />
+
     <Route
-      path="/client/documents"
+      path="/admin/income-calculator"
       element={
-        <ClientLayout>
-          <ClientDocuments />
-        </ClientLayout>
+        <AdminLayout>
+          <IncomeCalculator />
+        </AdminLayout>
       }
+    />
+
+    {/* Public Scheduler */}
+    <Route path="/scheduler" element={<SchedulerPage />} />
+    <Route path="/scheduler/:token" element={<SchedulerPage />} />
+    <Route
+      path="/scheduler/reschedule/:bookingToken"
+      element={<SchedulerReschedule />}
     />
 
     {/* Catch-all 404 */}

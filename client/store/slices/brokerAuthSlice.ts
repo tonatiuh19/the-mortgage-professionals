@@ -3,10 +3,10 @@ import axios from "axios";
 import { logger } from "@/lib/logger";
 import { uploadAvatarToCDN } from "@/lib/cdn-upload";
 import type {
+  AdminInitResponse,
   GetBrokerProfileResponse,
   UpdateBrokerProfileRequest,
   UpdateBrokerProfileResponse,
-  AdminInitResponse,
 } from "@shared/api";
 
 interface BrokerUser {
@@ -22,6 +22,8 @@ interface BrokerUser {
   specializations?: string[];
   email_verified: boolean;
   last_login?: string;
+  public_token?: string | null;
+  timezone?: string;
   // profile fields
   avatar_url?: string | null;
   bio?: string | null;
@@ -70,9 +72,18 @@ const initialState: BrokerAuthState = {
 // Async thunks
 export const sendVerificationCode = createAsyncThunk(
   "brokerAuth/sendCode",
-  async (email: string, { rejectWithValue }) => {
+  async (
+    {
+      email,
+      delivery_method = "email",
+    }: { email: string; delivery_method?: "email" | "sms" | "call" | "call" },
+    { rejectWithValue },
+  ) => {
     try {
-      const response = await axios.post("/api/admin/auth/send-code", { email });
+      const response = await axios.post("/api/admin/auth/send-code", {
+        email,
+        delivery_method,
+      });
       return response.data;
     } catch (error: any) {
       return rejectWithValue(
@@ -151,6 +162,7 @@ export const logout = createAsyncThunk(
   },
 );
 
+/** Single bootstrap call — replaces validateSession + fetchBrokerProfile + fetchAdminSectionControls */
 export const initAdminSession = createAsyncThunk(
   "brokerAuth/init",
   async (_, { rejectWithValue, getState }) => {
@@ -320,6 +332,28 @@ const brokerAuthSlice = createSlice({
         localStorage.removeItem("broker_user");
       });
 
+    // Init admin session (merged bootstrap)
+    builder
+      .addCase(initAdminSession.pending, (state) => {
+        state.profileLoading = true;
+      })
+      .addCase(initAdminSession.fulfilled, (state, action) => {
+        state.profileLoading = false;
+        state.user = { ...state.user, ...action.payload.profile } as BrokerUser;
+        state.isAuthenticated = true;
+        state.error = null;
+        localStorage.setItem("broker_user", JSON.stringify(state.user));
+      })
+      .addCase(initAdminSession.rejected, (state, action) => {
+        state.profileLoading = false;
+        // session invalid — clear everything
+        state.user = null;
+        state.sessionToken = null;
+        state.isAuthenticated = false;
+        localStorage.removeItem("broker_session");
+        localStorage.removeItem("broker_user");
+      });
+
     // Logout
     builder.addCase(logout.fulfilled, (state) => {
       state.user = null;
@@ -330,7 +364,7 @@ const brokerAuthSlice = createSlice({
       localStorage.removeItem("broker_user");
     });
 
-    // Fetch profile
+    // Fetch broker profile
     builder
       .addCase(fetchBrokerProfile.pending, (state) => {
         state.profileLoading = true;
@@ -346,7 +380,7 @@ const brokerAuthSlice = createSlice({
         state.profileError = action.payload as string;
       });
 
-    // Update profile
+    // Update broker profile
     builder
       .addCase(updateBrokerProfile.pending, (state) => {
         state.profileSaving = true;
@@ -362,7 +396,7 @@ const brokerAuthSlice = createSlice({
         state.profileError = action.payload as string;
       });
 
-    // Upload avatar
+    // Upload broker avatar
     builder
       .addCase(uploadBrokerAvatar.pending, (state) => {
         state.avatarUploading = true;

@@ -158,6 +158,28 @@ export const fetchLoanDetails = createAsyncThunk(
   },
 );
 
+export const updateLoanStatus = createAsyncThunk(
+  "pipeline/updateLoanStatus",
+  async (
+    { loanId, status }: { loanId: number; status: string },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      await axios.patch(
+        `/api/loans/${loanId}/status`,
+        { status },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return { loanId, status };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to update loan status",
+      );
+    }
+  },
+);
+
 const pipelineSlice = createSlice({
   name: "pipeline",
   initialState,
@@ -181,6 +203,14 @@ const pipelineSlice = createSlice({
     },
     clearSelectedLoan: (state) => {
       state.selectedLoan = null;
+    },
+    // Optimistic local status update for drag-and-drop
+    updateLoanStatusLocal: (
+      state,
+      action: PayloadAction<{ loanId: number; status: string }>,
+    ) => {
+      const loan = state.loans.find((l) => l.id === action.payload.loanId);
+      if (loan) loan.status = action.payload.status;
     },
   },
   extraReducers: (builder) => {
@@ -232,5 +262,6 @@ export const {
   saveLoanDraft,
   clearLoanDraft,
   clearSelectedLoan,
+  updateLoanStatusLocal,
 } = pipelineSlice.actions;
 export default pipelineSlice.reducer;

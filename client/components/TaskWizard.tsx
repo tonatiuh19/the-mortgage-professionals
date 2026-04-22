@@ -1458,14 +1458,15 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                                 90000 + (brokerUserId ?? Date.now() % 10000);
                               formData.append(
                                 "main_folder",
-                                "encore-sign-templates",
+                                "themortgageprofessionals-sign-templates",
                               );
                               formData.append("id", String(uploadId));
                               formData.append("pdfs[]", file);
                               logger.log(
                                 "📄 PDF upload: sending to uploadPDFs.php",
                                 {
-                                  main_folder: "encore-sign-templates",
+                                  main_folder:
+                                    "themortgageprofessionals-sign-templates",
                                   id: uploadId,
                                   file: file.name,
                                 },

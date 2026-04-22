@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import type { DeletionDetails } from "@/components/ui/deletion-modal";
+import { logger } from "@/lib/logger";
 
 interface UseDeletionModalOptions<T> {
   entityType: string;
@@ -55,7 +56,7 @@ export function useDeletionModal<T>({
       onSuccess?.(entityToDelete);
       closeModal();
     } catch (error: any) {
-      console.error(`Error deleting ${entityType}:`, error);
+      logger.error(`Error deleting ${entityType}:`, error);
 
       toast({
         title: `Cannot ${isDestructive ? "delete" : "deactivate"} ${entityType.toLowerCase()}`,

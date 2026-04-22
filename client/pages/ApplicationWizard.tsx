@@ -59,6 +59,7 @@ import {
   fetchBrokerPublicInfo,
   clearBrokerInfo,
   saveDraft,
+  saveDraftToServer,
   loadDraft,
   clearDraft,
 } from "@/store/slices/applicationWizardSlice";
@@ -205,15 +206,15 @@ const AvatarCircle = ({
   size?: "sm" | "lg";
   onClick?: () => void;
 }) => {
-  const dim = size === "lg" ? "h-[110px] w-[110px]" : "h-8 w-8";
-  const text = size === "lg" ? "text-3xl" : "text-xs";
+  const dim = size === "lg" ? "h-[106px] w-[106px]" : "h-8 w-8";
+  const text = size === "lg" ? "text-[2rem]" : "text-xs";
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
         dim,
-        "rounded-full overflow-hidden ring-4 ring-white border-[3px] border-primary shadow-lg transition-transform hover:scale-105 focus:outline-none shrink-0",
+        "rounded-[34px] overflow-hidden ring-4 ring-[#e8eff6] border-[2px] border-[#0A2F52] shadow-[0_12px_26px_-14px_rgba(10,47,82,0.55)] transition-transform hover:scale-[1.03] focus:outline-none shrink-0 bg-white",
         onClick ? "cursor-pointer" : "cursor-default",
       )}
     >
@@ -226,7 +227,7 @@ const AvatarCircle = ({
       ) : (
         <div
           className={cn(
-            "h-full w-full bg-primary flex items-center justify-center text-white font-bold",
+            "h-full w-full bg-gradient-to-br from-[#0A2F52] to-[#184f80] flex items-center justify-center text-white font-bold tracking-wide",
             text,
           )}
         >
@@ -282,6 +283,7 @@ const ApplicationWizard = () => {
     brokerInfoLoading,
     brokerInfoError,
     draft,
+    draftApplicationId,
   } = useAppSelector((s) => s.applicationWizard);
   const { toast } = useToast();
   const isDev = IS_DEV;
@@ -296,8 +298,11 @@ const ApplicationWizard = () => {
     if (draft) {
       formik.setValues(draft.values as typeof initialValues);
       setCurrentStep(draft.currentStep);
-      if (draft.currentStep > 1) setStep0Completed(true);
-      if (draft.values.email) setGuestEmail(draft.values.email);
+      if (draft.currentStep >= 1) setStep0Completed(true);
+      if (draft.values.email) {
+        setGuestEmail(draft.values.email);
+        setGuestEmailInput(draft.values.email);
+      }
     }
     // Only run once when draft first loads
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -426,7 +431,15 @@ const ApplicationWizard = () => {
         return;
       }
     }
-    setCurrentStep((prev) => Math.min(prev + 1, STEPS.length));
+    const nextStepNum = Math.min(currentStep + 1, STEPS.length);
+    setCurrentStep(nextStepNum);
+    dispatch(
+      saveDraftToServer({
+        values: formik.values,
+        currentStep: nextStepNum,
+        brokerToken: brokerToken || undefined,
+      }),
+    );
   };
 
   const prevStep = () => setCurrentStep((prev) => Math.max(prev - 1, 1));
@@ -488,7 +501,7 @@ const ApplicationWizard = () => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4 }}
-              className="w-full max-w-md"
+              className="w-full max-w-lg"
             >
               {(() => {
                 const isHomeTeam =
@@ -496,14 +509,15 @@ const ApplicationWizard = () => {
 
                 return (
                   <>
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-                      <div className="h-1 bg-primary" />
-                      <div className="p-9">
+                    <div className="bg-white/95 rounded-[28px] border border-[#d9e4ef] shadow-[0_18px_40px_-24px_rgba(10,47,82,0.45)] overflow-hidden backdrop-blur">
+                      <div className="h-1.5 bg-gradient-to-r from-[#0A2F52] via-[#1B4F7A] to-[#F9A826]" />
+                      <div className="px-8 py-9 sm:px-10">
                         {isHomeTeam ? (
                           /* ── My Home Team Layout ── */
                           <>
                             {/* Overlapping avatars */}
-                            <div className="flex justify-center mb-5">
+                            <div className="relative flex justify-center mb-7">
+                              <div className="absolute -top-3 h-24 w-56 rounded-full bg-gradient-to-r from-[#eaf2fa] via-[#fff8eb] to-[#eaf2fa] blur-sm" />
                               <div className="flex items-center">
                                 <div className="relative z-10">
                                   <AvatarCircle
@@ -513,7 +527,7 @@ const ApplicationWizard = () => {
                                     }
                                   />
                                 </div>
-                                <div className="-ml-7 relative z-0">
+                                <div className="-ml-4 relative z-0">
                                   <AvatarCircle
                                     person={brokerInfo.mortgage_banker!}
                                     onClick={() =>
@@ -528,10 +542,10 @@ const ApplicationWizard = () => {
 
                             {/* Title */}
                             <div className="text-center mb-5">
-                              <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">
+                              <h1 className="text-[2rem] leading-tight font-extrabold text-[#0A2F52] tracking-tight">
                                 My Home Team
                               </h1>
-                              <p className="text-sm text-gray-400 mt-1">
+                              <p className="text-[13px] uppercase tracking-[0.08em] text-slate-500 mt-1.5">
                                 Your dedicated home loan professionals
                               </p>
                             </div>
@@ -543,7 +557,7 @@ const ApplicationWizard = () => {
                                 onClick={() =>
                                   setContactModalPerson(brokerInfo)
                                 }
-                                className="text-base font-semibold text-primary hover:underline underline-offset-2 transition-colors"
+                                className="text-base font-semibold text-[#0A2F52] hover:text-[#1B4F7A] hover:underline underline-offset-2 transition-colors"
                               >
                                 {brokerInfo.first_name} {brokerInfo.last_name}
                               </button>
@@ -557,14 +571,14 @@ const ApplicationWizard = () => {
                                     brokerInfo.mortgage_banker,
                                   )
                                 }
-                                className="text-base font-semibold text-primary hover:underline underline-offset-2 transition-colors"
+                                className="text-base font-semibold text-[#0A2F52] hover:text-[#1B4F7A] hover:underline underline-offset-2 transition-colors"
                               >
                                 {brokerInfo.mortgage_banker!.first_name}{" "}
                                 {brokerInfo.mortgage_banker!.last_name}
                               </button>
                             </div>
 
-                            <Separator className="mb-5" />
+                            <Separator className="mb-6 bg-[#d9e4ef]" />
                           </>
                         ) : (
                           /* ── Single Mortgage Banker Layout ── */
@@ -632,22 +646,22 @@ const ApplicationWizard = () => {
                               </p>
                             )}
 
-                            <Separator className="mb-5" />
+                            <Separator className="mb-6 bg-[#d9e4ef]" />
                           </>
                         )}
 
                         {/* Email form — shared by both layouts */}
-                        <div className="space-y-1">
-                          <h2 className="text-lg font-bold text-gray-900 mb-0.5">
+                        <div className="space-y-1.5">
+                          <h2 className="text-[1.75rem] leading-tight font-extrabold text-[#0A2F52] mb-0.5">
                             Ready to get started?
                           </h2>
-                          <p className="text-sm text-gray-500 mb-3">
+                          <p className="text-sm text-slate-600 mb-3">
                             Enter your email to begin your mortgage application.
                           </p>
                           <div className="space-y-1.5">
                             <label
                               htmlFor="guest-email"
-                              className="text-sm font-semibold text-gray-700"
+                              className="text-sm font-semibold text-slate-700"
                             >
                               Your Email Address
                             </label>
@@ -666,7 +680,7 @@ const ApplicationWizard = () => {
                                   e.key === "Enter" && handleStep0Continue()
                                 }
                                 className={cn(
-                                  "pl-10 h-11 text-sm",
+                                  "pl-10 h-11 text-sm rounded-xl border-slate-300 focus-visible:ring-[#0A2F52]",
                                   guestEmailError
                                     ? "border-red-400 focus-visible:ring-red-400"
                                     : "",
@@ -681,7 +695,7 @@ const ApplicationWizard = () => {
                             )}
                             <Button
                               onClick={handleStep0Continue}
-                              className="w-full h-11 mt-2 text-sm shadow-sm"
+                              className="w-full h-11 mt-2 text-sm shadow-md bg-[#0A2F52] hover:bg-[#123f69] text-white rounded-xl"
                             >
                               Start Application{" "}
                               <ArrowRight className="ml-2 h-4 w-4" />
@@ -692,7 +706,7 @@ const ApplicationWizard = () => {
                     </div>
 
                     {/* Trust badges */}
-                    <div className="flex justify-center gap-6 mt-5">
+                    <div className="flex justify-center gap-3 sm:gap-4 mt-5">
                       {[
                         {
                           icon: <LockIcon className="h-3.5 w-3.5" />,
@@ -709,7 +723,7 @@ const ApplicationWizard = () => {
                       ].map((b) => (
                         <div
                           key={b.label}
-                          className="flex flex-col items-center gap-1 text-gray-400"
+                          className="flex flex-col items-center gap-1 text-slate-500 bg-white/70 border border-[#d9e4ef] rounded-full px-3 py-2 min-w-[92px]"
                         >
                           {b.icon}
                           <span className="text-[10px]">{b.label}</span>
@@ -2135,11 +2149,10 @@ const ApplicationWizard = () => {
                             size="lg"
                             onClick={() => {
                               dispatch(
-                                saveDraft({
+                                saveDraftToServer({
                                   values: formik.values,
                                   currentStep,
                                   brokerToken: brokerToken || undefined,
-                                  savedAt: new Date().toISOString(),
                                 }),
                               );
                               toast({

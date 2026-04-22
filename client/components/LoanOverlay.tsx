@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Kanban,
   X,
@@ -20,6 +20,7 @@ import {
   ChevronUp,
   Check,
   RotateCcw,
+  RefreshCw,
   Download,
   Trash2,
   Plus,
@@ -27,7 +28,18 @@ import {
   Award,
   Shield,
   ArrowRightLeft,
+  Hash,
+  Percent,
+  Home,
+  Globe,
+  TrendingUp,
+  Briefcase,
+  Pencil,
+  Loader2,
+  ArrowRight,
+  Save,
 } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -91,6 +103,7 @@ import PDFSigningViewer from "@/components/PDFSigningViewer";
 import { PreApprovalLetterModal } from "@/components/PreApprovalLetterModal";
 import { fetchEmailTemplates } from "@/store/slices/communicationTemplatesSlice";
 import { fetchPreApprovalLetter } from "@/store/slices/preApprovalSlice";
+import { fetchAnnualMetrics } from "@/store/slices/dashboardSlice";
 import axios from "axios";
 import { toast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -118,6 +131,7 @@ export function LoanOverlay({
     (state) => state.communicationTemplates,
   );
 
+  const [isRefreshingTasks, setIsRefreshingTasks] = useState(false);
   const [taskDocuments, setTaskDocuments] = useState<
     Record<
       number,
@@ -177,9 +191,219 @@ export function LoanOverlay({
   const [isAssigningPartner, setIsAssigningPartner] = useState(false);
   const [isUpdatingPipelineStatus, setIsUpdatingPipelineStatus] =
     useState(false);
+  const [isUpdatingSource, setIsUpdatingSource] = useState(false);
   const [approvingTaskId, setApprovingTaskId] = useState<number | null>(null);
 
+  // ── Draft inline-edit state ──────────────────────────────────────────────
+  const [isDraftEditOpen, setIsDraftEditOpen] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [isPromotingToAppSent, setIsPromotingToAppSent] = useState(false);
+  const emptyDraftForm = useCallback(
+    () => ({
+      loan_type: selectedLoan?.loan_type ?? "",
+      loan_amount:
+        selectedLoan?.loan_amount != null
+          ? String(selectedLoan.loan_amount)
+          : "",
+      property_value:
+        selectedLoan?.property_value != null
+          ? String(selectedLoan.property_value)
+          : "",
+      down_payment:
+        selectedLoan?.down_payment != null
+          ? String(selectedLoan.down_payment)
+          : "",
+      property_address: selectedLoan?.property_address ?? "",
+      property_city: selectedLoan?.property_city ?? "",
+      property_state: selectedLoan?.property_state ?? "",
+      property_zip: selectedLoan?.property_zip ?? "",
+      property_type: selectedLoan?.property_type ?? "",
+      loan_term_months:
+        selectedLoan?.loan_term_months != null
+          ? String(selectedLoan.loan_term_months)
+          : "",
+      interest_rate:
+        selectedLoan?.interest_rate != null
+          ? String(selectedLoan.interest_rate)
+          : "",
+      citizenship_status: selectedLoan?.citizenship_status ?? "",
+      employment_status: selectedLoan?.employment_status ?? "",
+      employer_name: selectedLoan?.employer_name ?? "",
+      years_employed: selectedLoan?.years_employed ?? "",
+      loan_purpose: selectedLoan?.loan_purpose ?? "",
+      estimated_close_date: selectedLoan?.estimated_close_date
+        ? String(selectedLoan.estimated_close_date).slice(0, 10)
+        : "",
+      notes: selectedLoan?.notes ?? "",
+    }),
+    [selectedLoan],
+  );
+  const [draftForm, setDraftForm] = useState(emptyDraftForm);
+
+  // Reset draft form whenever the selected loan changes or overlay opens
+  useEffect(() => {
+    if (selectedLoan) {
+      setDraftForm(emptyDraftForm());
+      setIsDraftEditOpen(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLoan?.id]);
+
+  const handleDraftFieldChange = (field: string, value: string) => {
+    setDraftForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const saveDraftDetails = async () => {
+    if (!selectedLoan) return;
+    try {
+      setIsSavingDraft(true);
+      const payload: Record<string, any> = { ...draftForm };
+      // Convert numeric strings
+      [
+        "loan_amount",
+        "property_value",
+        "down_payment",
+        "interest_rate",
+      ].forEach((k) => {
+        if (payload[k] !== "") payload[k] = parseFloat(payload[k]) || 0;
+        else payload[k] = null;
+      });
+      ["loan_term_months"].forEach((k) => {
+        if (payload[k] !== "") payload[k] = parseInt(payload[k]) || null;
+        else payload[k] = null;
+      });
+      // Empty strings → null for optional selects
+      ["property_type", "citizenship_status", "employment_status"].forEach(
+        (k) => {
+          if (payload[k] === "") payload[k] = null;
+        },
+      );
+      await axios.patch(`/api/loans/${selectedLoan.id}/details`, payload, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      toast({ title: "Saved", description: "Loan details updated." });
+      await dispatch(fetchLoanDetails(selectedLoan.id));
+      setIsDraftEditOpen(false);
+    } catch (err) {
+      logger.error("saveDraftDetails error", err);
+      toast({
+        title: "Error",
+        description: "Failed to save details.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+
+  const saveAndPromoteToAppSent = async () => {
+    if (!selectedLoan) return;
+    try {
+      setIsPromotingToAppSent(true);
+      const payload: Record<string, any> = { ...draftForm };
+      [
+        "loan_amount",
+        "property_value",
+        "down_payment",
+        "interest_rate",
+      ].forEach((k) => {
+        if (payload[k] !== "") payload[k] = parseFloat(payload[k]) || 0;
+        else payload[k] = null;
+      });
+      ["loan_term_months"].forEach((k) => {
+        if (payload[k] !== "") payload[k] = parseInt(payload[k]) || null;
+        else payload[k] = null;
+      });
+      ["property_type", "citizenship_status", "employment_status"].forEach(
+        (k) => {
+          if (payload[k] === "") payload[k] = null;
+        },
+      );
+      await axios.patch(`/api/loans/${selectedLoan.id}/details`, payload, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      await axios.patch(
+        `/api/loans/${selectedLoan.id}/status`,
+        { status: "app_sent" },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      toast({ title: "Promoted!", description: "Loan moved to App Sent." });
+      await dispatch(fetchLoanDetails(selectedLoan.id));
+      setIsDraftEditOpen(false);
+    } catch (err) {
+      logger.error("saveAndPromoteToAppSent error", err);
+      toast({
+        title: "Error",
+        description: "Failed to promote loan.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsPromotingToAppSent(false);
+    }
+  };
+  // ── End draft inline-edit state ──────────────────────────────────────────
+
+  const LEAD_SOURCES: { value: string; label: string; code: string }[] = [
+    {
+      value: "current_client_referral",
+      label: "Current Client Referral",
+      code: "CCR",
+    },
+    { value: "past_client", label: "Past Client", code: "PC" },
+    {
+      value: "past_client_referral",
+      label: "Past Client Referral",
+      code: "PR",
+    },
+    { value: "personal_friend", label: "Personal Friend", code: "PF" },
+    { value: "realtor", label: "Realtor", code: "RLTR" },
+    { value: "advertisement", label: "Advertisement", code: "AD" },
+    { value: "business_partner", label: "Business Partner", code: "BUS" },
+    { value: "builder", label: "Builder", code: "BLDR" },
+    { value: "public_wizard", label: "Public Wizard", code: "PW" },
+    { value: "other", label: "Other", code: "—" },
+  ];
+
+  const handleUpdateSourceCategory = async (value: string) => {
+    if (!selectedLoan) return;
+    const newSource = value === "unset" ? null : value;
+    try {
+      setIsUpdatingSource(true);
+      await axios.patch(
+        `/api/loans/${selectedLoan.id}/source`,
+        { source_category: newSource },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      const label =
+        LEAD_SOURCES.find((s) => s.value === newSource)?.label ?? "Unknown";
+      toast({
+        title: "Lead Source Updated",
+        description: newSource
+          ? `Lead source set to "${label}".`
+          : "Lead source has been cleared.",
+      });
+      await dispatch(fetchLoanDetails(selectedLoan.id));
+      // Refresh annual metrics so the Lead Source Analysis dashboard reflects the change
+      dispatch(
+        fetchAnnualMetrics({
+          year: new Date().getFullYear(),
+          filterBrokerIds: [],
+        }),
+      );
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description:
+          error.response?.data?.error || "Failed to update lead source",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUpdatingSource(false);
+    }
+  };
+
   const PIPELINE_STATUSES = [
+    { value: "draft", label: "Draft" },
     { value: "app_sent", label: "App Sent" },
     { value: "application_received", label: "Application Received" },
     { value: "prequalified", label: "Prequalified" },
@@ -231,18 +455,18 @@ export function LoanOverlay({
         { headers: { Authorization: `Bearer ${sessionToken}` } },
       );
       toast({
-        title: "Broker Updated",
+        title: "Realtor Updated",
         description:
           brokerId === "unassigned"
-            ? "Broker has been unassigned from this loan."
-            : "Broker has been assigned successfully.",
+            ? "Realtor has been unassigned from this loan."
+            : "Realtor has been assigned successfully.",
       });
       await dispatch(fetchLoanDetails(selectedLoan.id));
     } catch (error: any) {
       toast({
         title: "Error",
         description:
-          error.response?.data?.error || "Failed to update broker assignment",
+          error.response?.data?.error || "Failed to update realtor assignment",
         variant: "destructive",
       });
     } finally {
@@ -282,8 +506,8 @@ export function LoanOverlay({
   // Fetch task templates, brokers, and pre-approval letter when component mounts
   useEffect(() => {
     if (isOpen) {
-      dispatch(fetchTasks());
-      dispatch(fetchBrokers());
+      dispatch(fetchTasks({}));
+      dispatch(fetchBrokers({}));
     }
   }, [dispatch, isOpen]);
 
@@ -855,6 +1079,10 @@ export function LoanOverlay({
               <SheetTitle className="text-xl sm:text-2xl font-bold text-gray-900 leading-tight">
                 {selectedLoan.client_first_name} {selectedLoan.client_last_name}
               </SheetTitle>
+              <p className="text-xs text-gray-400 font-mono tracking-widest mt-0.5 flex items-center gap-1">
+                <Hash className="h-3 w-3" />
+                {selectedLoan.application_number}
+              </p>
               <div className="flex items-center gap-2 mt-3 flex-wrap">
                 <Badge
                   className={cn(
@@ -1098,65 +1326,820 @@ export function LoanOverlay({
               {/* Loan Overview */}
               <Card className="border-gray-200 shadow-sm">
                 <CardHeader className="pb-3 border-b border-gray-100">
-                  <CardTitle className="text-lg flex items-center gap-2 text-gray-900">
-                    <DollarSign className="h-5 w-5 text-green-600" />
-                    Loan Overview
-                  </CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg flex items-center gap-2 text-gray-900">
+                      <DollarSign className="h-5 w-5 text-green-600" />
+                      Loan Overview
+                    </CardTitle>
+                    {selectedLoan.status === "draft" && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          if (!isDraftEditOpen) setDraftForm(emptyDraftForm());
+                          setIsDraftEditOpen(!isDraftEditOpen);
+                        }}
+                        className={cn(
+                          "gap-1.5 text-xs font-medium transition-all duration-200",
+                          isDraftEditOpen
+                            ? "text-slate-600 hover:bg-slate-100"
+                            : "text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700",
+                        )}
+                      >
+                        {isDraftEditOpen ? (
+                          <>
+                            <X className="h-3.5 w-3.5" />
+                            Cancel
+                          </>
+                        ) : (
+                          <>
+                            <Pencil className="h-3.5 w-3.5" />
+                            Edit Details
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  </div>
                 </CardHeader>
-                <CardContent className="pt-4 space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                      <p className="text-sm font-medium text-green-800 mb-1">
-                        Loan Amount
-                      </p>
-                      <p className="text-2xl font-bold text-green-900">
-                        {formatCurrency(selectedLoan.loan_amount)}
-                      </p>
+                <CardContent className="pt-4">
+                  {selectedLoan.status === "draft" && isDraftEditOpen && (
+                    /* ── Draft inline-edit form ────────────────────────── */
+                    <div className="space-y-6 py-1">
+                      {/* Financial */}
+                      <div>
+                        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                          <DollarSign className="h-3.5 w-3.5" />
+                          Financial
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Loan Amount
+                            </label>
+                            <div className="relative">
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">
+                                $
+                              </span>
+                              <Input
+                                className="pl-6 text-sm h-9"
+                                type="number"
+                                step="1000"
+                                min="0"
+                                placeholder="0"
+                                value={draftForm.loan_amount}
+                                onChange={(e) =>
+                                  handleDraftFieldChange(
+                                    "loan_amount",
+                                    e.target.value,
+                                  )
+                                }
+                              />
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Property Value
+                            </label>
+                            <div className="relative">
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">
+                                $
+                              </span>
+                              <Input
+                                className="pl-6 text-sm h-9"
+                                type="number"
+                                step="1000"
+                                min="0"
+                                placeholder="0"
+                                value={draftForm.property_value}
+                                onChange={(e) =>
+                                  handleDraftFieldChange(
+                                    "property_value",
+                                    e.target.value,
+                                  )
+                                }
+                              />
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Down Payment
+                            </label>
+                            <div className="relative">
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">
+                                $
+                              </span>
+                              <Input
+                                className="pl-6 text-sm h-9"
+                                type="number"
+                                step="1000"
+                                min="0"
+                                placeholder="0"
+                                value={draftForm.down_payment}
+                                onChange={(e) =>
+                                  handleDraftFieldChange(
+                                    "down_payment",
+                                    e.target.value,
+                                  )
+                                }
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Property */}
+                      <div>
+                        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                          <Home className="h-3.5 w-3.5" />
+                          Property
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Loan Type <span className="text-red-400">*</span>
+                            </label>
+                            <Select
+                              value={draftForm.loan_type}
+                              onValueChange={(v) =>
+                                handleDraftFieldChange("loan_type", v)
+                              }
+                            >
+                              <SelectTrigger className="text-sm h-9">
+                                <SelectValue placeholder="Select..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="purchase">
+                                  Purchase
+                                </SelectItem>
+                                <SelectItem value="refinance">
+                                  Refinance
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Property Type
+                            </label>
+                            <Select
+                              value={draftForm.property_type || "__none__"}
+                              onValueChange={(v) =>
+                                handleDraftFieldChange(
+                                  "property_type",
+                                  v === "__none__" ? "" : v,
+                                )
+                              }
+                            >
+                              <SelectTrigger className="text-sm h-9">
+                                <SelectValue placeholder="Select..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">
+                                  — None —
+                                </SelectItem>
+                                <SelectItem value="single_family">
+                                  Single Family
+                                </SelectItem>
+                                <SelectItem value="condo">Condo</SelectItem>
+                                <SelectItem value="multi_family">
+                                  Multi Family
+                                </SelectItem>
+                                <SelectItem value="commercial">
+                                  Commercial
+                                </SelectItem>
+                                <SelectItem value="land">Land</SelectItem>
+                                <SelectItem value="other">Other</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1 sm:col-span-2">
+                            <label className="text-xs font-medium text-gray-600">
+                              Street Address
+                            </label>
+                            <Input
+                              className="text-sm h-9"
+                              placeholder="123 Main St"
+                              value={draftForm.property_address}
+                              onChange={(e) =>
+                                handleDraftFieldChange(
+                                  "property_address",
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              City
+                            </label>
+                            <Input
+                              className="text-sm h-9"
+                              placeholder="Los Angeles"
+                              value={draftForm.property_city}
+                              onChange={(e) =>
+                                handleDraftFieldChange(
+                                  "property_city",
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <label className="text-xs font-medium text-gray-600">
+                                State
+                              </label>
+                              <Input
+                                className="text-sm h-9 uppercase"
+                                placeholder="CA"
+                                maxLength={2}
+                                value={draftForm.property_state}
+                                onChange={(e) =>
+                                  handleDraftFieldChange(
+                                    "property_state",
+                                    e.target.value.toUpperCase(),
+                                  )
+                                }
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-xs font-medium text-gray-600">
+                                ZIP
+                              </label>
+                              <Input
+                                className="text-sm h-9"
+                                placeholder="90210"
+                                maxLength={10}
+                                value={draftForm.property_zip}
+                                onChange={(e) =>
+                                  handleDraftFieldChange(
+                                    "property_zip",
+                                    e.target.value,
+                                  )
+                                }
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Loan Terms */}
+                      <div>
+                        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                          <Percent className="h-3.5 w-3.5" />
+                          Loan Terms
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Term
+                            </label>
+                            <Select
+                              value={draftForm.loan_term_months || "__none__"}
+                              onValueChange={(v) =>
+                                handleDraftFieldChange(
+                                  "loan_term_months",
+                                  v === "__none__" ? "" : v,
+                                )
+                              }
+                            >
+                              <SelectTrigger className="text-sm h-9">
+                                <SelectValue placeholder="Select..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">
+                                  — None —
+                                </SelectItem>
+                                <SelectItem value="120">10 years</SelectItem>
+                                <SelectItem value="180">15 years</SelectItem>
+                                <SelectItem value="240">20 years</SelectItem>
+                                <SelectItem value="360">30 years</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Interest Rate %
+                            </label>
+                            <Input
+                              className="text-sm h-9"
+                              type="number"
+                              step="0.001"
+                              min="0"
+                              max="30"
+                              placeholder="6.750"
+                              value={draftForm.interest_rate}
+                              onChange={(e) =>
+                                handleDraftFieldChange(
+                                  "interest_rate",
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Est. Close Date
+                            </label>
+                            <Input
+                              className="text-sm h-9"
+                              type="date"
+                              value={draftForm.estimated_close_date}
+                              onChange={(e) =>
+                                handleDraftFieldChange(
+                                  "estimated_close_date",
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Applicant */}
+                      <div>
+                        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                          <User className="h-3.5 w-3.5" />
+                          Applicant
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Citizenship Status
+                            </label>
+                            <Select
+                              value={draftForm.citizenship_status || "__none__"}
+                              onValueChange={(v) =>
+                                handleDraftFieldChange(
+                                  "citizenship_status",
+                                  v === "__none__" ? "" : v,
+                                )
+                              }
+                            >
+                              <SelectTrigger className="text-sm h-9">
+                                <SelectValue placeholder="Select..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">
+                                  — None —
+                                </SelectItem>
+                                <SelectItem value="us_citizen">
+                                  US Citizen
+                                </SelectItem>
+                                <SelectItem value="permanent_resident">
+                                  Permanent Resident
+                                </SelectItem>
+                                <SelectItem value="non_resident">
+                                  Non-Resident
+                                </SelectItem>
+                                <SelectItem value="other">Other</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Employment Status
+                            </label>
+                            <Select
+                              value={draftForm.employment_status || "__none__"}
+                              onValueChange={(v) =>
+                                handleDraftFieldChange(
+                                  "employment_status",
+                                  v === "__none__" ? "" : v,
+                                )
+                              }
+                            >
+                              <SelectTrigger className="text-sm h-9">
+                                <SelectValue placeholder="Select..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">
+                                  — None —
+                                </SelectItem>
+                                <SelectItem value="employed">
+                                  Employed
+                                </SelectItem>
+                                <SelectItem value="self_employed">
+                                  Self-Employed
+                                </SelectItem>
+                                <SelectItem value="unemployed">
+                                  Unemployed
+                                </SelectItem>
+                                <SelectItem value="retired">Retired</SelectItem>
+                                <SelectItem value="retired_with_pension">
+                                  Retired w/ Pension
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Employer / Business
+                            </label>
+                            <Input
+                              className="text-sm h-9"
+                              placeholder="Employer name"
+                              value={draftForm.employer_name}
+                              onChange={(e) =>
+                                handleDraftFieldChange(
+                                  "employer_name",
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Years Employed
+                            </label>
+                            <Input
+                              className="text-sm h-9"
+                              placeholder="e.g. 3"
+                              value={draftForm.years_employed}
+                              onChange={(e) =>
+                                handleDraftFieldChange(
+                                  "years_employed",
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Notes */}
+                      <div>
+                        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                          <FileText className="h-3.5 w-3.5" />
+                          Notes
+                        </h4>
+                        <div className="space-y-3">
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Loan Purpose
+                            </label>
+                            <Textarea
+                              className="text-sm resize-none"
+                              rows={2}
+                              placeholder="Describe the purpose of this loan..."
+                              value={draftForm.loan_purpose}
+                              onChange={(e) =>
+                                handleDraftFieldChange(
+                                  "loan_purpose",
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Internal Notes
+                            </label>
+                            <Textarea
+                              className="text-sm resize-none"
+                              rows={3}
+                              placeholder="Notes visible only to the team..."
+                              value={draftForm.notes}
+                              onChange={(e) =>
+                                handleDraftFieldChange("notes", e.target.value)
+                              }
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="pt-2 border-t border-slate-200 flex flex-col sm:flex-row gap-2">
+                        <Button
+                          variant="outline"
+                          className="flex-1 gap-1.5 text-sm"
+                          disabled={isSavingDraft || isPromotingToAppSent}
+                          onClick={saveDraftDetails}
+                        >
+                          {isSavingDraft ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Save className="h-3.5 w-3.5" />
+                          )}
+                          Save Draft
+                        </Button>
+                        <Button
+                          className="flex-1 gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white"
+                          disabled={
+                            isSavingDraft ||
+                            isPromotingToAppSent ||
+                            !draftForm.loan_type
+                          }
+                          onClick={saveAndPromoteToAppSent}
+                        >
+                          {isPromotingToAppSent ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <ArrowRight className="h-3.5 w-3.5" />
+                          )}
+                          Save & Move to App Sent
+                        </Button>
+                      </div>
                     </div>
-                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                      <p className="text-sm font-medium text-blue-800 mb-1">
-                        Property Value
-                      </p>
-                      <p className="text-2xl font-bold text-blue-900">
-                        {formatCurrency(selectedLoan.property_value)}
-                      </p>
+                  )}
+                  {/* ── Read-only view ── */}
+                  {!(selectedLoan.status === "draft" && isDraftEditOpen) && (
+                    <div className="space-y-5">
+                      {/* Metric boxes */}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                          <p className="text-xs font-medium text-green-700 mb-1">
+                            Loan Amount
+                          </p>
+                          <p className="text-xl font-bold text-green-900">
+                            {formatCurrency(selectedLoan.loan_amount)}
+                          </p>
+                        </div>
+                        {selectedLoan.property_value != null && (
+                          <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                            <p className="text-xs font-medium text-blue-700 mb-1">
+                              Property Value
+                            </p>
+                            <p className="text-xl font-bold text-blue-900">
+                              {formatCurrency(selectedLoan.property_value)}
+                            </p>
+                          </div>
+                        )}
+                        {selectedLoan.down_payment != null && (
+                          <div className="p-3 bg-violet-50 border border-violet-200 rounded-lg">
+                            <p className="text-xs font-medium text-violet-700 mb-1">
+                              Down Payment
+                            </p>
+                            <p className="text-xl font-bold text-violet-900">
+                              {formatCurrency(selectedLoan.down_payment)}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Quick-info badges */}
+                      <div className="flex flex-wrap gap-2">
+                        {selectedLoan.property_value &&
+                          selectedLoan.loan_amount && (
+                            <Badge className="bg-slate-100 text-slate-700 border-slate-200 text-xs px-2 py-1 font-semibold">
+                              <TrendingUp className="h-3 w-3 mr-1" />
+                              LTV{" "}
+                              {(
+                                (selectedLoan.loan_amount /
+                                  selectedLoan.property_value) *
+                                100
+                              ).toFixed(1)}
+                              %
+                            </Badge>
+                          )}
+                        <Badge className="bg-indigo-50 text-indigo-700 border-indigo-200 text-xs px-2 py-1 capitalize">
+                          {selectedLoan.loan_type?.replace(/_/g, " ")}
+                        </Badge>
+                        {selectedLoan.property_type && (
+                          <Badge className="bg-amber-50 text-amber-700 border-amber-200 text-xs px-2 py-1 capitalize">
+                            <Home className="h-3 w-3 mr-1" />
+                            {selectedLoan.property_type.replace(/_/g, " ")}
+                          </Badge>
+                        )}
+                        {selectedLoan.loan_term_months && (
+                          <Badge className="bg-teal-50 text-teal-700 border-teal-200 text-xs px-2 py-1">
+                            {selectedLoan.loan_term_months >= 12
+                              ? `${selectedLoan.loan_term_months / 12}yr`
+                              : `${selectedLoan.loan_term_months}mo`}{" "}
+                            term
+                          </Badge>
+                        )}
+                        {selectedLoan.interest_rate && (
+                          <Badge className="bg-rose-50 text-rose-700 border-rose-200 text-xs px-2 py-1">
+                            <Percent className="h-3 w-3 mr-1" />
+                            {selectedLoan.interest_rate}% rate
+                          </Badge>
+                        )}
+                        {selectedLoan.citizenship_status && (
+                          <Badge className="bg-sky-50 text-sky-700 border-sky-200 text-xs px-2 py-1 capitalize">
+                            <Globe className="h-3 w-3 mr-1" />
+                            {selectedLoan.citizenship_status.replace(/_/g, " ")}
+                          </Badge>
+                        )}
+                      </div>
+
+                      {/* Detail grid */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 pt-1">
+                        {/* Property Address */}
+                        <div className="flex items-start gap-2">
+                          <MapPin className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
+                          <div>
+                            <p className="text-xs font-medium text-gray-500 mb-0.5">
+                              Property Address
+                            </p>
+                            <p className="text-sm text-gray-800">
+                              {selectedLoan.property_address || "TBD"}
+                              {(selectedLoan.property_city ||
+                                selectedLoan.property_state) && (
+                                <>
+                                  <br />
+                                  {[
+                                    selectedLoan.property_city,
+                                    selectedLoan.property_state,
+                                    selectedLoan.property_zip,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(", ")}
+                                </>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Contact */}
+                        <div className="flex items-start gap-2">
+                          <User className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
+                          <div>
+                            <p className="text-xs font-medium text-gray-500 mb-0.5">
+                              Contact
+                            </p>
+                            <p className="text-sm text-gray-800">
+                              {selectedLoan.client_email}
+                              {selectedLoan.client_phone && (
+                                <>
+                                  <br />
+                                  <a
+                                    href={`tel:${selectedLoan.client_phone}`}
+                                    className="hover:underline"
+                                  >
+                                    {selectedLoan.client_phone}
+                                  </a>
+                                </>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Application Created */}
+                        <div className="flex items-start gap-2">
+                          <Calendar className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
+                          <div>
+                            <p className="text-xs font-medium text-gray-500 mb-0.5">
+                              Application Date
+                            </p>
+                            <p className="text-sm text-gray-800">
+                              {new Date(
+                                selectedLoan.created_at,
+                              ).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Submitted At */}
+                        {selectedLoan.submitted_at && (
+                          <div className="flex items-start gap-2">
+                            <CheckCircle2 className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
+                            <div>
+                              <p className="text-xs font-medium text-gray-500 mb-0.5">
+                                Submitted
+                              </p>
+                              <p className="text-sm text-gray-800">
+                                {new Date(
+                                  selectedLoan.submitted_at,
+                                ).toLocaleDateString("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                })}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Estimated Close */}
+                        {selectedLoan.estimated_close_date && (
+                          <div className="flex items-start gap-2">
+                            <Clock className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+                            <div>
+                              <p className="text-xs font-medium text-gray-500 mb-0.5">
+                                Est. Close Date
+                              </p>
+                              <p className="text-sm text-amber-700 font-medium">
+                                {new Date(
+                                  selectedLoan.estimated_close_date.slice(
+                                    0,
+                                    10,
+                                  ) + "T12:00:00",
+                                ).toLocaleDateString("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                })}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Actual Close */}
+                        {selectedLoan.actual_close_date && (
+                          <div className="flex items-start gap-2">
+                            <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                            <div>
+                              <p className="text-xs font-medium text-gray-500 mb-0.5">
+                                Actual Close Date
+                              </p>
+                              <p className="text-sm text-green-700 font-semibold">
+                                {new Date(
+                                  selectedLoan.actual_close_date.slice(0, 10) +
+                                    "T12:00:00",
+                                ).toLocaleDateString("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                })}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Updated At */}
+                        <div className="flex items-start gap-2">
+                          <RefreshCw className="h-4 w-4 text-gray-400 mt-0.5 shrink-0" />
+                          <div>
+                            <p className="text-xs font-medium text-gray-500 mb-0.5">
+                              Last Updated
+                            </p>
+                            <p className="text-sm text-gray-800">
+                              {new Date(
+                                selectedLoan.updated_at,
+                              ).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                                year: "numeric",
+                              })}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Loan Purpose */}
+                      {selectedLoan.loan_purpose && (
+                        <div className="pt-3 border-t border-gray-100">
+                          <p className="text-xs font-medium text-gray-500 mb-1.5 flex items-center gap-1">
+                            <FileText className="h-3.5 w-3.5" />
+                            Loan Purpose
+                          </p>
+                          <p className="text-sm text-gray-700 leading-relaxed">
+                            {selectedLoan.loan_purpose}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Employment */}
+                      {(selectedLoan.employment_status ||
+                        selectedLoan.employer_name ||
+                        selectedLoan.years_employed) && (
+                        <div className="pt-3 border-t border-gray-100">
+                          <p className="text-xs font-medium text-gray-500 mb-2 flex items-center gap-1">
+                            <Briefcase className="h-3.5 w-3.5" />
+                            Employment
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-2">
+                            {selectedLoan.employment_status && (
+                              <div>
+                                <p className="text-xs text-gray-400">Status</p>
+                                <p className="text-sm text-gray-800 capitalize">
+                                  {selectedLoan.employment_status.replace(
+                                    /_/g,
+                                    " ",
+                                  )}
+                                </p>
+                              </div>
+                            )}
+                            {selectedLoan.employer_name && (
+                              <div>
+                                <p className="text-xs text-gray-400">
+                                  Employer / Business
+                                </p>
+                                <p className="text-sm text-gray-800">
+                                  {selectedLoan.employer_name}
+                                </p>
+                              </div>
+                            )}
+                            {selectedLoan.years_employed && (
+                              <div>
+                                <p className="text-xs text-gray-400">
+                                  Years Employed
+                                </p>
+                                <p className="text-sm text-gray-800">
+                                  {selectedLoan.years_employed}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  <div className="space-y-3 pt-2">
-                    <div>
-                      <p className="text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
-                        <MapPin className="h-4 w-4 text-gray-500" />
-                        Property Address
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        {selectedLoan.property_address}
-                        <br />
-                        {selectedLoan.property_city},{" "}
-                        {selectedLoan.property_state}{" "}
-                        {selectedLoan.property_zip}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
-                        <User className="h-4 w-4 text-gray-500" />
-                        Contact Information
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        {selectedLoan.client_email}
-                        <br />
-                        {selectedLoan.client_phone}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
-                        <Calendar className="h-4 w-4 text-gray-500" />
-                        Application Date
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        {new Date(selectedLoan.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -1395,6 +2378,23 @@ export function LoanOverlay({
                       Tasks
                     </CardTitle>
                     <div className="flex items-center gap-2 flex-wrap">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={isRefreshingTasks}
+                        onClick={async () => {
+                          if (!selectedLoan) return;
+                          setIsRefreshingTasks(true);
+                          await dispatch(fetchLoanDetails(selectedLoan.id));
+                          setIsRefreshingTasks(false);
+                        }}
+                        className="h-8 w-8 p-0 text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition-colors duration-200"
+                        title="Refresh tasks"
+                      >
+                        <RefreshCw
+                          className={`h-4 w-4 ${isRefreshingTasks ? "animate-spin" : ""}`}
+                        />
+                      </Button>
                       <Button
                         variant="outline"
                         size="sm"
@@ -1925,21 +2925,22 @@ export function LoanOverlay({
                 </CardContent>
               </Card>
 
-              {/* Notes */}
-              {selectedLoan.notes && (
-                <Card className="border-gray-200 shadow-sm">
-                  <CardHeader className="pb-3 border-b border-gray-100">
-                    <CardTitle className="text-lg text-gray-900">
-                      Notes
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="pt-4">
-                    <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-                      {selectedLoan.notes}
-                    </p>
-                  </CardContent>
-                </Card>
-              )}
+              {/* Notes — skip the auto-generated wizard submission text */}
+              {selectedLoan.notes &&
+                !selectedLoan.notes.startsWith("Public wizard submission.") && (
+                  <Card className="border-gray-200 shadow-sm">
+                    <CardHeader className="pb-3 border-b border-gray-100">
+                      <CardTitle className="text-lg text-gray-900">
+                        Notes
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-4">
+                      <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                        {selectedLoan.notes}
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
             </div>
           </>
         ) : (
@@ -2196,6 +3197,10 @@ export function LoanOverlay({
           onClose={() => setPreApprovalLetterOpen(false)}
           loanId={selectedLoan.id}
           loanAmount={selectedLoan.loan_amount ?? 0}
+          loanPropertyAddress={selectedLoan.property_address}
+          loanPropertyCity={selectedLoan.property_city}
+          loanPropertyState={selectedLoan.property_state}
+          loanPropertyZip={selectedLoan.property_zip}
         />
       )}
 

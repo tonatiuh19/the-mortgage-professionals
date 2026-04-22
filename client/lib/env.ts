@@ -1,16 +1,14 @@
 const { hostname } = window.location;
 
 /**
- * True when running locally or on a Vercel/Netlify preview deployment.
+ * True when running locally or on a Vercel preview deployment.
  * False on the real production domain.
  */
 export const IS_DEV =
   hostname === "localhost" ||
   hostname === "127.0.0.1" ||
   (hostname.endsWith(".vercel.app") &&
-    hostname !== "the-mortgage-professionals.vercel.app") ||
-  (hostname.endsWith(".netlify.app") &&
-    hostname !== "the-mortgage-professionals.netlify.app");
+    hostname !== "the-mortgage-professionals.vercel.app");
 
 export const DOMAIN = IS_DEV
   ? `http://localhost:8080`

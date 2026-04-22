@@ -9,9 +9,12 @@ import {
   Mail,
   MessageSquare,
   AlertCircle,
+  Phone,
+  Tag,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { MetaHelmet } from "@/components/MetaHelmet";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { adminPageMeta } from "@/lib/seo-helpers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -234,6 +237,12 @@ const Settings = () => {
   const [enableEmail, setEnableEmail] = useState(true);
   const [enableSms, setEnableSms] = useState(false);
 
+  // Phone Configuration
+  const [otpFromNumber, setOtpFromNumber] = useState("");
+
+  // Release Version
+  const [appVersion, setAppVersion] = useState("");
+
   // Saved flash state
   const [savedSections, setSavedSections] = useState<Set<string>>(new Set());
 
@@ -246,6 +255,8 @@ const Settings = () => {
       );
       setEnableEmail(selectSettingValue(settings, "enable_email") !== "false");
       setEnableSms(selectSettingValue(settings, "enable_sms") === "true");
+      setOtpFromNumber(selectSettingValue(settings, "otp_from_number") ?? "");
+      setAppVersion(selectSettingValue(settings, "app_version") ?? "");
     }
   }, [settings]);
 
@@ -291,6 +302,8 @@ const Settings = () => {
     [dispatch, toast],
   );
 
+  const currentVersionLabel = appVersion.trim() || "Not set";
+
   return (
     <>
       <MetaHelmet
@@ -300,23 +313,25 @@ const Settings = () => {
         )}
       />
       <div className="p-4 sm:p-6 lg:p-8">
-        <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
-              <SettingsIcon className="h-7 w-7 text-primary" />
-              Settings
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Manage letter configuration, notifications, and system preferences
-            </p>
-          </div>
-          {!isAdmin && (
-            <Badge className="bg-amber-50 text-amber-700 border-amber-200 self-start md:self-auto">
-              <AlertCircle className="h-3 w-3 mr-1" />
-              View only — admin required to edit
-            </Badge>
-          )}
-        </header>
+        <PageHeader
+          icon={<SettingsIcon className="h-7 w-7 text-primary" />}
+          title="Settings"
+          description="Manage letter configuration, notifications, and system preferences"
+          actions={
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge className="border-sky-200 bg-sky-50 text-sky-700 self-start md:self-auto">
+                <Tag className="mr-1 h-3 w-3" />
+                Version {currentVersionLabel}
+              </Badge>
+              {!isAdmin ? (
+                <Badge className="bg-amber-50 text-amber-700 border-amber-200 self-start md:self-auto">
+                  <AlertCircle className="h-3 w-3 mr-1" />
+                  View only — admin required to edit
+                </Badge>
+              ) : null}
+            </div>
+          }
+        />
 
         <div className="max-w-3xl space-y-6">
           {isLoading ? (
@@ -414,6 +429,99 @@ const Settings = () => {
                         {
                           setting_key: "enable_sms",
                           setting_value: enableSms ? "true" : "false",
+                        },
+                      ])
+                    }
+                  />
+                </div>
+              </SettingsSection>
+
+              {/* Phone Configuration */}
+              <SettingsSection
+                index={2}
+                icon={Phone}
+                title="Phone Configuration"
+                description="Twilio numbers used for outbound SMS. Changes apply immediately."
+                accent="bg-emerald-50/60"
+              >
+                <div className="space-y-4">
+                  <SettingRow
+                    icon={Phone}
+                    label="OTP / Verification From Number"
+                    hint="Twilio number (E.164 format, e.g. +15623370000) used when sending login verification codes to brokers and clients via SMS."
+                    value={otpFromNumber}
+                    onChange={setOtpFromNumber}
+                    placeholder="+15623370000"
+                    disabled={!isAdmin}
+                  />
+
+                  <div className="flex items-start gap-3 p-4 rounded-xl border border-emerald-500/15 bg-emerald-50/40">
+                    <Phone className="h-4 w-4 text-emerald-600 mt-0.5 flex-shrink-0" />
+                    <p className="text-sm text-foreground/70 leading-relaxed">
+                      This number must belong to your Twilio account. It is used
+                      as the &ldquo;From&rdquo; address for all OTP verification
+                      messages. For conversation replies, each broker uses their
+                      assigned personal line or the shared inbox number.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-5 mt-5 border-t border-border/40">
+                  <SaveButton
+                    isSaving={isSaving}
+                    saved={savedSections.has("phone")}
+                    disabled={!isAdmin}
+                    onClick={() =>
+                      handleSave("phone", [
+                        {
+                          setting_key: "otp_from_number",
+                          setting_value: otpFromNumber.trim(),
+                        },
+                      ])
+                    }
+                  />
+                </div>
+              </SettingsSection>
+
+              <SettingsSection
+                index={3}
+                icon={Tag}
+                title="Release Version"
+                description="Display the current production deploy version in the Settings header"
+                accent="bg-sky-50/70"
+              >
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-sky-200/70 bg-sky-50/60 px-4 py-3">
+                    <Badge className="border-sky-200 bg-white text-sky-700">
+                      <Tag className="mr-1 h-3 w-3" />
+                      Current version
+                    </Badge>
+                    <span className="text-sm font-medium text-foreground">
+                      {currentVersionLabel}
+                    </span>
+                  </div>
+
+                  <SettingRow
+                    icon={Tag}
+                    label="Deploy Version"
+                    hint="Enter the release label you want shown in the Settings header after each production deploy. Examples: v1.4.2, 2026.04.20.1, prod-2026-04-20."
+                    value={appVersion}
+                    onChange={setAppVersion}
+                    placeholder="v1.0.0"
+                    disabled={!isAdmin}
+                  />
+                </div>
+
+                <div className="flex justify-end pt-5 mt-5 border-t border-border/40">
+                  <SaveButton
+                    isSaving={isSaving}
+                    saved={savedSections.has("version")}
+                    disabled={!isAdmin}
+                    onClick={() =>
+                      handleSave("version", [
+                        {
+                          setting_key: "app_version",
+                          setting_value: appVersion.trim(),
                         },
                       ])
                     }

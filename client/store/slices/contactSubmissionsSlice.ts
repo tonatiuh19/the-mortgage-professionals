@@ -1,29 +1,43 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
 import type { RootState } from "../index";
-import type { ContactSubmission } from "@shared/api";
+import type { ContactSubmission, PaginationInfo } from "@shared/api";
+
+interface FetchContactParams {
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: "ASC" | "DESC";
+  search?: string;
+}
 
 interface ContactSubmissionsState {
   submissions: ContactSubmission[];
+  pagination: PaginationInfo | null;
   isLoading: boolean;
   error: string | null;
 }
 
 const initialState: ContactSubmissionsState = {
   submissions: [],
+  pagination: null,
   isLoading: false,
   error: null,
 };
 
 export const fetchContactSubmissions = createAsyncThunk(
   "contactSubmissions/fetchAll",
-  async (_, { getState, rejectWithValue }) => {
+  async (params: FetchContactParams = {}, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
       const { data } = await axios.get("/api/contact", {
         headers: { Authorization: `Bearer ${sessionToken}` },
+        params,
       });
-      return data.submissions as ContactSubmission[];
+      return {
+        submissions: data.submissions as ContactSubmission[],
+        pagination: data.pagination as PaginationInfo,
+      };
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.error || "Failed to fetch contact submissions",
@@ -48,7 +62,8 @@ const contactSubmissionsSlice = createSlice({
       })
       .addCase(fetchContactSubmissions.fulfilled, (state, action) => {
         state.isLoading = false;
-        state.submissions = action.payload;
+        state.submissions = action.payload.submissions;
+        state.pagination = action.payload.pagination;
       })
       .addCase(fetchContactSubmissions.rejected, (state, action) => {
         state.isLoading = false;

@@ -18,6 +18,7 @@ import { initAdminSession } from "./brokerAuthSlice";
 interface AdminSectionControlsState {
   controls: AdminSectionControl[];
   isLoading: boolean;
+  isInitialized: boolean;
   isSaving: boolean;
   error: string | null;
 }
@@ -25,6 +26,7 @@ interface AdminSectionControlsState {
 const initialState: AdminSectionControlsState = {
   controls: [],
   isLoading: false,
+  isInitialized: false,
   isSaving: false,
   error: null,
 };
@@ -114,8 +116,17 @@ const adminSectionControlsSlice = createSlice({
         state.error = action.payload as string;
       })
       // initAdminSession — cross-slice: populate controls from merged bootstrap
+      .addCase(initAdminSession.pending, (state) => {
+        state.isLoading = true;
+      })
       .addCase(initAdminSession.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.isInitialized = true;
         state.controls = action.payload.controls;
+      })
+      .addCase(initAdminSession.rejected, (state) => {
+        state.isLoading = false;
+        state.isInitialized = true;
       });
   },
 });

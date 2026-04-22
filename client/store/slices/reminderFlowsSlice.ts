@@ -12,12 +12,14 @@ import type {
   GetReminderFlowExecutionsResponse,
   DeleteReminderFlowResponse,
   MarkFlowExecutionRespondedResponse,
+  PaginationInfo,
 } from "@shared/api";
 
 interface ReminderFlowsState {
   flows: ReminderFlow[];
   selectedFlow: ReminderFlow | null;
   executions: ReminderFlowExecution[];
+  pagination: PaginationInfo | null;
   isLoading: boolean;
   isLoadingFlow: boolean;
   isSaving: boolean;
@@ -28,19 +30,38 @@ const initialState: ReminderFlowsState = {
   flows: [],
   selectedFlow: null,
   executions: [],
+  pagination: null,
   isLoading: false,
   isLoadingFlow: false,
   isSaving: false,
   error: null,
 };
 
+interface FetchReminderFlowExecutionsParams {
+  status?: string;
+  flow_id?: number;
+  flow_category?: "loan" | "realtor_prospecting";
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: "ASC" | "DESC";
+}
+
+// ---------------------------------------------------------------
+// Thunks
+// ---------------------------------------------------------------
+
 export const fetchReminderFlows = createAsyncThunk(
   "reminderFlows/fetchAll",
-  async (_, { getState, rejectWithValue }) => {
+  async (
+    flow_category?: "loan" | "realtor_prospecting",
+    { getState, rejectWithValue }: any = {},
+  ) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
+      const params = flow_category ? `?flow_category=${flow_category}` : "";
       const { data } = await axios.get<GetReminderFlowsResponse>(
-        "/api/reminder-flows",
+        `/api/reminder-flows${params}`,
         { headers: { Authorization: `Bearer ${sessionToken}` } },
       );
       return data.flows;
@@ -79,6 +100,7 @@ export const createReminderFlow = createAsyncThunk(
       trigger_event: string;
       trigger_delay_days?: number;
       loan_type_filter?: "all" | "purchase" | "refinance";
+      flow_category?: "loan" | "realtor_prospecting";
     },
     { getState, rejectWithValue },
   ) => {
@@ -160,19 +182,18 @@ export const toggleReminderFlow = createAsyncThunk(
 export const fetchReminderFlowExecutions = createAsyncThunk(
   "reminderFlows/fetchExecutions",
   async (
-    params: { status?: string; flow_id?: number } = {},
+    params: FetchReminderFlowExecutionsParams = {},
     { getState, rejectWithValue },
   ) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
-      const { data } = await axios.get<GetReminderFlowExecutionsResponse>(
-        "/api/reminder-flow-executions",
-        {
-          headers: { Authorization: `Bearer ${sessionToken}` },
-          params,
-        },
-      );
-      return data.executions;
+      const { data } = await axios.get<
+        GetReminderFlowExecutionsResponse & { pagination: PaginationInfo }
+      >("/api/reminder-flow-executions", {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+        params,
+      });
+      return { executions: data.executions, pagination: data.pagination };
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.error || "Failed to fetch flow executions",
@@ -200,6 +221,10 @@ export const markFlowExecutionResponded = createAsyncThunk(
   },
 );
 
+// ---------------------------------------------------------------
+// Slice
+// ---------------------------------------------------------------
+
 const reminderFlowsSlice = createSlice({
   name: "reminderFlows",
   initialState,
@@ -212,6 +237,7 @@ const reminderFlowsSlice = createSlice({
     },
   },
   extraReducers: (builder) => {
+    // Fetch all flows
     builder
       .addCase(fetchReminderFlows.pending, (state) => {
         state.isLoading = true;
@@ -226,6 +252,7 @@ const reminderFlowsSlice = createSlice({
         state.error = action.payload as string;
       });
 
+    // Fetch single flow
     builder
       .addCase(fetchReminderFlow.pending, (state) => {
         state.isLoadingFlow = true;
@@ -240,6 +267,7 @@ const reminderFlowsSlice = createSlice({
         state.error = action.payload as string;
       });
 
+    // Create flow
     builder.addCase(createReminderFlow.pending, (state) => {
       state.isSaving = true;
     });
@@ -251,6 +279,7 @@ const reminderFlowsSlice = createSlice({
       state.error = action.payload as string;
     });
 
+    // Save flow
     builder
       .addCase(saveReminderFlow.pending, (state) => {
         state.isSaving = true;
@@ -263,6 +292,7 @@ const reminderFlowsSlice = createSlice({
         state.error = action.payload as string;
       });
 
+    // Delete flow
     builder.addCase(deleteReminderFlow.fulfilled, (state, action) => {
       state.flows = state.flows.filter((f) => f.id !== action.payload);
       if (state.selectedFlow?.id === action.payload) {
@@ -270,6 +300,7 @@ const reminderFlowsSlice = createSlice({
       }
     });
 
+    // Toggle flow
     builder.addCase(toggleReminderFlow.fulfilled, (state, action) => {
       const flow = state.flows.find((f) => f.id === action.payload.flowId);
       if (flow) flow.is_active = action.payload.is_active;
@@ -278,19 +309,22 @@ const reminderFlowsSlice = createSlice({
       }
     });
 
+    // Fetch executions
     builder
       .addCase(fetchReminderFlowExecutions.pending, (state) => {
         state.isLoading = true;
       })
       .addCase(fetchReminderFlowExecutions.fulfilled, (state, action) => {
         state.isLoading = false;
-        state.executions = action.payload;
+        state.executions = action.payload.executions;
+        state.pagination = action.payload.pagination;
       })
       .addCase(fetchReminderFlowExecutions.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.payload as string;
       });
 
+    // Mark execution as responded
     builder.addCase(markFlowExecutionResponded.fulfilled, (state, action) => {
       const exec = state.executions.find(
         (e) => e.id === action.payload.executionId,

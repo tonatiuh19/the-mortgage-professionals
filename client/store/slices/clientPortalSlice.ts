@@ -13,82 +13,9 @@ import type {
   ClientTask,
   ClientProfile,
   TaskSignDocument,
+  SignatureZone,
 } from "@shared/api";
-
-// We declare submitTaskSignatures below (after slice definition import area)
-export const submitTaskSignatures = createAsyncThunk(
-  "clientPortal/submitSignatures",
-  async (
-    {
-      taskId,
-      signatures,
-    }: {
-      taskId: number;
-      signatures: Array<{ zone_id: string; signature_data: string }>;
-    },
-    { getState, rejectWithValue },
-  ) => {
-    try {
-      const state = getState() as RootState;
-      const token = state.clientAuth.sessionToken;
-      const response = await axios.post(
-        `/api/client/tasks/${taskId}/signatures`,
-        { signatures },
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-      return { taskId, ...response.data };
-    } catch (error: any) {
-      return rejectWithValue(
-        error.response?.data?.error || "Failed to submit signatures",
-      );
-    }
-  },
-);
-
-export interface TaskDetails {
-  id: number;
-  title: string;
-  description: string;
-  priority: string;
-  due_date: string | null;
-  application_id: number;
-  application_number: string;
-  loan_type: string;
-  property_address: string;
-  property_city?: string;
-  property_state?: string;
-  property_zip?: string;
-  loan_amount: number;
-  formFields: Array<{
-    id: number;
-    field_type: string;
-    field_label: string;
-    field_description?: string;
-    placeholder?: string;
-    required: boolean;
-    options?: string;
-  }>;
-  requiredDocuments: Array<{
-    id: number;
-    document_type: string;
-    description?: string;
-    is_uploaded: boolean;
-  }>;
-  task_type?: string;
-  sign_document?: TaskSignDocument | null;
-  existing_signatures?: Array<{
-    zone_id: string;
-    signature_data: string;
-    signed_at: string;
-  }>;
-}
-
-export interface TaskFormDraft {
-  taskId: number;
-  formData: Record<string, any>;
-  currentStep: "form" | "documents" | "complete";
-  timestamp: number;
-}
+import { logger } from "@/lib/logger";
 
 export interface ClientDocument {
   id: number;
@@ -111,18 +38,87 @@ export interface ClientDocument {
   property_state?: string;
 }
 
+export interface ClientMeeting {
+  id: number;
+  meeting_date: string; // "YYYY-MM-DD"
+  meeting_time: string; // "HH:MM:SS"
+  meeting_end_time: string;
+  meeting_type: "phone" | "video";
+  status: string;
+  zoom_join_url: string | null;
+  notes: string | null;
+  booking_token: string;
+  cancelled_reason: string | null;
+  broker_name: string;
+  broker_phone: string | null;
+}
+
+export interface TaskDetails {
+  id: number;
+  title: string;
+  description: string;
+  priority: string;
+  due_date: string | null;
+  application_id: number;
+  application_number: string;
+  loan_type: string;
+  property_address: string;
+  property_city?: string;
+  property_state?: string;
+  property_zip?: string;
+  loan_amount: number;
+  formFields: Array<{
+    id: number;
+    field_name: string;
+    field_type: string;
+    field_label: string;
+    /** Actual DB column: help_text */
+    help_text?: string;
+    placeholder?: string;
+    /** Actual DB column: is_required */
+    is_required: boolean;
+    /** Actual DB column: field_options (JSON or comma-separated) */
+    field_options?: any;
+    order_index?: number;
+  }>;
+  requiredDocuments: Array<{
+    id: number;
+    document_type: string;
+    description?: string;
+    field_type?: string;
+    is_required?: boolean;
+    is_uploaded: boolean;
+  }>;
+  task_type?: string;
+  sign_document?: TaskSignDocument | null;
+  existing_signatures?: Array<{
+    zone_id: string;
+    signature_data: string;
+    signed_at: string;
+  }>;
+}
+
+export interface TaskFormDraft {
+  taskId: number;
+  formData: Record<string, any>;
+  currentStep: "form" | "documents" | "complete";
+  timestamp: number;
+}
+
 interface ClientPortalState {
   applications: ClientApplication[];
   tasks: ClientTask[];
   profile: ClientProfile | null;
   taskDetails: TaskDetails | null;
-  taskFormDrafts: Record<number, TaskFormDraft>;
+  taskFormDrafts: Record<number, TaskFormDraft>; // Keyed by taskId
   clientDocuments: ClientDocument[];
+  meetings: ClientMeeting[];
   loading: boolean;
   tasksLoading: boolean;
   profileLoading: boolean;
   taskDetailsLoading: boolean;
   documentsLoading: boolean;
+  meetingsLoading: boolean;
   error: string | null;
 }
 
@@ -133,13 +129,41 @@ const initialState: ClientPortalState = {
   taskDetails: null,
   taskFormDrafts: {},
   clientDocuments: [],
+  meetings: [],
   loading: false,
   tasksLoading: false,
   profileLoading: false,
   taskDetailsLoading: false,
   documentsLoading: false,
+  meetingsLoading: false,
   error: null,
 };
+
+/**
+ * Fetch all documents uploaded by the client across all tasks
+ */
+export const fetchClientDocuments = createAsyncThunk(
+  "clientPortal/fetchDocuments",
+  async (_, { getState, rejectWithValue }) => {
+    try {
+      const state = getState() as RootState;
+      const token = state.clientAuth.sessionToken;
+
+      const response = await axios.get<{
+        success: boolean;
+        documents: ClientDocument[];
+      }>("/api/client/documents", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      return response.data.documents;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to fetch documents",
+      );
+    }
+  },
+);
 
 /**
  * Fetch client's loan applications
@@ -387,7 +411,7 @@ export const completeTask = createAsyncThunk(
 
       const response = await axios.patch(
         `/api/client/tasks/${taskId}`,
-        { status: "completed" },
+        { status: "pending_approval" },
         {
           headers: { Authorization: `Bearer ${token}` },
         },
@@ -419,32 +443,32 @@ export const fetchTaskDocuments = createAsyncThunk(
 
       // Transform database response to match expected format
       const documents = response.data.documents || [];
+      const BASE = "https://disruptinglabs.com/data/api";
+      const fullUrl = (p: string) =>
+        p ? (p.startsWith("http") ? p : `${BASE}${p}`) : "";
       const pdfs = documents.filter((doc: any) => doc.document_type === "pdf");
       const images = documents.filter(
         (doc: any) => doc.document_type === "image",
       );
 
-      const toCdnUrl = (p: string) =>
-        p?.startsWith("http") ? p : `https://disruptinglabs.com/data/api${p}`;
-
       return {
         taskId,
         pdfs: pdfs.map((doc: any) => ({
-          filename: doc.filename,
-          path: toCdnUrl(doc.file_path),
+          filename: doc.original_filename || doc.filename,
+          path: fullUrl(doc.file_path),
           size: doc.file_size,
           uploaded_at: doc.uploaded_at,
         })),
         images: {
           main: images[0]
             ? {
-                filename: images[0].filename,
-                path: toCdnUrl(images[0].file_path),
+                filename: images[0].original_filename || images[0].filename,
+                path: fullUrl(images[0].file_path),
               }
             : null,
           extra: images.slice(1).map((doc: any) => ({
-            filename: doc.filename,
-            path: toCdnUrl(doc.file_path),
+            filename: doc.original_filename || doc.filename,
+            path: fullUrl(doc.file_path),
           })),
         },
       };
@@ -473,21 +497,16 @@ export const saveTaskDocumentMetadata = createAsyncThunk(
       const state = getState() as RootState;
       const token = state.clientAuth.sessionToken;
 
-      // Store relative path in DB — strip CDN base if present
-      const toRelativePath = (p: string) =>
-        p?.startsWith("https://disruptinglabs.com/data/api")
-          ? p.replace("https://disruptinglabs.com/data/api", "")
-          : p;
-
       const uploadPromises = files.map((file) =>
         axios.post(
           `/api/client/tasks/${taskId}/documents`,
           {
             task_id: taskId,
+            field_id: file.fieldId || null,
             document_type: documentType,
             filename: file.filename,
             original_filename: file.original_name || file.filename,
-            file_path: toRelativePath(file.path),
+            file_path: file.path,
             file_size: file.size,
           },
           {
@@ -507,24 +526,77 @@ export const saveTaskDocumentMetadata = createAsyncThunk(
 );
 
 /**
- * Fetch all documents uploaded by the client across all tasks
+ * Fetch sign document for a client task (uses task instance → template)
  */
-export const fetchClientDocuments = createAsyncThunk(
-  "clientPortal/fetchDocuments",
+export const fetchClientSignDocument = createAsyncThunk(
+  "clientPortal/fetchSignDocument",
+  async (taskId: number, { getState, rejectWithValue }) => {
+    try {
+      const state = getState() as RootState;
+      const token = state.clientAuth.sessionToken;
+
+      const response = await axios.get(
+        `/api/client/tasks/${taskId}/sign-document`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      return response.data.sign_document as TaskSignDocument | null;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to fetch sign document",
+      );
+    }
+  },
+);
+
+/**
+ * Submit client signatures for a signing task
+ */
+export const submitTaskSignatures = createAsyncThunk(
+  "clientPortal/submitSignatures",
+  async (
+    {
+      taskId,
+      signatures,
+    }: {
+      taskId: number;
+      signatures: Array<{ zone_id: string; signature_data: string }>;
+    },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const state = getState() as RootState;
+      const token = state.clientAuth.sessionToken;
+
+      const response = await axios.post(
+        `/api/client/tasks/${taskId}/signatures`,
+        { signatures },
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      return { taskId, ...response.data };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to submit signatures",
+      );
+    }
+  },
+);
+
+export const fetchClientMeetings = createAsyncThunk(
+  "clientPortal/fetchMeetings",
   async (_, { getState, rejectWithValue }) => {
     try {
       const state = getState() as RootState;
       const token = state.clientAuth.sessionToken;
-      const response = await axios.get<{
+      const { data } = await axios.get<{
         success: boolean;
-        documents: ClientDocument[];
-      }>("/api/client/documents", {
+        meetings: ClientMeeting[];
+      }>("/api/client/meetings", {
         headers: { Authorization: `Bearer ${token}` },
       });
-      return response.data.documents;
+      return data.meetings;
     } catch (error: any) {
       return rejectWithValue(
-        error.response?.data?.error || "Failed to fetch documents",
+        error.response?.data?.error || "Failed to fetch meetings",
       );
     }
   },
@@ -587,7 +659,7 @@ const clientPortalSlice = createSlice({
         const { taskId, status } = action.payload;
         const task = state.tasks.find((t) => t.id === taskId);
         if (task) {
-          console.log(
+          logger.log(
             `✅ Task ${taskId} status updated: ${task.status} → ${status}`,
           );
           task.status = status;
@@ -649,12 +721,12 @@ const clientPortalSlice = createSlice({
     builder.addCase(completeTask.fulfilled, (state, action) => {
       const task = state.tasks.find((t) => t.id === action.payload.taskId);
       if (task) {
-        console.log(`🎉 Task ${action.payload.taskId} completed!`);
-        task.status = "completed";
+        logger.log(`🎉 Task ${action.payload.taskId} submitted for approval!`);
+        task.status = "pending_approval";
         task.completed_at = new Date().toISOString();
       }
       state.taskDetails = null;
-      // Clear draft when task is completed
+      // Clear draft when task is submitted
       delete state.taskFormDrafts[action.payload.taskId];
     });
 
@@ -677,9 +749,25 @@ const clientPortalSlice = createSlice({
     builder.addCase(submitTaskSignatures.fulfilled, (state, action) => {
       const task = state.tasks.find((t) => t.id === action.payload.taskId);
       if (task) {
-        task.status = "completed";
+        task.status = "pending_approval";
+        task.completed_at = new Date().toISOString();
       }
+      state.taskDetails = null;
+      delete state.taskFormDrafts[action.payload.taskId];
     });
+
+    // Fetch meetings
+    builder
+      .addCase(fetchClientMeetings.pending, (state) => {
+        state.meetingsLoading = true;
+      })
+      .addCase(fetchClientMeetings.fulfilled, (state, action) => {
+        state.meetingsLoading = false;
+        state.meetings = action.payload;
+      })
+      .addCase(fetchClientMeetings.rejected, (state) => {
+        state.meetingsLoading = false;
+      });
   },
 });
 
@@ -709,5 +797,9 @@ export const selectClientDocuments = (state: RootState) =>
   state.clientPortal.clientDocuments;
 export const selectDocumentsLoading = (state: RootState) =>
   state.clientPortal.documentsLoading;
+export const selectClientMeetings = (state: RootState) =>
+  state.clientPortal.meetings;
+export const selectMeetingsLoading = (state: RootState) =>
+  state.clientPortal.meetingsLoading;
 
 export default clientPortalSlice.reducer;

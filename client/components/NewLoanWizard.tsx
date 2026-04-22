@@ -214,11 +214,11 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
     if (open) {
       // Reset mode selection every time dialog opens
       setMode(null);
-      dispatch(fetchClients());
-      dispatch(fetchTasks());
+      dispatch(fetchClients({}));
+      dispatch(fetchTasks({}));
       // Fetch brokers if admin
       if (user && (user.role === "admin" || user.role === "superadmin")) {
-        dispatch(fetchBrokers());
+        dispatch(fetchBrokers({}));
       }
       // Set default broker assignment to current user
       if (user) {
@@ -1183,9 +1183,12 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
                         </div>
                         <div>
                           <p className="text-muted-foreground text-xs">Phone</p>
-                          <p className="font-medium">
+                          <a
+                            href={`tel:${formik.values.client_phone}`}
+                            className="font-medium hover:underline"
+                          >
                             {formik.values.client_phone}
-                          </p>
+                          </a>
                         </div>
                         <div>
                           <p className="text-muted-foreground text-xs">

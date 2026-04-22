@@ -27,6 +27,8 @@ import {
   X,
   MoveRight,
   Monitor,
+  Users,
+  ChevronDown,
 } from "lucide-react";
 import { FaSms } from "react-icons/fa";
 import {
@@ -51,7 +53,11 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { MetaHelmet } from "@/components/MetaHelmet";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { adminPageMeta } from "@/lib/seo-helpers";
+import { DataGrid } from "@/components/ui/data-grid";
+import type { DataGridColumn } from "@/components/ui/data-grid";
+import type { ReminderFlowExecution } from "@shared/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -97,6 +103,14 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
@@ -122,17 +136,42 @@ import type {
 // Constants & helpers
 // ─────────────────────────────────────────────────────────────────
 
-const TRIGGER_EVENT_OPTIONS: { value: ReminderTriggerEvent; label: string }[] =
-  [
-    { value: "application_created", label: "Application Created" },
-    { value: "task_pending", label: "Task Pending" },
-    { value: "task_in_progress", label: "Task In Progress" },
-    { value: "task_overdue", label: "Task Overdue" },
-    { value: "no_activity", label: "No Activity" },
-    { value: "loan_approved", label: "Loan Approved" },
-    { value: "loan_documents_pending", label: "Documents Pending" },
-    { value: "manual", label: "Manual Trigger" },
-  ];
+type FlowCategory = "loan" | "realtor_prospecting";
+
+const LOAN_TRIGGER_EVENT_OPTIONS: {
+  value: ReminderTriggerEvent;
+  label: string;
+}[] = [
+  { value: "application_received", label: "Application Received" },
+  { value: "task_pending", label: "Task Pending" },
+  { value: "task_in_progress", label: "Task In Progress" },
+  { value: "task_overdue", label: "Task Overdue" },
+  { value: "no_activity", label: "No Activity" },
+  { value: "approved_with_conditions", label: "Loan Approved" },
+  { value: "docs_out", label: "Documents Pending" },
+  { value: "manual", label: "Manual Trigger" },
+];
+
+const REALTOR_TRIGGER_EVENT_OPTIONS: {
+  value: ReminderTriggerEvent;
+  label: string;
+}[] = [
+  { value: "prospect_contact_attempted", label: "Contact Attempted" },
+  { value: "prospect_contacted", label: "Contacted" },
+  { value: "prospect_appt_set", label: "Appointment Set" },
+  { value: "prospect_waiting_for_1st_deal", label: "Waiting for 1st Deal" },
+  { value: "prospect_first_deal_funded", label: "First Deal Funded" },
+  { value: "prospect_second_deal_funded", label: "2nd Deal Funded" },
+  { value: "prospect_top_agent_whale", label: "Top Agent (Whale)" },
+  { value: "no_activity", label: "No Activity" },
+  { value: "manual", label: "Manual Trigger" },
+];
+
+// Combined for label lookup
+const TRIGGER_EVENT_OPTIONS = [
+  ...LOAN_TRIGGER_EVENT_OPTIONS,
+  ...REALTOR_TRIGGER_EVENT_OPTIONS,
+];
 
 const triggerLabel = (event: ReminderTriggerEvent) =>
   TRIGGER_EVENT_OPTIONS.find((o) => o.value === event)?.label ?? event;
@@ -1323,83 +1362,135 @@ function FlowCanvasInner({ flow, onBack, onSaved }: FlowCanvasProps) {
   return (
     <div className="flex flex-col h-full">
       {/* Canvas Toolbar */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b bg-background shrink-0 flex-wrap">
+      <div className="flex flex-col gap-2 px-3 md:px-4 py-3 border-b bg-background shrink-0">
         <Button
           variant="ghost"
           size="sm"
-          className="gap-1.5 h-8"
+          className="gap-1.5 h-8 w-fit"
           onClick={onBack}
         >
           <ArrowLeft className="h-4 w-4" />
           Flows
         </Button>
-        <div className="h-5 w-px bg-border" />
-        <div className="flex items-center gap-2 flex-1 min-w-0">
+
+        {/* Desktop editor controls */}
+        <div className="hidden md:flex items-center gap-3">
+          <div className="h-5 w-px bg-border" />
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <Input
+              value={flowName}
+              onChange={(e) => setFlowName(e.target.value)}
+              className="h-8 text-sm font-medium max-w-xs"
+            />
+            <Select
+              value={triggerEvent}
+              onValueChange={(v) => setTriggerEvent(v as ReminderTriggerEvent)}
+            >
+              <SelectTrigger className="h-8 text-sm w-52">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TRIGGER_EVENT_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center gap-1.5 text-sm">
+              <Label className="text-xs text-muted-foreground">
+                Start after
+              </Label>
+              <Input
+                type="number"
+                min={0}
+                value={triggerDelay}
+                onChange={(e) => setTriggerDelay(Number(e.target.value))}
+                className="h-8 text-sm w-16"
+              />
+              <span className="text-xs text-muted-foreground">days</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <Switch
+                checked={isActive}
+                onCheckedChange={setIsActive}
+                className="scale-90"
+              />
+              <Label className="text-xs">
+                {isActive ? "Active" : "Inactive"}
+              </Label>
+            </div>
+            <Button
+              size="sm"
+              className="gap-1.5 h-8"
+              onClick={handleSave}
+              disabled={isSaving}
+            >
+              <Save className="h-3.5 w-3.5" />
+              {isSaving ? "Saving…" : "Save Flow"}
+            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-primary"
+                  onClick={() => setShowHelp(true)}
+                >
+                  <HelpCircle className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>How to use the flow editor</TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+
+        {/* Mobile header controls (editor itself is desktop-only) */}
+        <div className="md:hidden space-y-2">
           <Input
             value={flowName}
             onChange={(e) => setFlowName(e.target.value)}
-            className="h-8 text-sm font-medium max-w-xs"
+            className="h-8 text-sm font-medium"
           />
-          <Select
-            value={triggerEvent}
-            onValueChange={(v) => setTriggerEvent(v as ReminderTriggerEvent)}
-          >
-            <SelectTrigger className="h-8 text-sm w-52">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {TRIGGER_EVENT_OPTIONS.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  {o.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <div className="flex items-center gap-1.5 text-sm">
-            <Label className="text-xs text-muted-foreground">Start after</Label>
-            <Input
-              type="number"
-              min={0}
-              value={triggerDelay}
-              onChange={(e) => setTriggerDelay(Number(e.target.value))}
-              className="h-8 text-sm w-16"
-            />
-            <span className="text-xs text-muted-foreground">days</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center justify-between rounded-md border px-2.5 py-2">
+            <div className="flex items-center gap-1.5">
+              <Label className="text-xs text-muted-foreground">Status</Label>
+              <Label className="text-xs font-medium">
+                {isActive ? "Active" : "Inactive"}
+              </Label>
+            </div>
             <Switch
               checked={isActive}
               onCheckedChange={setIsActive}
               className="scale-90"
             />
-            <Label className="text-xs">
-              {isActive ? "Active" : "Inactive"}
-            </Label>
           </div>
-          <Button
-            size="sm"
-            className="gap-1.5 h-8"
-            onClick={handleSave}
-            disabled={isSaving}
-          >
-            <Save className="h-3.5 w-3.5" />
-            {isSaving ? "Saving…" : "Save Flow"}
-          </Button>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-muted-foreground hover:text-primary"
-                onClick={() => setShowHelp(true)}
-              >
-                <HelpCircle className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>How to use the flow editor</TooltipContent>
-          </Tooltip>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              className="gap-1.5 h-8 flex-1"
+              onClick={handleSave}
+              disabled={isSaving}
+            >
+              <Save className="h-3.5 w-3.5" />
+              {isSaving ? "Saving…" : "Save"}
+            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-primary"
+                  onClick={() => setShowHelp(true)}
+                >
+                  <HelpCircle className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>How to use the flow editor</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
       </div>
 
@@ -1758,9 +1849,43 @@ function FlowCard({ flow, onEdit, onToggle, onDelete }: FlowCardProps) {
 const ReminderFlows = () => {
   const dispatch = useAppDispatch();
   const { toast } = useToast();
-  const { flows, selectedFlow, isLoading, executions } = useAppSelector(
-    (s) => s.reminderFlows,
+  const {
+    flows,
+    selectedFlow,
+    isLoading,
+    executions,
+    pagination: execPagination,
+  } = useAppSelector((s) => s.reminderFlows);
+
+  const [activeCategory, setActiveCategory] = useState<FlowCategory>("loan");
+
+  const [execSortBy, setExecSortBy] = useState("flow_name");
+  const [execSortDir, setExecSortDir] = useState<"ASC" | "DESC">("ASC");
+
+  const doFetchExec = useCallback(
+    (params: {
+      page?: number;
+      sortBy?: string;
+      sortOrder?: "ASC" | "DESC";
+      flow_category?: "loan" | "realtor_prospecting";
+    }) => {
+      dispatch(fetchReminderFlowExecutions({ limit: 30, ...params }));
+    },
+    [dispatch],
   );
+
+  const handleExecSort = (field: string) => {
+    const newDir =
+      execSortBy === field && execSortDir === "ASC" ? "DESC" : "ASC";
+    setExecSortBy(field);
+    setExecSortDir(newDir);
+    doFetchExec({
+      page: 1,
+      sortBy: field,
+      sortOrder: newDir,
+      flow_category: activeCategory,
+    });
+  };
 
   const [view, setView] = useState<"list" | "editor">("list");
   const [tab, setTab] = useState<"flows" | "executions">("flows");
@@ -1771,13 +1896,40 @@ const ReminderFlows = () => {
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newTrigger, setNewTrigger] = useState<ReminderTriggerEvent>(
-    "application_created",
+    "application_received",
   );
   const [newDelay, setNewDelay] = useState(0);
 
+  // Which trigger options to show in the create modal
+  const activeTriggerOptions =
+    activeCategory === "realtor_prospecting"
+      ? REALTOR_TRIGGER_EVENT_OPTIONS
+      : LOAN_TRIGGER_EVENT_OPTIONS;
+
+  const handleCategoryChange = (category: FlowCategory) => {
+    setActiveCategory(category);
+    // Reset trigger to first option for the new category
+    if (category === "realtor_prospecting") {
+      setNewTrigger("prospect_contact_attempted");
+    } else {
+      setNewTrigger("application_received");
+    }
+    dispatch(fetchReminderFlows(category));
+    doFetchExec({
+      page: 1,
+      sortBy: execSortBy,
+      sortOrder: execSortDir,
+      flow_category: category,
+    });
+  };
+
   useEffect(() => {
-    dispatch(fetchReminderFlows());
-    dispatch(fetchReminderFlowExecutions({}));
+    dispatch(fetchReminderFlows(activeCategory));
+    doFetchExec({
+      sortBy: execSortBy,
+      sortOrder: execSortDir,
+      flow_category: activeCategory,
+    });
   }, [dispatch]);
 
   const handleEditFlow = async (flowId: number) => {
@@ -1788,7 +1940,7 @@ const ReminderFlows = () => {
   const handleBackToList = () => {
     setView("list");
     dispatch(clearSelectedFlow());
-    dispatch(fetchReminderFlows());
+    dispatch(fetchReminderFlows(activeCategory));
   };
 
   const handleCreateFlow = async () => {
@@ -1799,6 +1951,7 @@ const ReminderFlows = () => {
         description: newDesc.trim() || undefined,
         trigger_event: newTrigger,
         trigger_delay_days: newDelay,
+        flow_category: activeCategory,
       }),
     );
 
@@ -1810,10 +1963,9 @@ const ReminderFlows = () => {
       setShowCreateModal(false);
       setNewName("");
       setNewDesc("");
-      setNewTrigger("application_created");
+      setNewTrigger("application_received");
       setNewDelay(0);
-      dispatch(fetchReminderFlows());
-      // Immediately open editor
+      dispatch(fetchReminderFlows(activeCategory));
       const flowId = (result.payload as any).flow_id;
       if (flowId) {
         await dispatch(fetchReminderFlow(flowId));
@@ -1859,6 +2011,77 @@ const ReminderFlows = () => {
     failed: "bg-red-100 text-red-700 border-red-300",
   };
 
+  const executionColumns: DataGridColumn<ReminderFlowExecution>[] = [
+    {
+      key: "flow_name",
+      label: "Flow",
+      sortable: true,
+      sticky: true,
+      className: "font-medium text-xs min-w-[140px]",
+      render: (ex) => (
+        <span className="font-medium text-xs">{ex.flow_name}</span>
+      ),
+    },
+    {
+      key: "client_name",
+      label: "Client",
+      sortable: true,
+      className: "text-xs",
+      render: (ex) => <span className="text-xs">{ex.client_name ?? "—"}</span>,
+    },
+    {
+      key: "application_number",
+      label: "Application",
+      sortable: true,
+      shrink: true,
+      className: "text-xs text-muted-foreground",
+      render: (ex) => (
+        <span className="text-xs text-muted-foreground">
+          {ex.application_number ?? "—"}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      label: "Status",
+      sortable: true,
+      shrink: true,
+      render: (ex) => (
+        <Badge
+          variant="outline"
+          className={cn("text-[10px]", executionStatusColor[ex.status])}
+        >
+          {ex.status}
+        </Badge>
+      ),
+    },
+    {
+      key: "current_step_key",
+      label: "Current Step",
+      sortable: false,
+      className: "text-xs text-muted-foreground font-mono",
+      render: (ex) => (
+        <span className="text-xs text-muted-foreground font-mono">
+          {ex.current_step_key ?? "—"}
+        </span>
+      ),
+    },
+    {
+      key: "next_execution_at",
+      label: "Next Run",
+      sortable: true,
+      shrink: true,
+      className: "text-xs text-muted-foreground",
+      render: (ex) => (
+        <span className="text-xs text-muted-foreground">
+          {ex.next_execution_at
+            ? new Date(ex.next_execution_at).toLocaleDateString()
+            : "—"}
+        </span>
+      ),
+    },
+  ];
+
   // ── Editor view ────────────────────────────────────────────────
   if (view === "editor" && selectedFlow) {
     return (
@@ -1888,25 +2111,64 @@ const ReminderFlows = () => {
       />
       <div className="p-4 sm:p-6 lg:p-8">
         {/* Header */}
-        <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
-              <AlarmClock className="h-7 w-7 text-primary" />
-              Reminder Flows
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Build visual automation flows to keep clients engaged and on track
-              with their tasks
-            </p>
-          </div>
-          <Button
-            className="gap-2 self-start md:self-auto"
-            onClick={() => setShowCreateModal(true)}
-          >
-            <Plus className="h-4 w-4" />
-            New Flow
-          </Button>
-        </header>
+        <PageHeader
+          icon={<AlarmClock className="h-7 w-7 text-primary" />}
+          title={
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex items-center gap-2 hover:opacity-80 transition-opacity focus:outline-none">
+                  <span>
+                    {activeCategory === "loan"
+                      ? "Reminder Flows"
+                      : "Realtor Prospecting Flows"}
+                  </span>
+                  <ChevronDown className="h-5 w-5 text-gray-400" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-56">
+                <DropdownMenuLabel className="text-xs text-gray-500">
+                  Select Pipeline
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => handleCategoryChange("loan")}
+                  className={cn(
+                    "gap-2",
+                    activeCategory === "loan" && "bg-primary/5 text-primary",
+                  )}
+                >
+                  <AlarmClock className="h-4 w-4" />
+                  Loan Pipeline Flows
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => handleCategoryChange("realtor_prospecting")}
+                  className={cn(
+                    "gap-2",
+                    activeCategory === "realtor_prospecting" &&
+                      "bg-primary/5 text-primary",
+                  )}
+                >
+                  <Users className="h-4 w-4" />
+                  Realtor Prospecting Flows
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          }
+          description={
+            activeCategory === "loan"
+              ? "Build visual automation flows to keep clients engaged and on track with their tasks"
+              : "Automate outreach and follow-ups for each realtor prospecting stage"
+          }
+          actions={
+            <Button
+              className="gap-2 self-start md:self-auto"
+              onClick={() => setShowCreateModal(true)}
+            >
+              <Plus className="h-4 w-4" />
+              New Flow
+            </Button>
+          }
+        />
 
         {/* Tab switcher */}
         <Tabs
@@ -1952,14 +2214,21 @@ const ReminderFlows = () => {
             ) : flows.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center">
                 <div className="p-5 rounded-2xl bg-primary/5 mb-4">
-                  <AlarmClock className="h-10 w-10 text-primary/60" />
+                  {activeCategory === "loan" ? (
+                    <AlarmClock className="h-10 w-10 text-primary/60" />
+                  ) : (
+                    <Users className="h-10 w-10 text-primary/60" />
+                  )}
                 </div>
                 <h3 className="text-lg font-semibold mb-1">
-                  No reminder flows yet
+                  {activeCategory === "loan"
+                    ? "No reminder flows yet"
+                    : "No realtor prospecting flows yet"}
                 </h3>
                 <p className="text-sm text-muted-foreground max-w-sm">
-                  Create your first flow to start automating client reminders
-                  based on pipeline events.
+                  {activeCategory === "loan"
+                    ? "Create your first flow to start automating client reminders based on pipeline events."
+                    : "Create your first flow to automate outreach when a realtor prospect moves through each stage."}
                 </p>
                 <Button
                   className="mt-6 gap-2"
@@ -1998,99 +2267,84 @@ const ReminderFlows = () => {
 
           {/* ── EXECUTIONS TAB ────────────────────────────────────── */}
           <TabsContent value="executions">
-            {executions.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-center">
-                <div className="p-5 rounded-2xl bg-muted mb-4">
-                  <Activity className="h-10 w-10 text-muted-foreground/50" />
-                </div>
-                <h3 className="text-lg font-semibold mb-1">
-                  No executions yet
-                </h3>
-                <p className="text-sm text-muted-foreground">
-                  Executions will appear here when flows start running for
-                  loans.
-                </p>
-              </div>
-            ) : (
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <LayoutList className="h-4 w-4 text-primary" />
-                    Flow Executions
-                  </CardTitle>
-                  <CardDescription>
-                    Active and historical reminder flow executions per loan
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b text-left">
-                          <th className="pb-2 pr-4 font-medium text-muted-foreground text-xs">
-                            Flow
-                          </th>
-                          <th className="pb-2 pr-4 font-medium text-muted-foreground text-xs">
-                            Client
-                          </th>
-                          <th className="pb-2 pr-4 font-medium text-muted-foreground text-xs">
-                            Application
-                          </th>
-                          <th className="pb-2 pr-4 font-medium text-muted-foreground text-xs">
-                            Status
-                          </th>
-                          <th className="pb-2 pr-4 font-medium text-muted-foreground text-xs">
-                            Current Step
-                          </th>
-                          <th className="pb-2 font-medium text-muted-foreground text-xs">
-                            Next Run
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {executions.map((ex) => (
-                          <tr
-                            key={ex.id}
-                            className="border-b last:border-0 hover:bg-muted/30 transition-colors"
-                          >
-                            <td className="py-2.5 pr-4 font-medium text-xs">
-                              {ex.flow_name}
-                            </td>
-                            <td className="py-2.5 pr-4 text-xs">
-                              {ex.client_name ?? "—"}
-                            </td>
-                            <td className="py-2.5 pr-4 text-xs text-muted-foreground">
-                              {ex.application_number ?? "—"}
-                            </td>
-                            <td className="py-2.5 pr-4">
-                              <Badge
-                                variant="outline"
-                                className={cn(
-                                  "text-[10px]",
-                                  executionStatusColor[ex.status],
-                                )}
-                              >
-                                {ex.status}
-                              </Badge>
-                            </td>
-                            <td className="py-2.5 pr-4 text-xs text-muted-foreground font-mono">
-                              {ex.current_step_key ?? "—"}
-                            </td>
-                            <td className="py-2.5 text-xs text-muted-foreground">
-                              {ex.next_execution_at
-                                ? new Date(
-                                    ex.next_execution_at,
-                                  ).toLocaleDateString()
-                                : "—"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <LayoutList className="h-4 w-4 text-primary" />
+                  Flow Executions
+                </CardTitle>
+                <CardDescription>
+                  {activeCategory === "loan"
+                    ? "Active and historical reminder flow executions per loan"
+                    : "Active and historical realtor prospecting flow executions"}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <DataGrid<ReminderFlowExecution>
+                  data={executions}
+                  columns={executionColumns}
+                  rowKey={(ex) => ex.id}
+                  sortBy={execSortBy}
+                  sortDir={execSortDir}
+                  onSort={handleExecSort}
+                  pagination={execPagination}
+                  onPageChange={(page) =>
+                    doFetchExec({
+                      page,
+                      sortBy: execSortBy,
+                      sortOrder: execSortDir,
+                      flow_category: activeCategory,
+                    })
+                  }
+                  isLoading={isLoading}
+                  emptyMessage={
+                    activeCategory === "loan"
+                      ? "No executions yet. Executions will appear here when flows start running for loans."
+                      : "No executions yet. Executions will appear here when realtor prospecting flows start running."
+                  }
+                  mobileCard={(ex) => (
+                    <div
+                      key={ex.id}
+                      className="rounded-lg border bg-card p-3 flex flex-col gap-2"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="font-medium text-sm">
+                          {ex.flow_name}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "text-[10px] shrink-0",
+                            executionStatusColor[ex.status],
+                          )}
+                        >
+                          {ex.status}
+                        </Badge>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {ex.client_name ?? "—"}
+                        {ex.application_number ? (
+                          <span className="ml-2 font-mono">
+                            {ex.application_number}
+                          </span>
+                        ) : null}
+                      </div>
+                      {ex.current_step_key && (
+                        <div className="text-xs font-mono text-muted-foreground">
+                          Step: {ex.current_step_key}
+                        </div>
+                      )}
+                      {ex.next_execution_at && (
+                        <div className="text-xs text-muted-foreground">
+                          Next run:{" "}
+                          {new Date(ex.next_execution_at).toLocaleDateString()}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                />
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>
@@ -2100,12 +2354,20 @@ const ReminderFlows = () => {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlarmClock className="h-5 w-5 text-primary" />
-              Create Reminder Flow
+              {activeCategory === "loan" ? (
+                <AlarmClock className="h-5 w-5 text-primary" />
+              ) : (
+                <Users className="h-5 w-5 text-primary" />
+              )}
+              Create{" "}
+              {activeCategory === "loan"
+                ? "Reminder Flow"
+                : "Realtor Prospecting Flow"}
             </DialogTitle>
             <DialogDescription>
-              Set up a new automated reminder flow. You can add steps in the
-              visual editor after creation.
+              {activeCategory === "loan"
+                ? "Set up a new automated reminder flow. You can add steps in the visual editor after creation."
+                : "Set up a new flow to automate outreach when a realtor prospect moves to a stage."}
             </DialogDescription>
           </DialogHeader>
 
@@ -2115,7 +2377,11 @@ const ReminderFlows = () => {
               <Input
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="e.g. Post-Application Follow-up"
+                placeholder={
+                  activeCategory === "loan"
+                    ? "e.g. Post-Application Follow-up"
+                    : "e.g. Contact Attempted Outreach"
+                }
               />
             </div>
 
@@ -2139,7 +2405,7 @@ const ReminderFlows = () => {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {TRIGGER_EVENT_OPTIONS.map((o) => (
+                  {activeTriggerOptions.map((o) => (
                     <SelectItem key={o.value} value={o.value}>
                       {o.label}
                     </SelectItem>

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 import type { DeletionDetails } from "@/components/ui/deletion-modal";
+import { logger } from "@/lib/logger";
 
 interface UseBulkDeletionOptions<T> {
   entityType: string;
@@ -54,7 +55,7 @@ export function useBulkDeletion<T>({
       onSuccess?.(entitiesToDelete);
       closeModal();
     } catch (error: any) {
-      console.error(`Error bulk deleting ${entityType}:`, error);
+      logger.error(`Error bulk deleting ${entityType}:`, error);
 
       const count = entitiesToDelete.length;
       const pluralType = count === 1 ? entityType : `${entityType}s`;

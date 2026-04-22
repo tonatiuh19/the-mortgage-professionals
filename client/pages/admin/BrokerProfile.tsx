@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useFormik } from "formik";
 import * as Yup from "yup";
 import {
@@ -15,8 +15,14 @@ import {
   CheckCircle2,
   BadgeCheck,
   Building2,
+  PhoneForwarded,
+  Monitor,
+  Smartphone,
+  Zap,
+  Globe,
 } from "lucide-react";
 import { MetaHelmet } from "@/components/MetaHelmet";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { adminPageMeta } from "@/lib/seo-helpers";
 import { ImageCropUploader } from "@/components/ImageCropUploader";
 import { Button } from "@/components/ui/button";
@@ -26,6 +32,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Card,
   CardContent,
@@ -42,6 +56,56 @@ import {
 } from "@/store/slices/brokerAuthSlice";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+
+const TIMEZONES = [
+  {
+    value: "America/New_York",
+    label: "Eastern Time (ET)",
+    cities: "New York, Miami, Atlanta",
+  },
+  {
+    value: "America/Chicago",
+    label: "Central Time (CT)",
+    cities: "Chicago, Dallas, Houston",
+  },
+  {
+    value: "America/Denver",
+    label: "Mountain Time (MT)",
+    cities: "Denver, Salt Lake City",
+  },
+  {
+    value: "America/Phoenix",
+    label: "Mountain – no DST (MT)",
+    cities: "Phoenix, Tucson",
+  },
+  {
+    value: "America/Los_Angeles",
+    label: "Pacific Time (PT)",
+    cities: "Los Angeles, Seattle, Las Vegas",
+  },
+  {
+    value: "America/Anchorage",
+    label: "Alaska Time (AKT)",
+    cities: "Anchorage, Fairbanks",
+  },
+  {
+    value: "Pacific/Honolulu",
+    label: "Hawaii Time (HST)",
+    cities: "Honolulu, Maui",
+  },
+];
+
+function tzOffset(tz: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      timeZoneName: "shortOffset",
+    }).formatToParts(new Date());
+    return parts.find((p) => p.type === "timeZoneName")?.value ?? "";
+  } catch {
+    return "";
+  }
+}
 
 const SPECIALIZATION_OPTIONS = [
   "First-Time Home Buyers",
@@ -76,6 +140,72 @@ const BrokerProfile = () => {
   const { toast } = useToast();
   const { user, profileLoading, profileSaving, avatarUploading, profileError } =
     useAppSelector((state) => state.brokerAuth);
+  const { sessionToken } = useAppSelector((s) => s.brokerAuth);
+
+  // ── Call forwarding state ────────────────────────────────────────────────
+  const [fwdEnabled, setFwdEnabled] = useState(false);
+  const [fwdPhone, setFwdPhone] = useState("");
+  const [fwdLoading, setFwdLoading] = useState(false);
+  const [fwdSaving, setFwdSaving] = useState(false);
+
+  const loadFwdSettings = async () => {
+    if (!sessionToken) return;
+    setFwdLoading(true);
+    try {
+      const res = await fetch("/api/voice/call-forwarding", {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setFwdEnabled(!!data.call_forwarding_enabled);
+        setFwdPhone(data.call_forwarding_phone ?? "");
+      }
+    } catch {
+      // graceful degradation
+    } finally {
+      setFwdLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadFwdSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionToken]);
+
+  const saveForwarding = async () => {
+    if (!sessionToken) return;
+    setFwdSaving(true);
+    try {
+      const res = await fetch("/api/voice/call-forwarding", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${sessionToken}`,
+        },
+        body: JSON.stringify({ enabled: fwdEnabled, phone: fwdPhone }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setFwdPhone(data.call_forwarding_phone ?? fwdPhone);
+        toast({
+          title: "Call forwarding saved",
+          description: fwdEnabled
+            ? `Calls will also ring ${data.call_forwarding_phone ?? fwdPhone}`
+            : "Forwarding disabled.",
+        });
+      } else {
+        throw new Error(data.error);
+      }
+    } catch (e: any) {
+      toast({
+        title: "Save failed",
+        description: e?.message || "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setFwdSaving(false);
+    }
+  };
 
   useEffect(() => {
     dispatch(fetchBrokerProfile());
@@ -101,6 +231,7 @@ const BrokerProfile = () => {
       office_zip: user?.office_zip || "",
       years_experience: user?.years_experience ?? "",
       specializations: user?.specializations || [],
+      timezone: user?.timezone || "America/Los_Angeles",
     },
     validationSchema: profileSchema,
     onSubmit: async (values) => {
@@ -120,6 +251,7 @@ const BrokerProfile = () => {
               ? Number(values.years_experience)
               : null,
           specializations: values.specializations,
+          timezone: values.timezone || "America/Los_Angeles",
         }),
       );
 
@@ -128,6 +260,8 @@ const BrokerProfile = () => {
           title: "Profile updated",
           description: "Your profile has been saved successfully.",
         });
+        // Re-sync forwarding phone in case profile phone changed
+        loadFwdSettings();
       } else {
         toast({
           title: "Update failed",
@@ -183,51 +317,47 @@ const BrokerProfile = () => {
       <MetaHelmet
         {...adminPageMeta(
           "My Profile",
-          "Manage your broker profile and settings",
+          "Manage your realtor profile and settings",
         )}
       />
       <div className="p-4 sm:p-6 lg:p-8">
         {/* Page Header */}
-        <header className="mb-6 sm:mb-8 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="min-w-0">
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
-              My Profile
-            </h1>
-            <p className="text-sm sm:text-base text-muted-foreground">
-              Manage your personal information, contact details, and
-              public-facing profile.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              className="gap-2"
-              onClick={() => formik.resetForm()}
-              disabled={profileSaving || !formik.dirty}
-            >
-              Discard
-            </Button>
-            <Button
-              type="button"
-              disabled={profileSaving || !formik.dirty}
-              className="gap-2"
-              onClick={() => formik.submitForm()}
-            >
-              {profileSaving ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Saving…
-                </>
-              ) : (
-                <>
-                  <Save className="h-4 w-4" />
-                  Save Changes
-                </>
-              )}
-            </Button>
-          </div>
-        </header>
+        <PageHeader
+          title="My Profile"
+          description="Manage your personal information, contact details, and public-facing profile."
+          className="mb-6 sm:mb-8"
+          actions={
+            <div className="flex items-center gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2"
+                onClick={() => formik.resetForm()}
+                disabled={profileSaving || !formik.dirty}
+              >
+                Discard
+              </Button>
+              <Button
+                type="button"
+                disabled={profileSaving || !formik.dirty}
+                className="gap-2"
+                onClick={() => formik.submitForm()}
+              >
+                {profileSaving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving…
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4" />
+                    Save Changes
+                  </>
+                )}
+              </Button>
+            </div>
+          }
+        />
 
         {profileError && (
           <Alert variant="destructive" className="mb-6">
@@ -488,6 +618,74 @@ const BrokerProfile = () => {
                     </div>
                   </div>
 
+                  {/* Timezone */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <Label className="flex items-center gap-1.5">
+                        <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+                        Your Timezone
+                      </Label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const detected =
+                            Intl.DateTimeFormat().resolvedOptions().timeZone;
+                          const match = TIMEZONES.find(
+                            (tz) => tz.value === detected,
+                          );
+                          if (match) formik.setFieldValue("timezone", detected);
+                        }}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        Detect automatically
+                      </button>
+                    </div>
+                    <Select
+                      value={formik.values.timezone}
+                      onValueChange={(v) => formik.setFieldValue("timezone", v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue>
+                          {(() => {
+                            const tz = TIMEZONES.find(
+                              (t) => t.value === formik.values.timezone,
+                            );
+                            return tz ? (
+                              <span>
+                                {tz.label}{" "}
+                                <span className="text-muted-foreground text-xs">
+                                  ({tzOffset(tz.value)})
+                                </span>
+                              </span>
+                            ) : (
+                              formik.values.timezone
+                            );
+                          })()}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TIMEZONES.map((tz) => (
+                          <SelectItem key={tz.value} value={tz.value}>
+                            <div className="flex flex-col py-0.5">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">{tz.label}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {tzOffset(tz.value)}
+                                </span>
+                              </div>
+                              <span className="text-xs text-muted-foreground">
+                                {tz.cities}
+                              </span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Used for scheduler time slots and conversation timestamps.
+                    </p>
+                  </div>
+
                   <div className="space-y-1.5">
                     <Label htmlFor="bio">
                       Bio{" "}
@@ -557,6 +755,158 @@ const BrokerProfile = () => {
                     );
                   })}
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* Call & Voicemail Settings */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <PhoneForwarded className="h-4 w-4 text-primary" />
+                  Call &amp; Voicemail Settings
+                </CardTitle>
+                <CardDescription>
+                  Choose where incoming CRM calls ring. Multiple destinations
+                  ring simultaneously — first to answer wins.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {fwdLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading settings…
+                  </div>
+                ) : (
+                  <>
+                    {/* Forward Calls to — checkboxes */}
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-foreground">
+                        Forward Calls to
+                      </p>
+                      <div className="grid sm:grid-cols-2 gap-3">
+                        {/* Browser — always on */}
+                        <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                            <Monitor className="h-4 w-4 text-primary" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium">
+                              Browser (Web App)
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Always rings in the CRM
+                            </p>
+                          </div>
+                          <Badge
+                            variant="secondary"
+                            className="text-[10px] bg-green-100 text-green-700 border-0 shrink-0"
+                          >
+                            Always on
+                          </Badge>
+                        </div>
+
+                        {/* My Phone Number — toggle */}
+                        <div
+                          className={cn(
+                            "flex items-center gap-3 rounded-lg border px-4 py-3 transition-colors",
+                            fwdEnabled
+                              ? "border-primary/40 bg-primary/5"
+                              : "border-border bg-background",
+                          )}
+                        >
+                          <div
+                            className={cn(
+                              "flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors",
+                              fwdEnabled ? "bg-primary/15" : "bg-muted",
+                            )}
+                          >
+                            <Smartphone
+                              className={cn(
+                                "h-4 w-4",
+                                fwdEnabled
+                                  ? "text-primary"
+                                  : "text-muted-foreground",
+                              )}
+                            />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium">
+                              My Phone Number
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Ring my personal cell
+                            </p>
+                          </div>
+                          <Switch
+                            checked={fwdEnabled}
+                            onCheckedChange={setFwdEnabled}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Forwarding number input — shown when enabled */}
+                    <div
+                      className={cn(
+                        "overflow-hidden transition-all duration-300",
+                        fwdEnabled
+                          ? "max-h-40 opacity-100"
+                          : "max-h-0 opacity-0 pointer-events-none",
+                      )}
+                    >
+                      <div className="space-y-1.5">
+                        <Label htmlFor="fwd_phone">Forwarding Number</Label>
+                        <div className="relative">
+                          <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            id="fwd_phone"
+                            value={fwdPhone}
+                            onChange={(e) => setFwdPhone(e.target.value)}
+                            placeholder="+1 (555) 000-0000"
+                            className="pl-9"
+                          />
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Enter your personal cell. Defaults to your profile
+                          phone if left blank.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Info banner */}
+                    <div className="flex items-start gap-2.5 rounded-lg bg-blue-50 border border-blue-100 px-3.5 py-3">
+                      <Zap className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+                      <p className="text-xs text-blue-700">
+                        When enabled, incoming calls ring your browser{" "}
+                        <strong>and</strong> your personal phone simultaneously.
+                        Answering on either one lets you handle the call.
+                      </p>
+                    </div>
+
+                    {/* Save button */}
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="gap-2"
+                        onClick={saveForwarding}
+                        disabled={fwdSaving}
+                      >
+                        {fwdSaving ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Saving…
+                          </>
+                        ) : (
+                          <>
+                            <Save className="h-3.5 w-3.5" />
+                            Save Settings
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
 

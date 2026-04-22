@@ -8,10 +8,12 @@ import type {
   UpdateConversationResponse,
   GetConversationTemplatesResponse,
   GetConversationStatsResponse,
+  GetCallHistoryResponse,
   ConversationThread,
   Communication,
   ConversationTemplate,
   ConversationStats,
+  CallRecord,
   SendMessageRequest,
   UpdateConversationRequest,
 } from "@shared/api";
@@ -54,6 +56,20 @@ interface ConversationsState {
   };
 
   messagesPagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+
+  // WhatsApp availability check
+  whatsappAvailability: Record<string, boolean | null>; // phone -> true/false/null (null = checking)
+  isCheckingWhatsApp: boolean;
+
+  // Call history
+  callHistory: CallRecord[];
+  isLoadingCallHistory: boolean;
+  callHistoryPagination: {
     page: number;
     limit: number;
     total: number;
@@ -104,10 +120,36 @@ const initialState: ConversationsState = {
     totalPages: 0,
   },
 
+  whatsappAvailability: {},
+  isCheckingWhatsApp: false,
+
+  callHistory: [],
+  isLoadingCallHistory: false,
+  callHistoryPagination: { page: 1, limit: 50, total: 0, totalPages: 0 },
+
   error: null,
 };
 
 // Async thunks
+export const checkWhatsAppAvailability = createAsyncThunk(
+  "conversations/checkWhatsApp",
+  async (phone: string, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.get<{
+        success: boolean;
+        registered: boolean;
+      }>("/api/conversations/check-whatsapp", {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+        params: { phone },
+      });
+      return { phone, registered: data.registered };
+    } catch {
+      return rejectWithValue(phone);
+    }
+  },
+);
+
 export const fetchConversationThreads = createAsyncThunk(
   "conversations/fetchThreads",
   async (
@@ -183,10 +225,40 @@ export const sendMessage = createAsyncThunk(
           headers: { Authorization: `Bearer ${sessionToken}` },
         },
       );
-      return data;
+      // Attach the outgoing body and media_url so the reducer can update the
+      // thread preview optimistically without waiting for a re-fetch.
+      return {
+        ...data,
+        body: messageData.body ?? null,
+        media_url: messageData.media_url ?? null,
+      };
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to send message",
+      );
+    }
+  },
+);
+
+export const deleteMessage = createAsyncThunk(
+  "conversations/deleteMessage",
+  async (
+    {
+      conversationId,
+      messageId,
+    }: { conversationId: string; messageId: number | string },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      await axios.delete(
+        `/api/conversations/${conversationId}/messages/${messageId}`,
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return { conversationId, messageId };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to delete message",
       );
     }
   },
@@ -217,6 +289,23 @@ export const updateConversation = createAsyncThunk(
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to update conversation",
+      );
+    }
+  },
+);
+
+export const deleteConversation = createAsyncThunk(
+  "conversations/deleteConversation",
+  async (conversationId: string, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      await axios.delete(`/api/conversations/${conversationId}`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      return conversationId;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to delete conversation",
       );
     }
   },
@@ -267,6 +356,115 @@ export const fetchConversationStats = createAsyncThunk(
   },
 );
 
+export const fetchCallHistory = createAsyncThunk(
+  "conversations/fetchCallHistory",
+  async (
+    { page = 1, limit = 50 }: { page?: number; limit?: number } = {},
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.get<GetCallHistoryResponse>(
+        "/api/voice/calls",
+        {
+          headers: { Authorization: `Bearer ${sessionToken}` },
+          params: { page, limit },
+        },
+      );
+      return data;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch call history",
+      );
+    }
+  },
+);
+
+export const saveContactFromConversation = createAsyncThunk(
+  "conversations/saveContactFromConversation",
+  async (
+    {
+      conversationId,
+      first_name,
+      last_name,
+      email,
+      phone,
+      alternate_phone,
+      date_of_birth,
+      address_street,
+      address_city,
+      address_state,
+      address_zip,
+      employment_status,
+      income_type,
+      annual_income,
+      credit_score,
+      citizenship_status,
+      create_pipeline_draft,
+      loan_type,
+      notes,
+    }: {
+      conversationId: string;
+      first_name: string;
+      last_name: string;
+      email?: string;
+      phone?: string;
+      alternate_phone?: string;
+      date_of_birth?: string;
+      address_street?: string;
+      address_city?: string;
+      address_state?: string;
+      address_zip?: string;
+      employment_status?: string;
+      income_type?: "W-2" | "1099" | "Self-Employed" | "Investor" | "Mixed";
+      annual_income?: number;
+      credit_score?: number;
+      citizenship_status?:
+        | "us_citizen"
+        | "permanent_resident"
+        | "non_resident"
+        | "other";
+      create_pipeline_draft?: boolean;
+      loan_type?: "purchase" | "refinance";
+      notes?: string;
+    },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.post(
+        `/api/conversations/${conversationId}/save-contact`,
+        {
+          first_name,
+          last_name,
+          email,
+          phone,
+          alternate_phone,
+          date_of_birth,
+          address_street,
+          address_city,
+          address_state,
+          address_zip,
+          employment_status,
+          income_type,
+          annual_income,
+          credit_score,
+          citizenship_status,
+          create_pipeline_draft,
+          loan_type,
+          notes,
+        },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return { conversationId, ...data };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to save contact",
+      );
+    }
+  },
+);
+
 const conversationsSlice = createSlice({
   name: "conversations",
   initialState,
@@ -295,6 +493,30 @@ const conversationsSlice = createSlice({
         ...state.messagesFilters,
         ...action.payload,
       };
+    },
+
+    // Patch recording_url + recording_duration on a single call message once ready
+    patchMessageRecording: (
+      state,
+      action: {
+        payload: {
+          external_id: string;
+          recording_url: string;
+          recording_duration?: number | null;
+        };
+      },
+    ) => {
+      const idx = state.messages.findIndex(
+        (m) => m.external_id === action.payload.external_id,
+      );
+      if (idx !== -1) {
+        (state.messages[idx] as any).recording_url =
+          action.payload.recording_url;
+        if (action.payload.recording_duration != null) {
+          (state.messages[idx] as any).recording_duration =
+            action.payload.recording_duration;
+        }
+      }
     },
 
     // Error handling
@@ -370,6 +592,19 @@ const conversationsSlice = createSlice({
         state.currentThread.unread_count = 0;
       }
     },
+
+    // Remove a thread from the list — used when another broker claims an
+    // unassigned shared-inbox thread so it disappears from everyone else's view.
+    removeThread: (state, action: { payload: string }) => {
+      const conversationId = action.payload;
+      state.threads = state.threads.filter(
+        (t) => t.conversation_id !== conversationId,
+      );
+      if (state.currentThread?.conversation_id === conversationId) {
+        state.currentThread = null;
+        state.messages = [];
+      }
+    },
   },
 
   extraReducers: (builder) => {
@@ -384,6 +619,13 @@ const conversationsSlice = createSlice({
         state.threads = action.payload.threads;
         state.threadsPagination = action.payload.pagination;
         state.error = null;
+        // Keep currentThread in sync so the right panel shows updated data
+        if (state.currentThread) {
+          const fresh = action.payload.threads.find(
+            (t) => t.conversation_id === state.currentThread!.conversation_id,
+          );
+          if (fresh) state.currentThread = fresh;
+        }
       })
       .addCase(fetchConversationThreads.rejected, (state, action) => {
         state.isLoadingThreads = false;
@@ -417,14 +659,71 @@ const conversationsSlice = createSlice({
       .addCase(sendMessage.fulfilled, (state, action) => {
         state.isSendingMessage = false;
         state.error = null;
+        const convId = action.payload?.conversation_id;
+        const body = action.payload?.body ?? null;
+        const now = new Date().toISOString();
+        if (!convId) return;
 
-        // The new message will be added via real-time updates or next fetch
-        // For immediate feedback, we could add it optimistically here
+        const existing = state.threads.find(
+          (t) => t.conversation_id === convId,
+        );
+        if (existing) {
+          // Update preview / count on the existing thread immediately so the
+          // sidebar doesn't keep showing "No messages yet" until the next fetch.
+          existing.last_message_preview = body
+            ? body.slice(0, 200)
+            : existing.last_message_preview;
+          existing.last_message_at = now;
+          existing.message_count = (existing.message_count ?? 0) + 1;
+          // Bubble the thread to the top
+          state.threads = [
+            existing,
+            ...state.threads.filter((t) => t.conversation_id !== convId),
+          ];
+        } else {
+          // New thread — add a placeholder so it appears immediately while
+          // fetchConversationThreads runs (avoids TiDB replication lag gap).
+          const placeholder: ConversationThread = {
+            id: 0,
+            conversation_id: convId,
+            broker_id: null,
+            last_message_at: now,
+            last_message_preview: body ? body.slice(0, 200) : null,
+            last_message_type: "sms",
+            message_count: 1,
+            unread_count: 0,
+            priority: "normal",
+            status: "active",
+            created_at: now,
+            updated_at: now,
+          };
+          state.threads.unshift(placeholder);
+        }
       })
       .addCase(sendMessage.rejected, (state, action) => {
         state.isSendingMessage = false;
         state.error = action.payload as string;
       });
+
+    // Delete message
+    builder.addCase(deleteMessage.fulfilled, (state, action) => {
+      const { messageId } = action.payload;
+      state.messages = state.messages.filter(
+        (m) => String(m.id) !== String(messageId),
+      );
+    });
+
+    // Delete conversation (permanent)
+    builder.addCase(deleteConversation.fulfilled, (state, action) => {
+      const conversationId = action.payload;
+      state.threads = state.threads.filter(
+        (t) => t.conversation_id !== conversationId,
+      );
+      if (state.currentThread?.conversation_id === conversationId) {
+        state.currentThread = null;
+        state.messages = [];
+      }
+    });
 
     // Update conversation
     builder
@@ -472,6 +771,25 @@ const conversationsSlice = createSlice({
         state.error = action.payload as string;
       });
 
+    // WhatsApp availability check
+    builder
+      .addCase(checkWhatsAppAvailability.pending, (state, action) => {
+        state.isCheckingWhatsApp = true;
+        // Mark as null (in-progress) for this phone
+        state.whatsappAvailability[action.meta.arg] = null;
+      })
+      .addCase(checkWhatsAppAvailability.fulfilled, (state, action) => {
+        state.isCheckingWhatsApp = false;
+        state.whatsappAvailability[action.payload.phone] =
+          action.payload.registered;
+      })
+      .addCase(checkWhatsAppAvailability.rejected, (state, action) => {
+        state.isCheckingWhatsApp = false;
+        // On error fallback to true so the option isn't permanently blocked
+        const phone = action.meta.arg;
+        state.whatsappAvailability[phone] = true;
+      });
+
     // Fetch stats
     builder
       .addCase(fetchConversationStats.pending, (state) => {
@@ -487,6 +805,55 @@ const conversationsSlice = createSlice({
         state.isLoadingStats = false;
         state.error = action.payload as string;
       });
+
+    // Fetch call history
+    builder
+      .addCase(fetchCallHistory.pending, (state) => {
+        state.isLoadingCallHistory = true;
+        state.error = null;
+      })
+      .addCase(fetchCallHistory.fulfilled, (state, action) => {
+        state.isLoadingCallHistory = false;
+        state.callHistory = action.payload.calls;
+        state.callHistoryPagination = action.payload.pagination;
+        state.error = null;
+      })
+      .addCase(fetchCallHistory.rejected, (state, action) => {
+        state.isLoadingCallHistory = false;
+        state.error = action.payload as string;
+      });
+
+    builder.addCase(saveContactFromConversation.fulfilled, (state, action) => {
+      const {
+        conversationId: originalConvId,
+        conversation_id: finalConvId,
+        client_id,
+        client_name,
+        client_email,
+      } = action.payload;
+
+      // The API may have renamed the thread to conv_client_{id}
+      const changed = finalConvId && finalConvId !== originalConvId;
+
+      const thread = state.threads.find(
+        (t) => t.conversation_id === originalConvId,
+      );
+      if (thread) {
+        thread.client_id = client_id;
+        thread.client_name = client_name;
+        if (client_email) thread.client_email = client_email;
+        if (changed) thread.conversation_id = finalConvId;
+      }
+      if (state.currentThread?.conversation_id === originalConvId) {
+        state.currentThread = {
+          ...state.currentThread,
+          client_id,
+          client_name,
+          ...(client_email ? { client_email } : {}),
+          ...(changed ? { conversation_id: finalConvId } : {}),
+        };
+      }
+    });
   },
 });
 
@@ -498,6 +865,8 @@ export const {
   clearError,
   addNewMessage,
   markConversationAsRead,
+  removeThread,
+  patchMessageRecording,
 } = conversationsSlice.actions;
 
 export default conversationsSlice.reducer;

@@ -4,10 +4,12 @@ import type { RootState } from "../index";
 import type {
   GetTasksResponse,
   TaskFormFieldType,
-  SignatureZone,
   TaskSignDocument,
+  SignatureZone,
   TaskSignature,
+  PaginationInfo,
 } from "@shared/api";
+import { logger } from "@/lib/logger";
 
 interface FormField {
   id?: number;
@@ -40,6 +42,7 @@ interface TaskTemplateDraft {
 
 interface TasksState {
   tasks: GetTasksResponse["tasks"];
+  pagination: PaginationInfo | null;
   isLoading: boolean;
   error: string | null;
   taskTemplateDraft: TaskTemplateDraft | null;
@@ -47,20 +50,32 @@ interface TasksState {
 
 const initialState: TasksState = {
   tasks: [],
+  pagination: null,
   isLoading: false,
   error: null,
   taskTemplateDraft: null,
 };
 
+interface FetchTasksParams {
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: "ASC" | "DESC";
+  search?: string;
+}
+
 export const fetchTasks = createAsyncThunk(
   "tasks/fetchAll",
-  async (_, { getState, rejectWithValue }) => {
+  async (params: FetchTasksParams = {}, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
-      const { data } = await axios.get<GetTasksResponse>("/api/tasks", {
+      const { data } = await axios.get<
+        GetTasksResponse & { pagination: PaginationInfo }
+      >("/api/tasks", {
         headers: { Authorization: `Bearer ${sessionToken}` },
+        params,
       });
-      return data.tasks;
+      return { tasks: data.tasks, pagination: data.pagination };
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.error || "Failed to fetch tasks",
@@ -149,20 +164,20 @@ export const updateTask = createAsyncThunk(
     { getState, rejectWithValue },
   ) => {
     try {
-      console.log("🔄 Redux: updateTask called with data:", taskData);
+      logger.log("🔄 Redux: updateTask called with data:", taskData);
       const { sessionToken } = (getState() as RootState).brokerAuth;
       const { id, ...updates } = taskData;
-      console.log("🔄 Redux: Sending PUT request to", `/api/tasks/${id}`);
-      console.log("🔄 Redux: Updates payload:", updates);
+      logger.log("🔄 Redux: Sending PUT request to", `/api/tasks/${id}`);
+      logger.log("🔄 Redux: Updates payload:", updates);
 
       const { data } = await axios.put(`/api/tasks/${id}`, updates, {
         headers: { Authorization: `Bearer ${sessionToken}` },
       });
 
-      console.log("✅ Redux: API response:", data);
+      logger.log("✅ Redux: API response:", data);
       return data.task;
     } catch (error: any) {
-      console.error(
+      logger.error(
         "❌ Redux: updateTask error:",
         error.response?.data || error,
       );
@@ -303,12 +318,12 @@ export const createTaskFormFields = createAsyncThunk(
     { getState, rejectWithValue },
   ) => {
     try {
-      console.log("🔄 Redux: createTaskFormFields called");
-      console.log("🔄 Redux: Task ID:", taskId);
-      console.log("🔄 Redux: Form fields:", form_fields);
+      logger.log("🔄 Redux: createTaskFormFields called");
+      logger.log("🔄 Redux: Task ID:", taskId);
+      logger.log("🔄 Redux: Form fields:", form_fields);
 
       const { sessionToken } = (getState() as RootState).brokerAuth;
-      console.log("🔄 Redux: Session token exists:", !!sessionToken);
+      logger.log("🔄 Redux: Session token exists:", !!sessionToken);
 
       const { data } = await axios.post(
         `/api/tasks/${taskId}/form-fields`,
@@ -318,11 +333,11 @@ export const createTaskFormFields = createAsyncThunk(
         },
       );
 
-      console.log("✅ Redux: Form fields created successfully:", data);
+      logger.log("✅ Redux: Form fields created successfully:", data);
       return { taskId, fields: data.fields };
     } catch (error: any) {
-      console.error("❌ Redux: Failed to create form fields:", error);
-      console.error("❌ Redux: Error response:", error.response?.data);
+      logger.error("❌ Redux: Failed to create form fields:", error);
+      logger.error("❌ Redux: Error response:", error.response?.data);
       return rejectWithValue(
         error.response?.data?.error || "Failed to create form fields",
       );
@@ -479,7 +494,8 @@ const tasksSlice = createSlice({
       })
       .addCase(fetchTasks.fulfilled, (state, action) => {
         state.isLoading = false;
-        state.tasks = action.payload;
+        state.tasks = action.payload.tasks;
+        state.pagination = action.payload.pagination;
       })
       .addCase(fetchTasks.rejected, (state, action) => {
         state.isLoading = false;

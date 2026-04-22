@@ -15,6 +15,7 @@ import {
   Activity,
 } from "lucide-react";
 import { MetaHelmet } from "@/components/MetaHelmet";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { adminPageMeta } from "@/lib/seo-helpers";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -159,8 +160,8 @@ const Reports = () => {
     }).format(value || 0);
   };
 
-  const formatPercent = (value: number) => {
-    return `${(value || 0).toFixed(1)}%`;
+  const formatPercent = (value: number | string | null | undefined) => {
+    return `${(parseFloat(value as string) || 0).toFixed(1)}%`;
   };
 
   return (
@@ -172,46 +173,42 @@ const Reports = () => {
         )}
       />
       <div className="p-4 sm:p-6 lg:p-8">
-        <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2">
-              <TrendingUp className="h-7 w-7 text-primary" />
-              Reports & Analytics
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Comprehensive analytics and business intelligence
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Select value={datePreset} onValueChange={setDatePreset}>
-              <SelectTrigger className="w-[160px]">
-                <Calendar className="h-4 w-4 mr-2" />
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="7days">Last 7 Days</SelectItem>
-                <SelectItem value="30days">Last 30 Days</SelectItem>
-                <SelectItem value="3months">Last 3 Months</SelectItem>
-                <SelectItem value="6months">Last 6 Months</SelectItem>
-                <SelectItem value="1year">Last Year</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={exportFormat} onValueChange={setExportFormat}>
-              <SelectTrigger className="w-[120px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="csv">CSV</SelectItem>
-                <SelectItem value="excel">Excel</SelectItem>
-                <SelectItem value="pdf">PDF</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button onClick={handleExport} className="gap-2">
-              <Download className="h-4 w-4" />
-              Export
-            </Button>
-          </div>
-        </header>
+        <PageHeader
+          icon={<TrendingUp className="h-7 w-7 text-primary" />}
+          title="Reports & Analytics"
+          description="Comprehensive analytics and business intelligence"
+          actions={
+            <div className="flex items-center gap-3">
+              <Select value={datePreset} onValueChange={setDatePreset}>
+                <SelectTrigger className="w-[160px]">
+                  <Calendar className="h-4 w-4 mr-2" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="7days">Last 7 Days</SelectItem>
+                  <SelectItem value="30days">Last 30 Days</SelectItem>
+                  <SelectItem value="3months">Last 3 Months</SelectItem>
+                  <SelectItem value="6months">Last 6 Months</SelectItem>
+                  <SelectItem value="1year">Last Year</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={exportFormat} onValueChange={setExportFormat}>
+                <SelectTrigger className="w-[120px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="csv">CSV</SelectItem>
+                  <SelectItem value="excel">Excel</SelectItem>
+                  <SelectItem value="pdf">PDF</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button onClick={handleExport} className="gap-2">
+                <Download className="h-4 w-4" />
+                Export
+              </Button>
+            </div>
+          }
+        />
 
         {isLoading ? (
           <div className="text-center py-12 text-muted-foreground">
@@ -219,7 +216,7 @@ const Reports = () => {
           </div>
         ) : (
           <Tabs defaultValue="overview" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-2 md:grid-cols-4">
               <TabsTrigger
                 value="overview"
                 onClick={() => setSelectedReport("overview")}

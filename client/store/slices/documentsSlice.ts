@@ -1,6 +1,7 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
 import type { RootState } from "../index";
+import type { PaginationInfo } from "@shared/api";
 
 interface Document {
   id: number;
@@ -29,6 +30,7 @@ interface Document {
 
 interface DocumentsState {
   documents: Document[];
+  pagination: PaginationInfo | null;
   isLoading: boolean;
   error: string | null;
   searchQuery: string;
@@ -38,6 +40,7 @@ interface DocumentsState {
 
 const initialState: DocumentsState = {
   documents: [],
+  pagination: null,
   isLoading: false,
   error: null,
   searchQuery: "",
@@ -45,23 +48,29 @@ const initialState: DocumentsState = {
   filterBroker: null,
 };
 
-/**
- * Fetch all documents
- * Admin: sees all documents from all brokers
- * Regular broker: sees only their own documents
- */
+interface FetchDocumentsParams {
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: "ASC" | "DESC";
+  search?: string;
+  filterType?: string;
+}
+
 export const fetchAllDocuments = createAsyncThunk(
   "documents/fetchAll",
-  async (_, { getState, rejectWithValue }) => {
+  async (params: FetchDocumentsParams = {}, { getState, rejectWithValue }) => {
     try {
       const state = getState() as RootState;
       const token = state.brokerAuth.sessionToken;
-
       const response = await axios.get("/api/documents", {
         headers: { Authorization: `Bearer ${token}` },
+        params,
       });
-
-      return response.data.documents;
+      return {
+        documents: response.data.documents,
+        pagination: response.data.pagination as PaginationInfo,
+      };
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.error || "Failed to fetch documents",
@@ -121,7 +130,8 @@ const documentsSlice = createSlice({
       })
       .addCase(fetchAllDocuments.fulfilled, (state, action) => {
         state.isLoading = false;
-        state.documents = action.payload;
+        state.documents = action.payload.documents;
+        state.pagination = action.payload.pagination;
       })
       .addCase(fetchAllDocuments.rejected, (state, action) => {
         state.isLoading = false;

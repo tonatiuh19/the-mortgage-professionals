@@ -4,12 +4,15 @@ import {
   Image,
   Search,
   Filter,
-  Download,
   ExternalLink,
   Trash2,
   RefreshCw,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
 } from "lucide-react";
 import { MetaHelmet } from "@/components/MetaHelmet";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { adminPageMeta } from "@/lib/seo-helpers";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,6 +54,12 @@ import {
   clearFilters,
 } from "@/store/slices/documentsSlice";
 import { toast } from "@/hooks/use-toast";
+import { useSortableData } from "@/hooks/use-sortable-data";
+
+const BASE_URL = "https://disruptinglabs.com/data/api";
+
+const toFullUrl = (path: string) =>
+  path ? (path.startsWith("http") ? path : `${BASE_URL}${path}`) : "";
 
 const Documents = () => {
   const dispatch = useAppDispatch();
@@ -58,10 +67,10 @@ const Documents = () => {
     useAppSelector((state) => state.documents);
   const { user } = useAppSelector((state) => state.brokerAuth);
 
-  const isAdmin = user?.role === "admin";
+  const hasGlobalDocumentAccess = user?.role === "superadmin";
 
   useEffect(() => {
-    dispatch(fetchAllDocuments());
+    dispatch(fetchAllDocuments({}));
   }, [dispatch]);
 
   // Get unique brokers for filter
@@ -101,6 +110,17 @@ const Documents = () => {
       return matchesSearch && matchesType && matchesBroker;
     });
   }, [documents, searchQuery, filterType, filterBroker]);
+
+  const {
+    sorted: sortedDocuments,
+    sortKey: docSortKey,
+    sortDir: docSortDir,
+    requestSort: sortDocs,
+  } = useSortableData(
+    filteredDocuments as Record<string, unknown>[],
+    "uploaded_at",
+    "desc",
+  );
 
   const handleDelete = async (documentId: number) => {
     try {
@@ -143,102 +163,40 @@ const Documents = () => {
       />
       <div className="p-6 space-y-6">
         {/* Header */}
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-              <FileText className="h-8 w-8 text-primary" />
-              Documents
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              {isAdmin
-                ? "View and manage all client documents"
-                : "View and manage your client documents"}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => dispatch(clearFilters())}
-              disabled={!searchQuery && filterType === "all" && !filterBroker}
-            >
-              <Filter className="h-4 w-4 mr-2" />
-              Clear Filters
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => dispatch(fetchAllDocuments())}
-              disabled={isLoading}
-            >
-              <RefreshCw
-                className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`}
-              />
-              Refresh
-            </Button>
-          </div>
-        </div>
-
-        {/* Stats Cards */}
-        <div className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
-                Total Documents
-              </CardTitle>
-              <FileText className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {filteredDocuments.length}
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">PDFs</CardTitle>
-              <FileText className="h-4 w-4 text-destructive" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {
-                  filteredDocuments.filter((d) => d.document_type === "pdf")
-                    .length
-                }
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Images</CardTitle>
-              <Image className="h-4 w-4 text-primary" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {
-                  filteredDocuments.filter((d) => d.document_type === "image")
-                    .length
-                }
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Size</CardTitle>
-              <Download className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {formatFileSize(
-                  filteredDocuments.reduce(
-                    (sum, doc) => sum + (doc.file_size || 0),
-                    0,
-                  ),
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        <PageHeader
+          icon={<FileText className="h-7 w-7 text-primary" />}
+          title="Documents"
+          description={
+            hasGlobalDocumentAccess
+              ? "View and manage all client documents"
+              : "View and manage your client documents"
+          }
+          className="mb-0"
+          actions={
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => dispatch(clearFilters())}
+                disabled={!searchQuery && filterType === "all" && !filterBroker}
+              >
+                <Filter className="h-4 w-4 mr-2" />
+                Clear Filters
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => dispatch(fetchAllDocuments({}))}
+                disabled={isLoading}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`}
+                />
+                Refresh
+              </Button>
+            </div>
+          }
+        />
 
         {/* Filters */}
         <Card>
@@ -266,7 +224,7 @@ const Documents = () => {
                   <SelectItem value="image">Images Only</SelectItem>
                 </SelectContent>
               </Select>
-              {isAdmin && uniqueBrokers.length > 0 && (
+              {hasGlobalDocumentAccess && uniqueBrokers.length > 0 && (
                 <Select
                   value={filterBroker?.toString() || "all"}
                   onValueChange={(value) =>
@@ -312,139 +270,324 @@ const Documents = () => {
                 </p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[60px] whitespace-nowrap">
-                        Type
-                      </TableHead>
-                      <TableHead className="min-w-[250px] whitespace-nowrap">
-                        Filename
-                      </TableHead>
-                      <TableHead className="min-w-[180px] whitespace-nowrap">
-                        Task
-                      </TableHead>
-                      <TableHead className="min-w-[180px] whitespace-nowrap">
-                        Client
-                      </TableHead>
-                      <TableHead className="w-[120px] whitespace-nowrap">
-                        Application
-                      </TableHead>
-                      {isAdmin && (
-                        <TableHead className="w-[140px] whitespace-nowrap">
-                          Broker
-                        </TableHead>
-                      )}
-                      <TableHead className="w-[100px] whitespace-nowrap">
-                        Size
-                      </TableHead>
-                      <TableHead className="w-[150px] whitespace-nowrap">
-                        Uploaded
-                      </TableHead>
-                      <TableHead className="w-[120px] text-right whitespace-nowrap">
-                        Actions
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredDocuments.map((doc) => (
-                      <TableRow key={doc.id}>
-                        <TableCell>
-                          {doc.document_type === "pdf" ? (
-                            <FileText className="h-5 w-5 text-destructive" />
-                          ) : (
-                            <Image className="h-5 w-5 text-primary" />
-                          )}
-                        </TableCell>
-                        <TableCell className="max-w-xs">
-                          <div className="truncate font-medium">
-                            {doc.original_filename}
-                          </div>
-                          <div className="text-xs text-muted-foreground truncate">
-                            {doc.filename}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="font-medium">{doc.task_title}</div>
-                          <Badge variant="outline" className="mt-1 text-xs">
-                            {doc.task_type.replace("_", " ")}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="font-medium">
-                            {doc.client_first_name} {doc.client_last_name}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {doc.client_email}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="secondary">
-                            {doc.application_number}
-                          </Badge>
-                        </TableCell>
-                        {isAdmin && (
-                          <TableCell>
-                            {doc.broker_first_name && doc.broker_last_name ? (
-                              <div className="text-sm">
-                                {doc.broker_first_name} {doc.broker_last_name}
-                              </div>
-                            ) : (
-                              <span className="text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
+              <>
+                {/* Mobile card view */}
+                <div className="block lg:hidden space-y-3">
+                  {(sortedDocuments as typeof filteredDocuments).map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="rounded-lg border p-4 space-y-2 bg-white shadow-sm"
+                    >
+                      <div className="flex items-start gap-3">
+                        {doc.document_type === "pdf" ? (
+                          <FileText className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
+                        ) : (
+                          <Image className="h-5 w-5 text-primary shrink-0 mt-0.5" />
                         )}
-                        <TableCell>{formatFileSize(doc.file_size)}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {formatDate(doc.uploaded_at)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <Button variant="ghost" size="sm" asChild>
-                              <a
-                                href={`https://disruptinglabs.com${doc.file_path}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                <ExternalLink className="h-4 w-4" />
-                              </a>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-sm truncate">
+                            {doc.original_filename}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {doc.task_title}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        <span>
+                          {doc.client_first_name} {doc.client_last_name}
+                        </span>
+                        <span>{doc.application_number}</span>
+                        <span>{formatFileSize(doc.file_size)}</span>
+                        <span>{formatDate(doc.uploaded_at)}</span>
+                      </div>
+                      <div className="flex items-center justify-end gap-2 pt-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          asChild
+                          className="h-7"
+                        >
+                          <a
+                            href={toFullUrl(doc.file_path)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-7">
+                              <Trash2 className="h-4 w-4 text-destructive" />
                             </Button>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="sm">
-                                  <Trash2 className="h-4 w-4 text-destructive" />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>
-                                    Delete Document
-                                  </AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    Are you sure you want to delete "
-                                    {doc.original_filename}"? This action cannot
-                                    be undone.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    onClick={() => handleDelete(doc.id)}
-                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                  >
-                                    Delete
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          </div>
-                        </TableCell>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>
+                                Delete Document
+                              </AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Are you sure you want to delete "
+                                {doc.original_filename}"? This action cannot be
+                                undone.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => handleDelete(doc.id)}
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                              >
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {/* Desktop table view */}
+                <div className="hidden lg:block overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[60px] whitespace-nowrap">
+                          Type
+                        </TableHead>
+                        <TableHead className="min-w-[250px] whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => sortDocs("original_filename")}
+                            className="flex items-center gap-1 hover:text-foreground transition-colors"
+                          >
+                            Filename{" "}
+                            {docSortKey === "original_filename" ? (
+                              docSortDir === "asc" ? (
+                                <ChevronUp className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )
+                            ) : (
+                              <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                            )}
+                          </button>
+                        </TableHead>
+                        <TableHead className="min-w-[180px] whitespace-nowrap">
+                          Task
+                        </TableHead>
+                        <TableHead className="min-w-[180px] whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => sortDocs("client_first_name")}
+                            className="flex items-center gap-1 hover:text-foreground transition-colors"
+                          >
+                            Client{" "}
+                            {docSortKey === "client_first_name" ? (
+                              docSortDir === "asc" ? (
+                                <ChevronUp className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )
+                            ) : (
+                              <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                            )}
+                          </button>
+                        </TableHead>
+                        <TableHead className="w-[120px] whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => sortDocs("application_number")}
+                            className="flex items-center gap-1 hover:text-foreground transition-colors"
+                          >
+                            Application{" "}
+                            {docSortKey === "application_number" ? (
+                              docSortDir === "asc" ? (
+                                <ChevronUp className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )
+                            ) : (
+                              <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                            )}
+                          </button>
+                        </TableHead>
+                        {hasGlobalDocumentAccess && (
+                          <TableHead className="w-[140px] whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => sortDocs("broker_first_name")}
+                              className="flex items-center gap-1 hover:text-foreground transition-colors"
+                            >
+                              Broker{" "}
+                              {docSortKey === "broker_first_name" ? (
+                                docSortDir === "asc" ? (
+                                  <ChevronUp className="h-3 w-3" />
+                                ) : (
+                                  <ChevronDown className="h-3 w-3" />
+                                )
+                              ) : (
+                                <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                              )}
+                            </button>
+                          </TableHead>
+                        )}
+                        <TableHead className="w-[100px] whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => sortDocs("file_size")}
+                            className="flex items-center gap-1 hover:text-foreground transition-colors"
+                          >
+                            Size{" "}
+                            {docSortKey === "file_size" ? (
+                              docSortDir === "asc" ? (
+                                <ChevronUp className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )
+                            ) : (
+                              <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                            )}
+                          </button>
+                        </TableHead>
+                        <TableHead className="w-[150px] whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => sortDocs("uploaded_at")}
+                            className="flex items-center gap-1 hover:text-foreground transition-colors"
+                          >
+                            Uploaded{" "}
+                            {docSortKey === "uploaded_at" ? (
+                              docSortDir === "asc" ? (
+                                <ChevronUp className="h-3 w-3" />
+                              ) : (
+                                <ChevronDown className="h-3 w-3" />
+                              )
+                            ) : (
+                              <ChevronsUpDown className="h-3 w-3 opacity-40" />
+                            )}
+                          </button>
+                        </TableHead>
+                        <TableHead className="w-[120px] text-right whitespace-nowrap">
+                          Actions
+                        </TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {(sortedDocuments as typeof filteredDocuments).map(
+                        (doc) => (
+                          <TableRow key={doc.id}>
+                            <TableCell>
+                              {doc.document_type === "pdf" ? (
+                                <FileText className="h-5 w-5 text-destructive" />
+                              ) : (
+                                <Image className="h-5 w-5 text-primary" />
+                              )}
+                            </TableCell>
+                            <TableCell className="max-w-xs">
+                              <div className="truncate font-medium">
+                                {doc.original_filename}
+                              </div>
+                              <div className="text-xs text-muted-foreground truncate">
+                                {doc.filename}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="font-medium">
+                                {doc.task_title}
+                              </div>
+                              <Badge variant="outline" className="mt-1 text-xs">
+                                {doc.task_type.replace("_", " ")}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <div className="font-medium">
+                                {doc.client_first_name} {doc.client_last_name}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {doc.client_email}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="secondary"
+                                className="whitespace-nowrap"
+                              >
+                                {doc.application_number}
+                              </Badge>
+                            </TableCell>
+                            {hasGlobalDocumentAccess && (
+                              <TableCell>
+                                {doc.broker_first_name &&
+                                doc.broker_last_name ? (
+                                  <div className="text-sm">
+                                    {doc.broker_first_name}{" "}
+                                    {doc.broker_last_name}
+                                  </div>
+                                ) : (
+                                  <span className="text-muted-foreground">
+                                    —
+                                  </span>
+                                )}
+                              </TableCell>
+                            )}
+                            <TableCell>
+                              {formatFileSize(doc.file_size)}
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {formatDate(doc.uploaded_at)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <Button variant="ghost" size="sm" asChild>
+                                  <a
+                                    href={toFullUrl(doc.file_path)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    <ExternalLink className="h-4 w-4" />
+                                  </a>
+                                </Button>
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button variant="ghost" size="sm">
+                                      <Trash2 className="h-4 w-4 text-destructive" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>
+                                        Delete Document
+                                      </AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        Are you sure you want to delete "
+                                        {doc.original_filename}"? This action
+                                        cannot be undone.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>
+                                        Cancel
+                                      </AlertDialogCancel>
+                                      <AlertDialogAction
+                                        onClick={() => handleDelete(doc.id)}
+                                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                      >
+                                        Delete
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ),
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>

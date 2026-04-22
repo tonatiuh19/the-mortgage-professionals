@@ -11,9 +11,10 @@ import {
   FileText,
   TrendingUp,
   Zap,
-  Crown,
   Home,
   X,
+  MessageSquare,
+  Phone,
 } from "lucide-react";
 import { useFormik } from "formik";
 import * as Yup from "yup";
@@ -31,16 +32,22 @@ import {
   selectShouldRedirectToWizard,
   selectIsClientAuthenticated,
 } from "@/store/slices/clientAuthSlice";
-
+import { ResendCodeButton } from "@/components/ResendCodeButton";
 const ClientLogin = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const error = useAppSelector(selectClientAuthError);
   const shouldRedirect = useAppSelector(selectShouldRedirectToWizard);
   const isAuthenticated = useAppSelector(selectIsClientAuthenticated);
+  const sendCodeLoading = useAppSelector(
+    (state) => state.clientAuth.sendCodeLoading,
+  );
 
   const [step, setStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
+  const [deliveryMethod, setDeliveryMethod] = useState<
+    "email" | "sms" | "call"
+  >("email");
 
   // Redirect authenticated users to portal
   useEffect(() => {
@@ -69,7 +76,12 @@ const ClientLogin = () => {
     }),
     onSubmit: async (values) => {
       setEmail(values.email);
-      const result = await dispatch(sendClientCode({ email: values.email }));
+      const result = await dispatch(
+        sendClientCode({
+          email: values.email,
+          delivery_method: deliveryMethod,
+        }),
+      );
 
       if (sendClientCode.fulfilled.match(result)) {
         if (!shouldRedirect) {
@@ -102,8 +114,14 @@ const ClientLogin = () => {
 
   const handleBackToEmail = () => {
     setStep("email");
+    setDeliveryMethod("email");
     codeFormik.resetForm();
     dispatch(clearClientError());
+  };
+
+  const handleResend = async () => {
+    dispatch(clearClientError());
+    await dispatch(sendClientCode({ email, delivery_method: deliveryMethod }));
   };
 
   return (
@@ -118,9 +136,9 @@ const ClientLogin = () => {
         {/* Background Image with Overlay */}
         <div className="absolute inset-0">
           <img
-            src="https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=1200&auto=format&fit=crop"
+            src="https://images.unsplash.com/photo-1570129477492-45c003edd2be?w=1200&auto=format&fit=crop"
             alt="Modern home"
-            className="w-full h-full object-cover opacity-20"
+            className="w-full h-full object-cover opacity-40"
           />
           <div className="absolute inset-0 bg-gradient-to-br from-primary/90 via-primary/80 to-primary/70" />
         </div>
@@ -160,12 +178,12 @@ const ClientLogin = () => {
           <div>
             <button
               onClick={() => navigate("/")}
-              className="flex items-center gap-3 group transition-transform hover:scale-105"
+              className="transition-transform hover:scale-105"
             >
               <img
                 src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png"
                 alt="The Mortgage Professionals"
-                className="h-12 w-auto filter brightness-0 invert"
+                className="h-20 w-auto brightness-0 invert"
               />
             </button>
           </div>
@@ -309,26 +327,31 @@ const ClientLogin = () => {
         >
           {/* Header */}
           <div className="text-center mb-8">
-            <motion.div
-              animate={{
-                rotate: [0, 5, -5, 0],
-              }}
-              transition={{
-                duration: 4,
-                repeat: Infinity,
-                ease: "easeInOut",
-              }}
-              className="inline-flex items-center justify-center rounded-3xl bg-gradient-to-br from-primary to-primary/60 p-4 shadow-lg shadow-primary/25 mb-6"
-            >
-              <Crown className="h-8 w-8 text-white" />
-            </motion.div>
+            <div className="flex justify-center mb-6 lg:hidden">
+              <button
+                onClick={() => navigate("/")}
+                className="transition-transform hover:scale-105"
+              >
+                <img
+                  src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png"
+                  alt="The Mortgage Professionals"
+                  className="h-10 w-auto"
+                />
+              </button>
+            </div>
             <h2 className="text-3xl font-bold mb-2">
-              {step === "email" ? "Client Portal Access" : "Verify Your Email"}
+              {step === "email"
+                ? "Client Portal Access"
+                : "Verify Your Identity"}
             </h2>
             <p className="text-muted-foreground">
               {step === "email"
                 ? "Enter your email to access your loan applications"
-                : "We've sent a code to protect your account"}
+                : deliveryMethod === "sms"
+                  ? "We've sent a code to your phone"
+                  : deliveryMethod === "call"
+                    ? "We're calling your registered phone number now"
+                    : "We've sent a code to protect your account"}
             </p>
 
             {/* Feature Pills */}
@@ -397,6 +420,55 @@ const ClientLogin = () => {
                   )}
                 </div>
 
+                {/* Delivery Method Toggle */}
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold flex items-center gap-2">
+                    Send code via
+                  </p>
+                  <div className="grid grid-cols-3 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryMethod("email")}
+                      className={`flex items-center justify-center gap-2 h-11 rounded-xl border-2 text-sm font-medium transition-all ${
+                        deliveryMethod === "email"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border/50 text-muted-foreground hover:border-border"
+                      }`}
+                    >
+                      <Mail className="h-4 w-4" />
+                      Email
+                    </button>
+                    <button
+                      type="button"
+                      disabled
+                      title="Coming soon"
+                      className="flex items-center justify-center gap-2 h-11 rounded-xl border-2 text-sm font-medium border-gray-100 text-gray-300 cursor-not-allowed bg-gray-50"
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                      SMS
+                    </button>
+                    <button
+                      type="button"
+                      disabled
+                      title="Coming soon"
+                      className="flex items-center justify-center gap-2 h-11 rounded-xl border-2 text-sm font-medium border-gray-100 text-gray-300 cursor-not-allowed bg-gray-50"
+                    >
+                      <Phone className="h-4 w-4" />
+                      Call
+                    </button>
+                  </div>
+                  {deliveryMethod === "sms" && (
+                    <p className="text-xs text-muted-foreground">
+                      Code will be sent to your registered phone number.
+                    </p>
+                  )}
+                  {deliveryMethod === "call" && (
+                    <p className="text-xs text-muted-foreground">
+                      We'll call your registered phone and read the code aloud.
+                    </p>
+                  )}
+                </div>
+
                 {error && !shouldRedirect && (
                   <motion.div
                     initial={{ opacity: 0, scale: 0.95 }}
@@ -406,9 +478,24 @@ const ClientLogin = () => {
                       variant="destructive"
                       className="border-destructive/50 bg-destructive/10"
                     >
-                      <AlertDescription className="flex items-center gap-2">
-                        <div className="h-1.5 w-1.5 rounded-full bg-destructive animate-pulse" />
-                        {error}
+                      <AlertDescription className="flex flex-col gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="h-1.5 w-1.5 rounded-full bg-destructive animate-pulse shrink-0" />
+                          {error}
+                        </div>
+                        {(deliveryMethod === "sms" ||
+                          deliveryMethod === "call") && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeliveryMethod("email");
+                              dispatch(clearClientError());
+                            }}
+                            className="self-start text-xs font-semibold underline underline-offset-2 hover:opacity-80"
+                          >
+                            Try with email instead →
+                          </button>
+                        )}
                       </AlertDescription>
                     </Alert>
                   </motion.div>
@@ -443,7 +530,7 @@ const ClientLogin = () => {
                   </div>
                   <div className="relative flex justify-center text-xs">
                     <span className="bg-background px-4 text-muted-foreground font-medium">
-                      New to The Mortgage Professionals?
+                      New to Encore?
                     </span>
                   </div>
                 </div>
@@ -510,14 +597,28 @@ const ClientLogin = () => {
                         <Sparkles className="h-4 w-4 text-primary" />
                       </p>
                       <p className="text-muted-foreground leading-relaxed">
-                        We sent a 6-digit verification code to{" "}
-                        <span className="font-semibold text-foreground px-1.5 py-0.5 rounded bg-primary/10">
-                          {email}
-                        </span>
+                        {deliveryMethod === "call" ? (
+                          <>
+                            We're calling your registered phone with the code.
+                          </>
+                        ) : (
+                          <>
+                            We sent a 6-digit verification code to your{" "}
+                            {deliveryMethod === "sms" ? (
+                              <span className="font-semibold text-foreground px-1.5 py-0.5 rounded bg-primary/10">
+                                phone
+                              </span>
+                            ) : (
+                              <span className="font-semibold text-foreground px-1.5 py-0.5 rounded bg-primary/10">
+                                {email}
+                              </span>
+                            )}
+                          </>
+                        )}
                       </p>
                       <p className="text-xs text-muted-foreground flex items-center gap-1.5 pt-1">
                         <Lock className="h-3 w-3" />
-                        Expires in 10 minutes
+                        Expires in 15 minutes
                       </p>
                     </div>
                   </div>
@@ -605,18 +706,47 @@ const ClientLogin = () => {
                     ← Back to Email
                   </Button>
 
-                  {/* Resend Code */}
-                  <div className="text-center pt-2">
-                    <p className="text-xs text-muted-foreground">
-                      Didn't receive the code?{" "}
+                  {/* Resend / Change delivery */}
+                  <div className="space-y-3 pt-2">
+                    <p className="text-xs text-muted-foreground text-center font-medium">
+                      Didn't receive it? Try a different method:
+                    </p>
+                    <div className="grid grid-cols-3 gap-3">
                       <button
                         type="button"
-                        onClick={() => emailFormik.handleSubmit()}
-                        className="text-primary hover:underline font-semibold"
+                        onClick={() => setDeliveryMethod("email")}
+                        className={`flex items-center justify-center gap-2 h-10 rounded-xl border-2 text-sm font-medium transition-all ${
+                          deliveryMethod === "email"
+                            ? "border-primary bg-primary/10 text-primary"
+                            : "border-border/50 text-muted-foreground hover:border-border"
+                        }`}
                       >
-                        Resend Code
+                        <Mail className="h-4 w-4" />
+                        Email
                       </button>
-                    </p>
+                      <button
+                        type="button"
+                        disabled
+                        title="Coming soon"
+                        className="flex items-center justify-center gap-2 h-10 rounded-xl border-2 text-sm font-medium border-gray-100 text-gray-300 cursor-not-allowed bg-gray-50"
+                      >
+                        <MessageSquare className="h-4 w-4" />
+                        SMS
+                      </button>
+                      <button
+                        type="button"
+                        disabled
+                        title="Coming soon"
+                        className="flex items-center justify-center gap-2 h-10 rounded-xl border-2 text-sm font-medium border-gray-100 text-gray-300 cursor-not-allowed bg-gray-50"
+                      >
+                        <Phone className="h-4 w-4" />
+                        Call
+                      </button>
+                    </div>
+                    <ResendCodeButton
+                      onResend={handleResend}
+                      loading={sendCodeLoading}
+                    />
                   </div>
                 </div>
               </motion.form>

@@ -48,7 +48,7 @@ const ClientLayout = ({ children }: ClientLayoutProps) => {
 
   useEffect(() => {
     if (!isAuthenticated) {
-      navigate("/");
+      navigate("/client-login");
     }
   }, [isAuthenticated, navigate]);
 

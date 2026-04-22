@@ -157,19 +157,15 @@ export const TaskCompletionModal: React.FC<TaskCompletionModalProps> = ({
 
   // ─── Is the form ready to submit? ─────────────────────────────────────────
   const isFormReady = React.useMemo(() => {
-    // All required input fields must have a non-empty value
-    const inputsOk = inputFields
-      .filter((f) => f.is_required)
-      .every((f) => {
-        const val = formik.values[`field_${f.id}`];
-        if (f.field_type === "checkbox") return val === true;
-        return val !== undefined && val !== null && String(val).trim() !== "";
-      });
+    // ALL input fields (required or not) must have a non-empty value
+    const inputsOk = inputFields.every((f) => {
+      const val = formik.values[`field_${f.id}`];
+      if (f.field_type === "checkbox") return val === true;
+      return val !== undefined && val !== null && String(val).trim() !== "";
+    });
 
-    // All required file fields must have an uploaded file
-    const filesOk = fileFields
-      .filter((f) => f.is_required)
-      .every((f) => uploadedFiles.has(f.id));
+    // ALL file fields (required or not) must have an uploaded file
+    const filesOk = fileFields.every((f) => uploadedFiles.has(f.id));
 
     return inputsOk && filesOk;
   }, [formik.values, uploadedFiles, inputFields, fileFields]);
@@ -211,10 +207,8 @@ export const TaskCompletionModal: React.FC<TaskCompletionModalProps> = ({
       return;
     }
 
-    // Validate required file fields
-    const missingFiles = fileFields.filter(
-      (f) => f.is_required && !uploadedFiles.has(f.id),
-    );
+    // Validate all file fields have uploads
+    const missingFiles = fileFields.filter((f) => !uploadedFiles.has(f.id));
     if (missingFiles.length > 0) {
       toast({
         title: "Missing documents",
@@ -575,7 +569,7 @@ export const TaskCompletionModal: React.FC<TaskCompletionModalProps> = ({
             <div>
               <h2 className="text-xl font-bold">Submitted for Review!</h2>
               <p className="text-sm text-muted-foreground mt-1">
-                Your submission has been received and is awaiting broker
+                Your submission has been received and is awaiting realtor
                 approval.
               </p>
             </div>
@@ -681,7 +675,7 @@ export const TaskCompletionModal: React.FC<TaskCompletionModalProps> = ({
                     <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
                     <p className="text-sm text-amber-700 dark:text-amber-400">
                       The signing document is not yet ready. Please contact your
-                      broker.
+                      realtor.
                     </p>
                   </div>
                 )

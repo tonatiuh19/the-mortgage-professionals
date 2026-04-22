@@ -143,8 +143,8 @@ const Footer = () => {
         </div>
         <div className="mt-12 border-t pt-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-muted-foreground">
           <p>
-            © {new Date().getFullYear()} The Mortgage Professionals. All rights
-            reserved. NMLS #1105497
+            © {new Date().getFullYear()} The Mortgage Professionals. All rights reserved.
+            NMLS #1105497
           </p>
           <Link
             to="/broker-login"

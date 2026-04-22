@@ -242,6 +242,10 @@ interface PreApprovalLetterModalProps {
   onClose: () => void;
   loanId: number;
   loanAmount: number;
+  loanPropertyAddress?: string | null;
+  loanPropertyCity?: string | null;
+  loanPropertyState?: string | null;
+  loanPropertyZip?: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -253,6 +257,10 @@ export function PreApprovalLetterModal({
   onClose,
   loanId,
   loanAmount,
+  loanPropertyAddress,
+  loanPropertyCity,
+  loanPropertyState,
+  loanPropertyZip,
 }: PreApprovalLetterModalProps) {
   const dispatch = useAppDispatch();
   const { user, sessionToken } = useAppSelector((state) => state.brokerAuth);
@@ -397,6 +405,12 @@ export function PreApprovalLetterModal({
       .required("FICO score is required"),
     letter_date: Yup.string().required("Letter date is required"),
     expires_at: Yup.string().required("Expiry date is required"),
+    purchase_property_address: Yup.string().required(
+      "Street address is required",
+    ),
+    purchase_property_city: Yup.string().nullable(),
+    purchase_property_state: Yup.string().nullable(),
+    purchase_property_zip: Yup.string().nullable(),
   });
 
   const createFormik = useFormik({
@@ -409,6 +423,10 @@ export function PreApprovalLetterModal({
       fico_score: "",
       letter_date: "",
       expires_at: "",
+      purchase_property_address: loanPropertyAddress ?? "",
+      purchase_property_city: loanPropertyCity ?? "",
+      purchase_property_state: loanPropertyState ?? "",
+      purchase_property_zip: loanPropertyZip ?? "",
     },
     validationSchema: createSchema,
     validateOnMount: true,
@@ -429,6 +447,11 @@ export function PreApprovalLetterModal({
               fico_score: values.fico_score
                 ? Number(values.fico_score)
                 : undefined,
+              purchase_property_address:
+                values.purchase_property_address || null,
+              purchase_property_city: values.purchase_property_city || null,
+              purchase_property_state: values.purchase_property_state || null,
+              purchase_property_zip: values.purchase_property_zip || null,
             },
           }),
         ).unwrap();
@@ -916,6 +939,66 @@ export function PreApprovalLetterModal({
                               {createFormik.errors.expires_at}
                             </p>
                           )}
+                      </div>
+                    </div>
+
+                    {/* Purchase Property Address */}
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center gap-2">
+                        <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">
+                          Purchase Property Address
+                        </span>
+                        <span className="text-xs text-destructive font-semibold">
+                          *
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        <Input
+                          id="purchase_property_address"
+                          {...createFormik.getFieldProps(
+                            "purchase_property_address",
+                          )}
+                          placeholder="Street address of property to purchase"
+                          className={cn(
+                            createFormik.touched.purchase_property_address &&
+                              createFormik.errors.purchase_property_address &&
+                              "border-destructive focus-visible:ring-destructive",
+                          )}
+                        />
+                        {createFormik.touched.purchase_property_address &&
+                          createFormik.errors.purchase_property_address && (
+                            <p className="text-xs text-destructive">
+                              {createFormik.errors.purchase_property_address}
+                            </p>
+                          )}
+                        <div className="grid grid-cols-3 gap-2">
+                          <Input
+                            id="purchase_property_city"
+                            {...createFormik.getFieldProps(
+                              "purchase_property_city",
+                            )}
+                            placeholder="City"
+                          />
+                          <Input
+                            id="purchase_property_state"
+                            {...createFormik.getFieldProps(
+                              "purchase_property_state",
+                            )}
+                            placeholder="State"
+                          />
+                          <Input
+                            id="purchase_property_zip"
+                            {...createFormik.getFieldProps(
+                              "purchase_property_zip",
+                            )}
+                            placeholder="ZIP"
+                          />
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Pre-filled from the loan's registered property
+                          address.
+                        </p>
                       </div>
                     </div>
                   </form>
