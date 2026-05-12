@@ -29,10 +29,13 @@ import ClientTasks from "./pages/client/Tasks";
 import ClientProfile from "./pages/client/Profile";
 import ClientDocuments from "./pages/client/Documents";
 import ClientCalculator from "./pages/client/Calculator";
-import FAQ from "./pages/FAQ";
-import LoanOptions from "./pages/LoanOptions";
 import About from "./pages/About";
 import Contact from "./pages/Contact";
+import ConventionalLoan from "./pages/ConventionalLoan";
+import FHALoan from "./pages/FHALoan";
+import VALoan from "./pages/VALoan";
+import OurTeam from "./pages/OurTeam";
+import PrivacyPolicy from "./pages/PrivacyPolicy";
 import SchedulerPage from "./pages/Scheduler";
 import SchedulerReschedule from "./pages/SchedulerReschedule";
 import AdminScheduler from "./pages/admin/Scheduler";
@@ -110,6 +113,16 @@ const AppRoutes = () => (
       }
     />
     <Route
+      path="/mortgage-calculator"
+      element={
+        <AppLayout showHeader={true} showFooter={true}>
+          <div className="container max-w-7xl mx-auto px-4 py-10">
+            <ClientCalculator />
+          </div>
+        </AppLayout>
+      }
+    />
+    <Route
       path="/broker-login"
       element={
         <AppLayout showHeader={false} showFooter={false}>
@@ -119,18 +132,26 @@ const AppRoutes = () => (
     />
     <Route path="/client-login" element={<ClientLogin />} />
     <Route
-      path="/faq"
+      path="/conventional-loan"
       element={
         <AppLayout showHeader={true} showFooter={true}>
-          <FAQ />
+          <ConventionalLoan />
         </AppLayout>
       }
     />
     <Route
-      path="/loan-options"
+      path="/fha-loan"
       element={
         <AppLayout showHeader={true} showFooter={true}>
-          <LoanOptions />
+          <FHALoan />
+        </AppLayout>
+      }
+    />
+    <Route
+      path="/va-loan"
+      element={
+        <AppLayout showHeader={true} showFooter={true}>
+          <VALoan />
         </AppLayout>
       }
     />
@@ -143,10 +164,42 @@ const AppRoutes = () => (
       }
     />
     <Route
+      path="/about-us"
+      element={
+        <AppLayout showHeader={true} showFooter={true}>
+          <About />
+        </AppLayout>
+      }
+    />
+    <Route
+      path="/our-team"
+      element={
+        <AppLayout showHeader={true} showFooter={true}>
+          <OurTeam />
+        </AppLayout>
+      }
+    />
+    <Route
       path="/contact"
       element={
         <AppLayout showHeader={true} showFooter={true}>
           <Contact />
+        </AppLayout>
+      }
+    />
+    <Route
+      path="/contact-us"
+      element={
+        <AppLayout showHeader={true} showFooter={true}>
+          <Contact />
+        </AppLayout>
+      }
+    />
+    <Route
+      path="/privacy-policy"
+      element={
+        <AppLayout showHeader={true} showFooter={true}>
+          <PrivacyPolicy />
         </AppLayout>
       }
     />

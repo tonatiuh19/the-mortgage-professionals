@@ -1,18 +1,7 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import {
-  LayoutDashboard,
-  FileText,
-  Users,
-  BarChart3,
-  Settings,
-  LogOut,
-  Menu,
-  X,
-  ChevronRight,
-  User,
-} from "lucide-react";
+import { LayoutDashboard, FileText, LogOut, Menu, X, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppSelector, useAppDispatch } from "@/store/hooks";
 import {
@@ -54,11 +43,10 @@ const Navbar = () => {
   };
 
   const navLinks = [
-    { name: "Purchase", href: "/calculator?type=purchase" },
-    { name: "Refinance", href: "/calculator?type=refinance" },
-    { name: "Loan Options", href: "/loan-options" },
-    { name: "About", href: "/about" },
-    { name: "Contact", href: "/contact" },
+    { name: "Mortgage Programs", href: "/conventional-loan" },
+    { name: "Mortgage Calculator", href: "/mortgage-calculator" },
+    { name: "About Us", href: "/about-us" },
+    { name: "Contact Us", href: "/contact-us" },
   ];
 
   const isHome = location.pathname === "/";
@@ -112,13 +100,13 @@ const Navbar = () => {
 
           <div className="flex items-center gap-4">
             <div className="hidden md:flex items-center gap-3">
-              <a href="tel:(562)337-0000">
+              <a href="tel:(562)665-4132">
                 <Button
                   variant="ghost"
                   size="sm"
                   className="font-semibold hover:bg-white/10 transition-colors"
                 >
-                  (562) 337-0000
+                  (562) 665-4132
                 </Button>
               </a>
               {!isClientAuthenticated && (
@@ -133,14 +121,18 @@ const Navbar = () => {
                       My Applications
                     </Button>
                   </Link>
-                  <Link to="/apply">
+                  <a
+                    href="https://2302276.my1003app.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
                     <Button
                       size="sm"
                       className="font-bold shadow-lg shadow-primary/20 px-6 rounded-xl hover:scale-105 active:scale-95 transition-all"
                     >
-                      Get Pre-Approved
+                      Apply Online
                     </Button>
-                  </Link>
+                  </a>
                 </>
               )}
               {isClientAuthenticated && client && (
@@ -232,12 +224,12 @@ const Navbar = () => {
               );
             })}
             <div className="mt-4 flex flex-col gap-2 px-1 pb-2">
-              <a href="tel:(562)337-0000" className="w-full">
+              <a href="tel:(562)665-4132" className="w-full">
                 <Button
                   variant="outline"
                   className="w-full rounded-xl border-white/20 hover:bg-white/10"
                 >
-                  (562) 337-0000
+                  (562) 665-4132
                 </Button>
               </a>
               {!isClientAuthenticated && (
@@ -252,11 +244,16 @@ const Navbar = () => {
                       My Applications
                     </Button>
                   </Link>
-                  <Link to="/apply">
+                  <a
+                    href="https://2302276.my1003app.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full"
+                  >
                     <Button className="w-full rounded-xl font-bold shadow-lg shadow-primary/20">
-                      Get Pre-Approved
+                      Apply Online
                     </Button>
-                  </Link>
+                  </a>
                 </>
               )}
               {isClientAuthenticated && client && (

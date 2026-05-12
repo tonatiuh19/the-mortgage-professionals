@@ -90,7 +90,7 @@ const Contact: React.FC = () => {
       <MetaHelmet
         title="Contact Us | The Mortgage Professionals"
         description="Get in touch with The Mortgage Professionals. Call, email, or send us a message — our loan officers are ready to help you find the right mortgage."
-        keywords="contact The Mortgage Professionals, mortgage banker, Whittier CA, (562) 337-0000, mortgage questions"
+        keywords="contact The Mortgage Professionals, mortgage banker, Bellflower CA, (562) 665-4132, mortgage questions"
       />
 
       {/* Hero */}
@@ -154,10 +154,10 @@ const Contact: React.FC = () => {
                         Phone
                       </p>
                       <a
-                        href="tel:(562)337-0000"
+                        href="tel:(562)665-4132"
                         className="text-base font-bold hover:text-primary transition-colors"
                       >
-                        (562) 337-0000
+                        (562) 665-4132
                       </a>
                       <p className="text-xs text-muted-foreground mt-0.5">
                         Direct line to a loan officer
@@ -177,10 +177,10 @@ const Contact: React.FC = () => {
                         Email
                       </p>
                       <a
-                        href="mailto:info@themortgageprofessionals.net"
+                        href="mailto:raul@theosegueragroup.com"
                         className="text-sm font-bold hover:text-primary transition-colors break-all"
                       >
-                        info@themortgageprofessionals.net
+                        raul@theosegueragroup.com
                       </a>
                       <p className="text-xs text-muted-foreground mt-0.5">
                         We reply within 1 business day
@@ -199,10 +199,9 @@ const Contact: React.FC = () => {
                       <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-1">
                         Office
                       </p>
-                      <p className="text-sm font-bold">15111 Whittier Blvd</p>
-                      <p className="text-sm font-bold">Suite 101-B</p>
+                      <p className="text-sm font-bold">16901 Bellflower Blvd</p>
                       <p className="text-sm text-muted-foreground">
-                        Whittier, CA 90603
+                        Bellflower, CA 90706
                       </p>
                     </div>
                   </CardContent>
@@ -220,12 +219,14 @@ const Contact: React.FC = () => {
                       </p>
                       <p className="text-sm font-bold">Monday – Friday</p>
                       <p className="text-sm text-muted-foreground">
-                        7:00 AM – 8:00 PM PST
+                        8:00 AM – 5:00 PM
                       </p>
                       <p className="text-sm font-bold mt-1">Saturday</p>
                       <p className="text-sm text-muted-foreground">
-                        By appointment
+                        8:00 AM – 12:00 PM
                       </p>
+                      <p className="text-sm font-bold mt-1">Sunday</p>
+                      <p className="text-sm text-muted-foreground">Closed</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -440,14 +441,14 @@ const Contact: React.FC = () => {
         <div className="container">
           <div className="rounded-2xl overflow-hidden border border-border h-64 bg-muted/40 flex items-center justify-center">
             <a
-              href="https://maps.google.com/?q=15111+Whittier+Blvd+Suite+101-B+Whittier+CA+90603"
+              href="https://maps.google.com/?q=16901+Bellflower+Blvd+Bellflower+CA+90706"
               target="_blank"
               rel="noopener noreferrer"
               className="flex flex-col items-center gap-2 text-muted-foreground hover:text-primary transition-colors"
             >
               <MapPin className="h-8 w-8" />
               <span className="font-semibold">
-                15111 Whittier Blvd Suite 101-B, Whittier CA 90603
+                16901 Bellflower Blvd, Bellflower CA 90706
               </span>
               <span className="text-xs underline">Open in Google Maps</span>
             </a>
