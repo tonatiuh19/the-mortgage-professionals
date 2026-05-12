@@ -70,15 +70,6 @@ const SaveAsTemplateDialog = ({
   const { toast } = useToast();
   const [category, setCategory] = useState("follow_up");
 
-  const computedValidationSchema = Yup.object({
-    name: Yup.string().required("Template name is required").max(255),
-    body: Yup.string().required("Message body is required"),
-    subject:
-      channelType === "email"
-        ? Yup.string().required("Subject is required for email templates")
-        : Yup.string().optional(),
-  });
-
   const formik = useFormik({
     initialValues: {
       name: "",
@@ -86,7 +77,7 @@ const SaveAsTemplateDialog = ({
       subject: defaultSubject,
       body: defaultBody,
     },
-    validationSchema: computedValidationSchema,
+    validationSchema,
     validateOnBlur: true,
     validateOnChange: false,
     onSubmit: async (values, { setSubmitting, resetForm }) => {

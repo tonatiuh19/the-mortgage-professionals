@@ -33,6 +33,8 @@ interface BrokerUser {
   office_zip?: string | null;
   years_experience?: number | null;
   total_loans_closed?: number;
+  // Feature flags (set by server at profile load time)
+  office365_enabled?: boolean;
 }
 
 interface BrokerAuthState {

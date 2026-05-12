@@ -61,9 +61,11 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   fetchSchedulerSettings,
+  fetchTeamsEligibility,
   updateSchedulerSettings,
   fetchScheduledMeetings,
   updateScheduledMeeting,
@@ -256,30 +258,31 @@ function MeetingCard({
         </button>
       </div>
 
-      {meeting.meeting_type === "video" && meeting.zoom_join_url && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <a
-            href={meeting.zoom_join_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
-          >
-            <ExternalLink className="h-3 w-3" />
-            Join Zoom
-          </a>
-          {meeting.zoom_start_url && (
+      {(meeting.meeting_type === "video" || meeting.meeting_type === "teams") &&
+        (meeting.teams_join_url || meeting.zoom_join_url) && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <a
-              href={meeting.zoom_start_url}
+              href={meeting.teams_join_url || meeting.zoom_join_url || "#"}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
+              className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
             >
-              <Video className="h-3 w-3" />
-              Start as host
+              <ExternalLink className="h-3 w-3" />
+              {meeting.meeting_type === "teams" ? "Join Teams" : "Join Zoom"}
             </a>
-          )}
-        </div>
-      )}
+            {meeting.zoom_start_url && (
+              <a
+                href={meeting.zoom_start_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
+              >
+                <Video className="h-3 w-3" />
+                Start as host
+              </a>
+            )}
+          </div>
+        )}
     </motion.div>
   );
 }
@@ -510,16 +513,20 @@ function EditMeetingDialog({
                   </a>
                 </span>
               )}
-              {meeting.zoom_join_url && (
+              {(meeting.teams_join_url || meeting.zoom_join_url) && (
                 <div className="flex items-center gap-2 col-span-2 flex-wrap">
                   <a
-                    href={meeting.zoom_join_url}
+                    href={
+                      meeting.teams_join_url || meeting.zoom_join_url || "#"
+                    }
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1 text-blue-400 hover:text-blue-300"
                   >
                     <Video className="h-3 w-3" />
-                    Join Zoom
+                    {meeting.meeting_type === "teams"
+                      ? "Join Teams"
+                      : "Join Zoom"}
                     <ExternalLink className="h-3 w-3" />
                   </a>
                   {meeting.zoom_start_url && (
@@ -577,7 +584,7 @@ function EditMeetingDialog({
               Meeting Type
             </Label>
             <div className="grid grid-cols-2 gap-2">
-              {(["phone", "video"] as MeetingType[]).map((t) => (
+              {(["phone", "video", "teams"] as MeetingType[]).map((t) => (
                 <button
                   key={t}
                   onClick={() => setMeetingType(t)}
@@ -593,7 +600,7 @@ function EditMeetingDialog({
                   ) : (
                     <Video className="h-4 w-4" />
                   )}
-                  {t === "phone" ? "Phone" : "Video"}
+                  {t === "phone" ? "Phone" : t === "teams" ? "Teams" : "Zoom"}
                 </button>
               ))}
             </div>
@@ -664,7 +671,7 @@ const createSchema = Yup.object({
   client_phone: Yup.string(),
   meeting_date: Yup.string().required("Date required"),
   meeting_time: Yup.string().required("Time required"),
-  meeting_type: Yup.string().oneOf(["phone", "video"]).required(),
+  meeting_type: Yup.string().oneOf(["phone", "video", "teams"]).required(),
   notes: Yup.string(),
 });
 
@@ -792,8 +799,8 @@ function CreateMeetingDialog({
             <Label className="text-foreground/80 text-sm mb-1.5 block">
               Method *
             </Label>
-            <div className="grid grid-cols-2 gap-2">
-              {(["phone", "video"] as MeetingType[]).map((t) => (
+            <div className="grid grid-cols-3 gap-2">
+              {(["phone", "video", "teams"] as MeetingType[]).map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -810,7 +817,7 @@ function CreateMeetingDialog({
                   ) : (
                     <Video className="h-4 w-4" />
                   )}
-                  {t === "phone" ? "Phone" : "Video"}
+                  {t === "phone" ? "Phone" : t === "teams" ? "Teams" : "Zoom"}
                 </button>
               ))}
             </div>
@@ -860,16 +867,44 @@ function CreateMeetingDialog({
 
 function SettingsPanel() {
   const dispatch = useAppDispatch();
+  const { toast } = useToast();
   const { settings, availability, isLoadingSettings, isSavingSettings } =
     useAppSelector((s) => s.scheduler);
   const { user: authUser } = useAppSelector((s) => s.brokerAuth);
+  const roleLabel = authUser?.role === "admin" ? "Mortgage Banker" : "Partner";
+
+  const getFriendlyTeamsError = (message?: string): string => {
+    if (!message) {
+      return `${roleLabel} email is not eligible for Microsoft Teams meetings.`;
+    }
+
+    const normalized = message.toLowerCase();
+
+    if (normalized.includes("email is missing")) {
+      return `${roleLabel} email is missing. Add an email on your profile before enabling Teams.`;
+    }
+
+    if (normalized.includes("not a microsoft 365 user")) {
+      return `This ${roleLabel.toLowerCase()} email is not connected to your company Microsoft 365 account. Use a work Microsoft 365 email or ask your admin to set up Teams for you.`;
+    }
+
+    if (
+      normalized.includes("cannot verify teams eligibility") ||
+      normalized.includes("permissions are insufficient") ||
+      normalized.includes("directory read")
+    ) {
+      return `We could not verify this ${roleLabel.toLowerCase()} email for Teams yet. Please ask your admin to finish the Teams setup in Microsoft 365.`;
+    }
+
+    return message.replace(/broker/gi, roleLabel);
+  };
   const { brokers } = useAppSelector((s) => s.brokers);
   const isAdmin = authUser?.role === "admin";
 
   // Load partner brokers for admin link generation
   useEffect(() => {
     if (isAdmin && brokers.length === 0) {
-      dispatch(fetchBrokers({}));
+      dispatch(fetchBrokers());
     }
   }, [isAdmin]); // eslint-disable-line
 
@@ -889,6 +924,12 @@ function SettingsPanel() {
     SchedulerAvailability[]
   >([]);
   const [saved, setSaved] = useState(false);
+  const [isCheckingTeamsEligibility, setIsCheckingTeamsEligibility] =
+    useState(false);
+  const [teamsEligibilityResult, setTeamsEligibilityResult] = useState<{
+    eligible: boolean;
+    policyReady?: boolean;
+  } | null>(null);
 
   useEffect(() => {
     if (availability.length > 0) {
@@ -910,23 +951,34 @@ function SettingsPanel() {
       timezone: settings?.timezone ?? "America/Chicago",
       allow_phone: settings?.allow_phone ?? true,
       allow_video: settings?.allow_video ?? true,
+      allow_teams: settings?.allow_teams ?? false,
     },
     enableReinitialize: true,
     onSubmit: async (values) => {
-      await dispatch(
-        updateSchedulerSettings({
-          ...values,
-          availability: localAvailability.map((a) => ({
-            day_of_week: a.day_of_week,
-            start_time: a.start_time,
-            end_time: a.end_time,
-            is_active: a.is_active,
-          })),
-        }),
-      );
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-      dispatch(fetchSchedulerSettings());
+      try {
+        await dispatch(
+          updateSchedulerSettings({
+            ...values,
+            availability: localAvailability.map((a) => ({
+              day_of_week: a.day_of_week,
+              start_time: a.start_time,
+              end_time: a.end_time,
+              is_active: a.is_active,
+            })),
+          }),
+        ).unwrap();
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+        dispatch(fetchSchedulerSettings());
+      } catch (err) {
+        const message =
+          typeof err === "string" ? err : "Failed to save scheduler settings.";
+        toast({
+          title: "Unable to save settings",
+          description: message,
+          variant: "destructive",
+        });
+      }
     },
   });
 
@@ -1133,6 +1185,87 @@ function SettingsPanel() {
             }
           />
         </div>
+        <div className="flex items-center justify-between py-2 border-t border-border/30">
+          <div className="flex items-center gap-3">
+            <Video className="h-4 w-4 text-indigo-400" />
+            <div>
+              <p className="text-foreground text-sm font-medium">
+                Video Call (Teams)
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Creates a Microsoft Teams meeting automatically. Requires Azure
+                Office365 credentials in server env.
+              </p>
+            </div>
+          </div>
+          <Switch
+            checked={settingsFormik.values.allow_teams}
+            disabled={isCheckingTeamsEligibility}
+            onCheckedChange={async (v) => {
+              if (!v) {
+                settingsFormik.setFieldValue("allow_teams", false);
+                return;
+              }
+
+              if (v && !authUser?.email) {
+                toast({
+                  title: "Cannot enable Teams",
+                  description: getFriendlyTeamsError("email is missing"),
+                  variant: "destructive",
+                });
+                return;
+              }
+
+              setIsCheckingTeamsEligibility(true);
+              try {
+                const eligibility = await dispatch(
+                  fetchTeamsEligibility(),
+                ).unwrap();
+                if (!eligibility.eligible) {
+                  toast({
+                    title: "Cannot enable Teams",
+                    description: getFriendlyTeamsError(eligibility.error),
+                    variant: "destructive",
+                  });
+                  settingsFormik.setFieldValue("allow_teams", false);
+                  return;
+                }
+                setTeamsEligibilityResult(eligibility);
+                settingsFormik.setFieldValue("allow_teams", true);
+              } catch (err) {
+                const message =
+                  typeof err === "string"
+                    ? err
+                    : "Unable to validate Teams eligibility right now.";
+                toast({
+                  title: "Cannot enable Teams",
+                  description: getFriendlyTeamsError(message),
+                  variant: "destructive",
+                });
+                settingsFormik.setFieldValue("allow_teams", false);
+              } finally {
+                setIsCheckingTeamsEligibility(false);
+              }
+            }}
+          />
+        </div>
+        {settingsFormik.values.allow_teams &&
+          teamsEligibilityResult?.policyReady === false && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+              <span className="mt-0.5 shrink-0">⏳</span>
+              <span>
+                <strong>Teams access is activating.</strong> Your account was
+                verified but the meeting policy hasn&apos;t propagated yet —
+                this typically takes up to 1 hour. Bookings will work
+                automatically once active.
+              </span>
+            </div>
+          )}
+        <div className="rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          Turn this on only if your work email is connected to your company
+          Microsoft 365 account. If your account was just added, Teams access
+          can take up to 24 hours to activate automatically.
+        </div>
       </div>
 
       {/* Availability */}
@@ -1234,7 +1367,7 @@ function SettingsPanel() {
                 return (
                   <div
                     key={b.id}
-                    className="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/30 px-4 py-3"
+                    className="flex items-center gap-2 rounded-lg border border-border/40 bg-background/60 px-3 py-2"
                   >
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-foreground">
@@ -1677,7 +1810,11 @@ const AdminScheduler: React.FC = () => {
                               ) : (
                                 <Video className="h-3.5 w-3.5 text-green-400" />
                               )}
-                              {m.meeting_type === "phone" ? "Phone" : "Video"}
+                              {m.meeting_type === "phone"
+                                ? "Phone"
+                                : m.meeting_type === "teams"
+                                  ? "Teams"
+                                  : "Zoom"}
                             </span>
                           </td>
                           <td className="px-4 py-3">

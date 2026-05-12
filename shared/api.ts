@@ -17,18 +17,28 @@ export interface DemoResponse {
 export interface CreateLoanRequest {
   client_email: string;
   client_first_name: string;
+  client_middle_name?: string;
   client_last_name: string;
   client_phone: string;
+  client_address_street?: string;
+  client_address_unit?: string;
+  client_address_city?: string;
+  client_address_state?: string;
+  client_address_zip?: string;
   loan_type: string;
   loan_amount: string;
   property_value: string;
   down_payment: string;
   loan_purpose?: string;
   property_address: string;
+  property_unit?: string;
   property_city: string;
   property_state: string;
   property_zip: string;
   property_type: string;
+  marital_status?: string;
+  dependent_count?: number;
+  years_at_address?: number;
   estimated_close_date?: string;
   notes?: string;
   tasks: Array<{
@@ -263,11 +273,13 @@ export interface ClientProfile {
   id: number;
   email: string;
   first_name: string;
+  middle_name: string | null;
   last_name: string;
   phone: string | null;
   alternate_phone: string | null;
   date_of_birth: string | null;
   address_street: string | null;
+  address_unit: string | null;
   address_city: string | null;
   address_state: string | null;
   address_zip: string | null;
@@ -287,10 +299,12 @@ export interface GetClientProfileResponse {
 
 export interface UpdateClientProfileRequest {
   first_name?: string;
+  middle_name?: string;
   last_name?: string;
   phone?: string;
   alternate_phone?: string;
   address_street?: string;
+  address_unit?: string;
   address_city?: string;
   address_state?: string;
   address_zip?: string;
@@ -661,6 +675,7 @@ export interface CreateBrokerRequest {
 export interface UpdateBrokerRequest {
   first_name?: string;
   last_name?: string;
+  email?: string;
   phone?: string;
   role?: "broker" | "admin";
   status?: "active" | "inactive" | "suspended";
@@ -731,6 +746,8 @@ export interface TaskTemplate {
   has_signing?: boolean;
   created_at: string;
   updated_at: string;
+  created_by_broker_id?: number | null;
+  created_by_broker_name?: string | null;
   form_fields?: TaskFormField[];
   sign_document?: TaskSignDocument | null;
 }
@@ -813,9 +830,15 @@ export interface GetClientsResponse {
     id: number;
     email: string;
     first_name: string;
+    middle_name: string | null;
     last_name: string;
     phone: string | null;
     date_of_birth: string | null;
+    address_street: string | null;
+    address_unit: string | null;
+    address_city: string | null;
+    address_state: string | null;
+    address_zip: string | null;
     status: string;
     created_at: string;
     total_applications: number;
@@ -827,18 +850,27 @@ export interface GetClientsResponse {
 
 export interface CreateClientRequest {
   first_name: string;
+  middle_name?: string;
   last_name: string;
   email: string;
   phone?: string;
+  address_street?: string;
+  address_unit?: string;
+  address_city?: string;
+  address_state?: string;
+  address_zip?: string;
 }
 
 export interface UpdateClientRequest {
   first_name?: string;
+  middle_name?: string;
   last_name?: string;
+  email?: string;
   phone?: string;
   alternate_phone?: string;
   date_of_birth?: string;
   address_street?: string;
+  address_unit?: string;
   address_city?: string;
   address_state?: string;
   address_zip?: string;
@@ -855,12 +887,14 @@ export interface GetClientDetailProfileResponse {
   client: {
     id: number;
     first_name: string;
+    middle_name: string | null;
     last_name: string;
     email: string;
     phone: string | null;
     alternate_phone: string | null;
     date_of_birth: string | null;
     address_street: string | null;
+    address_unit: string | null;
     address_city: string | null;
     address_state: string | null;
     address_zip: string | null;
@@ -935,7 +969,9 @@ export interface GetClientDetailProfileResponse {
 export interface UpdateClientResponse {
   success: boolean;
   client: CreateClientResponse["client"] & {
+    middle_name: string | null;
     address_street: string | null;
+    address_unit: string | null;
     address_city: string | null;
     address_state: string | null;
     address_zip: string | null;
@@ -948,9 +984,15 @@ export interface CreateClientResponse {
     id: number;
     email: string;
     first_name: string;
+    middle_name: string | null;
     last_name: string;
     phone: string | null;
     date_of_birth: string | null;
+    address_street: string | null;
+    address_unit: string | null;
+    address_city: string | null;
+    address_state: string | null;
+    address_zip: string | null;
     status: string;
     created_at: string;
     total_applications: number;
@@ -1160,6 +1202,7 @@ export interface ConversationThread {
   lead_id?: number | null;
   client_id?: number | null;
   broker_id: number | null;
+  mailbox_id?: number | null;
   /** Broker/realtor who is the *contact* in this thread (not the CRM handler) */
   contact_broker_id?: number | null;
   client_name?: string | null;
@@ -1173,7 +1216,7 @@ export interface ConversationThread {
   message_count: number;
   unread_count: number;
   priority: "low" | "normal" | "high" | "urgent";
-  status: "active" | "archived" | "closed";
+  status: "active" | "closed";
   tags?: string[] | null;
   created_at: string;
   updated_at: string;
@@ -1202,6 +1245,7 @@ export interface Communication {
   /** MIME type of the primary media attachment (e.g. image/jpeg, video/mp4) */
   media_content_type?: string | null;
   conversation_id?: string | null;
+  mailbox_id?: number | null;
   /** ID of the reminder_flow_execution that sent this message (null = manual send) */
   source_execution_id?: number | null;
   thread_id?: string | null;
@@ -1221,7 +1265,22 @@ export interface Communication {
   error_message?: string | null;
   cost?: number | null;
   provider_response?: any | null;
-  metadata?: any | null;
+  /**
+   * For email communications — stored as JSON in the metadata column.
+   * Populated on inbound sync from Graph API and on outbound send.
+   */
+  metadata?: {
+    mailbox_id?: number;
+    mailbox_email?: string;
+    provider?: string;
+    internet_message_id?: string | null;
+    graph_conversation_id?: string | null;
+    from_email?: string | null;
+    from_name?: string | null;
+    to_recipients?: EmailRecipient[];
+    cc_recipients?: EmailRecipient[];
+    [key: string]: any;
+  } | null;
   scheduled_at?: string | null;
   sent_at?: string | null;
   created_at: string;
@@ -1230,7 +1289,7 @@ export interface Communication {
 export interface GetConversationThreadsRequest {
   page?: number;
   limit?: number;
-  status?: "active" | "archived" | "closed" | "all";
+  status?: "active" | "closed" | "all";
   priority?: "low" | "normal" | "high" | "urgent";
   search?: string;
 }
@@ -1264,11 +1323,17 @@ export interface GetConversationMessagesResponse {
   };
 }
 
+export interface EmailRecipient {
+  email: string;
+  name?: string | null;
+}
+
 export interface SendMessageRequest {
   conversation_id?: string;
   application_id?: number;
   lead_id?: number;
   client_id?: number;
+  mailbox_id?: number;
   communication_type: "email" | "sms" | "whatsapp";
   recipient_phone?: string;
   recipient_email?: string;
@@ -1279,6 +1344,10 @@ export interface SendMessageRequest {
   scheduled_at?: string;
   /** Public URL of an MMS media attachment (image, video, document) */
   media_url?: string;
+  /** CC recipients for email */
+  cc?: EmailRecipient[];
+  /** BCC recipients for email */
+  bcc?: EmailRecipient[];
 }
 
 export interface SendMessageResponse {
@@ -1290,9 +1359,63 @@ export interface SendMessageResponse {
   cost?: number;
 }
 
+export interface ConversationMailbox {
+  id: number;
+  provider: "office365" | "imap";
+  mailbox_email: string;
+  display_name?: string | null;
+  is_shared: boolean;
+  assigned_broker_id?: number | null;
+  assigned_broker_name?: string | null;
+  status: "pending" | "active" | "disabled" | "error";
+  is_default: boolean;
+  last_sync_at?: string | null;
+  last_sync_status?: "ok" | "error" | null;
+  last_sync_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AssignConversationMailboxRequest {
+  assigned_broker_id: number | null;
+  is_shared: boolean;
+  is_default?: boolean;
+}
+
+export interface AssignConversationMailboxResponse {
+  success: boolean;
+  mailbox_id: number;
+}
+
+export interface GetConversationMailboxesResponse {
+  success: boolean;
+  mailboxes: ConversationMailbox[];
+}
+
+export interface ConnectOffice365MailboxRequest {
+  mailbox_email: string;
+  display_name?: string;
+  is_shared?: boolean;
+  /** Admin only — assign mailbox to a different broker */
+  target_broker_id?: number;
+}
+
+export interface ConnectOffice365MailboxResponse {
+  success: boolean;
+  mailbox_id: number;
+  auth_url: string;
+}
+
+export interface SyncConversationMailboxResponse {
+  success: boolean;
+  mailbox_id: number;
+  processed: number;
+  errors: number;
+}
+
 export interface UpdateConversationRequest {
   conversation_id: string;
-  status?: "active" | "archived" | "closed";
+  status?: "active" | "closed";
   priority?: "low" | "normal" | "high" | "urgent";
   tags?: string[];
 }
@@ -1520,6 +1643,8 @@ export interface BrokerProfileDetails {
   twitter_url: string | null;
   youtube_url: string | null;
   website_url: string | null;
+  // Feature flags
+  office365_enabled: boolean;
 }
 
 export interface GetBrokerProfileResponse {
@@ -1844,6 +1969,10 @@ export interface ReminderFlow {
   /** Whether this flow belongs to the loan pipeline or realtor prospecting pipeline. */
   flow_category: "loan" | "realtor_prospecting";
   created_by_broker_id: number | null;
+  /** When set, only this broker can see/run the flow. NULL = visible to all brokers in the tenant. */
+  restricted_to_broker_id: number | null;
+  /** When true, the engine writes per-step rows into reminder_flow_step_logs. */
+  enable_trace_logging: boolean;
   created_at: string;
   updated_at: string;
   steps?: ReminderFlowStep[];
@@ -1934,8 +2063,47 @@ export interface SaveReminderFlowRequest {
   is_active?: boolean;
   apply_to_all_loans?: boolean;
   loan_type_filter?: "all" | "purchase" | "refinance";
+  flow_category?: "loan" | "realtor_prospecting";
+  /** When set, only this broker can see/run the flow. */
+  restricted_to_broker_id?: number | null;
+  /** Per-flow opt-in for step-level trace logging. */
+  enable_trace_logging?: boolean;
   steps: SaveReminderFlowStep[];
   connections: SaveReminderFlowConnection[];
+}
+
+/**
+ * One row from `reminder_flow_step_logs` — a single lifecycle event for a
+ * step inside a running execution. Multiple rows per step are expected
+ * (e.g. "started" then "succeeded").
+ */
+export interface ReminderFlowStepLog {
+  id: number;
+  execution_id: number;
+  step_key: string;
+  step_type: ReminderStepType;
+  event:
+    | "started"
+    | "succeeded"
+    | "failed"
+    | "skipped"
+    | "timeout"
+    | "cancelled";
+  channel: "sms" | "email" | "whatsapp" | "notification" | "none";
+  recipient: string | null;
+  external_id: string | null;
+  delivery_status: string | null;
+  payload: Record<string, unknown> | null;
+  error_message: string | null;
+  duration_ms: number | null;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export interface GetReminderFlowTraceResponse {
+  success: boolean;
+  flow: { id: number; name: string; enable_trace_logging: boolean };
+  logs: ReminderFlowStepLog[];
 }
 
 export interface ProcessReminderFlowsResponse {
@@ -2051,7 +2219,7 @@ export interface GetContactSubmissionsResponse {
 // SCHEDULER TYPES
 // =====================================================
 
-export type MeetingType = "phone" | "video";
+export type MeetingType = "phone" | "video" | "teams";
 export type MeetingStatus =
   | "pending"
   | "confirmed"
@@ -2072,6 +2240,7 @@ export interface SchedulerSettings {
   timezone: string;
   allow_phone: boolean;
   allow_video: boolean;
+  allow_teams: boolean;
 }
 
 export interface SchedulerAvailability {
@@ -2100,6 +2269,8 @@ export interface ScheduledMeeting {
   zoom_meeting_id: string | null;
   zoom_join_url: string | null;
   zoom_start_url: string | null;
+  teams_meeting_id: string | null;
+  teams_join_url: string | null;
   status: MeetingStatus;
   notes: string | null;
   broker_notes: string | null;
@@ -2137,6 +2308,7 @@ export interface PublicSchedulerBrokerInfo {
   timezone: string;
   allow_phone: boolean;
   allow_video: boolean;
+  allow_teams: boolean;
   is_enabled: boolean;
 }
 
@@ -2169,6 +2341,7 @@ export interface BookMeetingResponse {
   booking_token: string;
   zoom_join_url: string | null;
   zoom_start_url: string | null;
+  teams_join_url: string | null;
   meeting_date: string;
   meeting_time: string;
   meeting_type: MeetingType;
@@ -2188,6 +2361,13 @@ export interface GetSchedulerSettingsResponse {
   success: boolean;
   settings: SchedulerSettings;
   availability: SchedulerAvailability[];
+}
+
+export interface GetTeamsEligibilityResponse {
+  success: boolean;
+  eligible: boolean;
+  policyReady?: boolean;
+  error?: string;
 }
 
 export interface GetBlockedRangesResponse {
@@ -2217,6 +2397,7 @@ export interface UpdateSchedulerSettingsRequest {
   timezone?: string;
   allow_phone?: boolean;
   allow_video?: boolean;
+  allow_teams?: boolean;
   availability?: Array<{
     day_of_week: number;
     start_time: string;

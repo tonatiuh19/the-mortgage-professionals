@@ -1,0 +1,5325 @@
+openapi: 3.0.3
+info:
+  title: The Mortgage Professionals API
+  description: |
+    Full REST API for the The Mortgage Professionals platform.
+
+    ## Authentication
+    - **Broker/Admin routes** require `Authorization: Bearer <broker_session_token>`
+    - **Client portal routes** require `Authorization: Bearer <client_session_token>`
+    - **Public routes** require no authentication
+    - **Webhook/Cron routes** are protected by shared secrets in query params or headers
+
+    ## Base URL
+    All endpoints are prefixed with `/api`.
+
+    ## Email Delivery Notes
+    - General outbound email uses `SMTP_*` environment variables.
+    - Reminder flow email steps can use `REMINDER_SMTP_*` overrides when configured.
+  version: "1.0.0"
+  contact:
+    name: The Mortgage Professionals Dev
+
+servers:
+  - url: /api
+    description: Same-origin (development & production on port 8080)
+
+tags:
+  - name: Health
+    description: System health checks
+  - name: Admin Auth
+    description: Broker / admin authentication (passwordless OTP)
+  - name: Client Auth
+    description: Client portal authentication (passwordless OTP)
+  - name: Admin Bootstrap
+    description: Session init and section controls
+  - name: Admin Profile
+    description: Authenticated broker's own profile management
+  - name: Dashboard
+    description: Overview stats and broker performance metrics
+  - name: Loans
+    description: Loan application management
+  - name: Pre-Approval
+    description: Pre-approval letter generation and delivery
+  - name: Clients
+    description: Client directory (admin view)
+  - name: Voice
+    description: Browser-based calling via Twilio Voice SDK
+  - name: Brokers
+    description: Broker / team member management
+  - name: Tasks
+    description: Task templates and loan-linked task instances
+  - name: Documents
+    description: Document uploads and management
+  - name: Email Templates
+    description: Email communication templates
+  - name: SMS Templates
+    description: SMS communication templates
+  - name: WhatsApp Templates
+    description: WhatsApp communication templates
+  - name: Pipeline Step Templates
+    description: Per-step communication templates for the pipeline
+  - name: Conversations
+    description: Inbound/outbound message threads
+  - name: Audit Logs
+    description: Activity history
+  - name: Reports
+    description: Analytics and reporting
+  - name: Settings
+    description: Tenant-level system settings
+  - name: Reminder Flows
+    description: Automated reminder sequences
+  - name: Scheduler (Public)
+    description: Public-facing booking endpoints
+  - name: Scheduler (Admin)
+    description: Admin scheduler settings and meeting management
+  - name: Calendar
+    description: Calendar events — birthdays, home/realtor anniversaries, important dates and reminders
+  - name: Contact
+    description: Public contact form submissions
+  - name: Public
+    description: Unauthenticated public endpoints
+  - name: Webhooks & Cron
+    description: Inbound webhooks and scheduled cron triggers
+
+# ─── Security Schemes ─────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    BrokerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Broker session token stored in `localStorage["broker_session"]`
+    ClientAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Client session token stored in `localStorage["client_session_token"]`
+
+  # ─── Reusable Schemas ───────────────────────────────────────────────────────
+  schemas:
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+
+    SchedulerBlockedRange:
+      type: object
+      properties:
+        id: { type: integer }
+        broker_id: { type: integer }
+        start_datetime: { type: string, format: date-time }
+        end_datetime: { type: string, format: date-time }
+        label: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: "Something went wrong"
+        message:
+          type: string
+
+    BrokerUser:
+      type: object
+      properties:
+        id: { type: integer }
+        email: { type: string, format: email }
+        first_name: { type: string }
+        last_name: { type: string }
+        phone: { type: string, nullable: true }
+        role:
+          type: string
+          enum: [admin, broker]
+          description: "admin = Mortgage Banker, broker = Partner (Realtor)"
+        tenant_id: { type: integer }
+        status:
+          type: string
+          enum: [active, inactive, suspended]
+        license_number: { type: string, nullable: true }
+        specializations:
+          type: array
+          items: { type: string }
+          nullable: true
+        email_verified: { type: boolean }
+        last_login: { type: string, format: date-time, nullable: true }
+        public_token: { type: string, nullable: true }
+        avatar_url: { type: string, nullable: true }
+        bio: { type: string, nullable: true }
+        office_address: { type: string, nullable: true }
+        office_city: { type: string, nullable: true }
+        office_state: { type: string, nullable: true }
+        office_zip: { type: string, nullable: true }
+        years_experience: { type: integer, nullable: true }
+        total_loans_closed: { type: integer, nullable: true }
+
+    ClientInfo:
+      type: object
+      properties:
+        id: { type: integer }
+        email: { type: string, format: email }
+        first_name: { type: string }
+        middle_name: { type: string, nullable: true }
+        last_name: { type: string }
+        phone: { type: string, nullable: true }
+        date_of_birth: { type: string, format: date, nullable: true }
+        address_street: { type: string, nullable: true }
+        address_unit: { type: string, nullable: true }
+        address_city: { type: string, nullable: true }
+        address_state: { type: string, nullable: true }
+        address_zip: { type: string, nullable: true }
+        status: { type: string }
+        created_at: { type: string, format: date-time }
+        total_applications: { type: integer }
+        active_applications: { type: integer }
+        total_conversations: { type: integer }
+
+    LoanApplication:
+      type: object
+      properties:
+        id: { type: integer }
+        application_number: { type: string }
+        client_user_id: { type: integer }
+        broker_user_id: { type: integer, nullable: true }
+        partner_broker_id: { type: integer, nullable: true }
+        loan_type: { type: string }
+        loan_amount: { type: number }
+        property_value: { type: number }
+        property_address: { type: string, nullable: true }
+        property_city: { type: string, nullable: true }
+        property_state: { type: string, nullable: true }
+        property_zip: { type: string, nullable: true }
+        property_type: { type: string, nullable: true }
+        down_payment: { type: number, nullable: true }
+        loan_purpose: { type: string, nullable: true }
+        status: { type: string }
+        current_step: { type: integer }
+        total_steps: { type: integer }
+        priority: { type: string, nullable: true }
+        estimated_close_date: { type: string, format: date, nullable: true }
+        actual_close_date: { type: string, format: date, nullable: true }
+        interest_rate: { type: number, nullable: true }
+        loan_term_months: { type: integer, nullable: true }
+        notes: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Task:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        status: { type: string }
+        due_date: { type: string, format: date, nullable: true }
+        loan_application_id: { type: integer, nullable: true }
+        assigned_to: { type: integer, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    AdminSectionControl:
+      type: object
+      properties:
+        id: { type: integer }
+        tenant_id: { type: integer }
+        section_id:
+          type: string
+          description: Matches the sidebar menu item id
+          example: "pipeline"
+        is_disabled: { type: boolean }
+        tooltip_message: { type: string, example: "Coming Soon" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ScheduledMeeting:
+      type: object
+      properties:
+        id: { type: integer }
+        broker_id: { type: integer }
+        client_name: { type: string }
+        client_email: { type: string, format: email }
+        client_phone: { type: string, nullable: true }
+        meeting_date: { type: string, format: date }
+        meeting_time: { type: string, example: "14:00" }
+        meeting_end_time: { type: string, example: "14:30" }
+        meeting_type:
+          type: string
+          enum: [phone, video, teams]
+        status:
+          type: string
+          enum: [confirmed, completed, cancelled, no_show]
+        zoom_join_url: { type: string, nullable: true }
+        zoom_start_url: { type: string, nullable: true }
+        teams_meeting_id: { type: string, nullable: true }
+        teams_join_url: { type: string, nullable: true }
+        booking_token: { type: string }
+        notes: { type: string, nullable: true }
+        broker_notes: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    CalendarEvent:
+      type: object
+      properties:
+        id: { type: integer }
+        tenant_id: { type: integer }
+        broker_id: { type: integer, nullable: true }
+        event_type:
+          type: string
+          enum:
+            [
+              birthday,
+              home_anniversary,
+              realtor_anniversary,
+              important_date,
+              reminder,
+              other,
+            ]
+        title: { type: string }
+        description: { type: string, nullable: true }
+        event_date: { type: string, format: date }
+        event_time: { type: string, nullable: true, example: "10:00" }
+        all_day: { type: boolean }
+        recurrence:
+          type: string
+          enum: [none, yearly]
+        color: { type: string, nullable: true }
+        linked_client_id: { type: integer, nullable: true }
+        linked_client_name: { type: string, nullable: true }
+        linked_person_name: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+# ─── Paths ────────────────────────────────────────────────────────────────────
+paths:
+  # ── Health ──────────────────────────────────────────────────────────────────
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Returns 200 with server status. Used by load balancers and uptime monitors.
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /ping:
+    get:
+      tags: [Health]
+      summary: Ping
+      description: Simple liveness ping.
+      responses:
+        "200":
+          description: Pong
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: pong }
+
+  # ── Admin Auth ───────────────────────────────────────────────────────────────
+  /admin/auth/send-code:
+    post:
+      tags: [Admin Auth]
+      summary: Send OTP to broker email or phone
+      description: Sends a one-time 6-digit code via email or SMS. The broker must already exist in the `brokers` table.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                delivery_method:
+                  type: string
+                  enum: [email, sms]
+                  default: email
+      responses:
+        "200":
+          description: Code sent successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      message: { type: string }
+        "400":
+          description: Invalid email or broker not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /admin/auth/verify-code:
+    post:
+      tags: [Admin Auth]
+      summary: Verify OTP and create broker session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string, format: email }
+                code:
+                  type: string
+                  description: 6-digit numeric code
+                  example: "123456"
+      responses:
+        "200":
+          description: Authenticated — returns session token and user
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      sessionToken: { type: string }
+                      user: { $ref: "#/components/schemas/BrokerUser" }
+        "401":
+          description: Invalid or expired code
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /admin/auth/validate:
+    get:
+      tags: [Admin Auth]
+      summary: Validate existing broker session
+      description: Called on app boot to verify a stored token is still valid.
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Session valid
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      user: { $ref: "#/components/schemas/BrokerUser" }
+        "401":
+          description: Session invalid or expired
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /admin/auth/logout:
+    post:
+      tags: [Admin Auth]
+      summary: Logout broker session
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── Client Auth ──────────────────────────────────────────────────────────────
+  /client/auth/send-code:
+    post:
+      tags: [Client Auth]
+      summary: Send OTP to client email or phone
+      description: |
+        Sends a 6-digit OTP. If the email is not found in the `client_users` table,
+        the response sets `shouldRedirectToWizard: true` and the UI redirects to `/wizard`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+                delivery_method:
+                  type: string
+                  enum: [email, sms]
+                  default: email
+      responses:
+        "200":
+          description: Code sent or redirect flag set
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      shouldRedirectToWizard:
+                        type: boolean
+                        description: True when the email is not registered — redirect to onboarding wizard
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /client/auth/verify-code:
+    post:
+      tags: [Client Auth]
+      summary: Verify OTP and create client session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string, format: email }
+                code:
+                  type: string
+                  pattern: '^\d{6}$'
+                  example: "489201"
+      responses:
+        "200":
+          description: Authenticated — returns session token
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      sessionToken: { type: string }
+                      client: { $ref: "#/components/schemas/ClientInfo" }
+        "401":
+          description: Invalid code
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /client/auth/validate:
+    get:
+      tags: [Client Auth]
+      summary: Validate existing client session
+      security:
+        - ClientAuth: []
+      responses:
+        "200":
+          description: Session valid
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      client: { $ref: "#/components/schemas/ClientInfo" }
+        "401":
+          description: Invalid or expired session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /client/auth/logout:
+    post:
+      tags: [Client Auth]
+      summary: Logout client session
+      security:
+        - ClientAuth: []
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── Admin Bootstrap ──────────────────────────────────────────────────────────
+  /admin/init:
+    get:
+      tags: [Admin Bootstrap]
+      summary: Single bootstrap call on admin load
+      description: |
+        Validates session, returns broker profile + all section controls in a single request.
+        Called by `initAdminSession()` thunk on every admin page mount.
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Bootstrap data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      profile:
+                        type: object
+                        description: Broker profile details
+                      controls:
+                        type: array
+                        items:
+                          { $ref: "#/components/schemas/AdminSectionControl" }
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /admin/section-controls:
+    get:
+      tags: [Admin Bootstrap]
+      summary: Get all section controls for the tenant
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Section controls list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      controls:
+                        type: array
+                        items:
+                          { $ref: "#/components/schemas/AdminSectionControl" }
+    put:
+      tags: [Admin Bootstrap]
+      summary: Bulk update section controls
+      description: Enable or disable sidebar sections and set tooltip messages.
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [controls]
+              properties:
+                controls:
+                  type: array
+                  items:
+                    type: object
+                    required: [section_id, is_disabled]
+                    properties:
+                      section_id: { type: string, example: "pipeline" }
+                      is_disabled: { type: boolean }
+                      tooltip_message: { type: string, example: "Coming Soon" }
+      responses:
+        "200":
+          description: Updated successfully
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── Admin Profile ─────────────────────────────────────────────────────────────
+  /admin/profile:
+    get:
+      tags: [Admin Profile]
+      summary: Get authenticated broker's own profile
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Broker profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      profile: { $ref: "#/components/schemas/BrokerUser" }
+    put:
+      tags: [Admin Profile]
+      summary: Update authenticated broker's profile
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                first_name: { type: string }
+                last_name: { type: string }
+                phone: { type: string }
+                license_number: { type: string }
+                bio: { type: string }
+                office_address: { type: string }
+                office_city: { type: string }
+                office_state: { type: string }
+                office_zip: { type: string }
+                years_experience: { type: integer }
+                specializations:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: Profile updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /admin/profile/avatar:
+    put:
+      tags: [Admin Profile]
+      summary: Update broker avatar URL
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [avatar_url]
+              properties:
+                avatar_url: { type: string, format: uri }
+      responses:
+        "200":
+          description: Avatar updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── Broker Share Link ─────────────────────────────────────────────────────────
+  /brokers/my-share-link:
+    get:
+      tags: [Brokers]
+      summary: Get authenticated broker's share link
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Share link info
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      share_url: { type: string }
+                      public_token: { type: string }
+
+  /brokers/my-share-link/regenerate:
+    post:
+      tags: [Brokers]
+      summary: Regenerate broker's public token (new share link)
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: New share link
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      share_url: { type: string }
+                      public_token: { type: string }
+
+  /brokers/my-share-link/email:
+    post:
+      tags: [Brokers]
+      summary: Email the share link to a recipient
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recipient_email]
+              properties:
+                recipient_email: { type: string, format: email }
+                recipient_name: { type: string }
+      responses:
+        "200":
+          description: Email sent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── Dashboard ────────────────────────────────────────────────────────────────
+  /dashboard/stats:
+    get:
+      tags: [Dashboard]
+      summary: Overview dashboard stats
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Aggregate statistics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      stats: { type: object }
+
+  /dashboard/broker-metrics:
+    get:
+      tags: [Dashboard]
+      summary: Current period broker metrics
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Broker metrics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      metrics: { type: object }
+    put:
+      tags: [Dashboard]
+      summary: Update broker metrics goals/actuals
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Metrics fields to update
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /dashboard/broker-metrics/annual:
+    get:
+      tags: [Dashboard]
+      summary: Annual broker performance metrics
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Annual metrics by month
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      annual: { type: array, items: { type: object } }
+
+  # ── Loans ────────────────────────────────────────────────────────────────────
+  /loans:
+    get:
+      tags: [Loans]
+      summary: List all loan applications
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string }
+          description: Filter by loan status
+        - in: query
+          name: broker_id
+          schema: { type: integer }
+          description: Filter by assigned broker (admin only)
+      responses:
+        "200":
+          description: Loan list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      loans:
+                        type: array
+                        items: { $ref: "#/components/schemas/LoanApplication" }
+                      total: { type: integer }
+
+  /loans/create:
+    post:
+      tags: [Loans]
+      summary: Create a new loan application (admin)
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [client_user_id, loan_type, loan_amount]
+              properties:
+                client_user_id: { type: integer }
+                loan_type: { type: string }
+                loan_amount: { type: number }
+                property_value: { type: number }
+                property_address: { type: string }
+                property_city: { type: string }
+                property_state: { type: string }
+                property_zip: { type: string }
+                notes: { type: string }
+      responses:
+        "201":
+          description: Loan created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      loan: { $ref: "#/components/schemas/LoanApplication" }
+
+  /loans/{loanId}:
+    get:
+      tags: [Loans]
+      summary: Get loan details
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: loanId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Loan detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      loan: { $ref: "#/components/schemas/LoanApplication" }
+        "404":
+          description: Loan not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /loans/{loanId}/assign-broker:
+    patch:
+      tags: [Loans]
+      summary: Assign primary broker to a loan
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: loanId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [broker_id]
+              properties:
+                broker_id: { type: integer }
+      responses:
+        "200":
+          description: Broker assigned
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /loans/{loanId}/assign-partner:
+    patch:
+      tags: [Loans]
+      summary: Assign partner (Realtor) broker to a loan
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: loanId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [partner_broker_id]
+              properties:
+                partner_broker_id: { type: integer, nullable: true }
+      responses:
+        "200":
+          description: Partner assigned
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /loans/{loanId}/status:
+    patch:
+      tags: [Loans]
+      summary: Update loan status
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: loanId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string }
+                notes: { type: string }
+      responses:
+        "200":
+          description: Status updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /loans/{loanId}/source:
+    patch:
+      tags: [Loans]
+      summary: Update loan lead source category
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: loanId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source_category]
+              properties:
+                source_category:
+                  type: string
+                  nullable: true
+                  enum:
+                    - current_client_referral
+                    - past_client
+                    - past_client_referral
+                    - personal_friend
+                    - realtor
+                    - advertisement
+                    - business_partner
+                    - builder
+                    - other
+      responses:
+        "200":
+          description: Source category updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /loans/{loanId}/details:
+    patch:
+      tags: [Loans]
+      summary: Update editable loan application fields
+      description: >
+        Updates one or more loan detail fields (financial, property, terms,
+        applicant, notes). Accessible to the assigned broker, partner broker,
+        admin, or superadmin.
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: loanId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                loan_type:
+                  type: string
+                  enum: [purchase, refinance]
+                loan_amount:
+                  type: number
+                  nullable: true
+                property_value:
+                  type: number
+                  nullable: true
+                property_address:
+                  type: string
+                  nullable: true
+                property_city:
+                  type: string
+                  nullable: true
+                property_state:
+                  type: string
+                  nullable: true
+                property_zip:
+                  type: string
+                  nullable: true
+                property_type:
+                  type: string
+                  nullable: true
+                  enum:
+                    [
+                      single_family,
+                      condo,
+                      multi_family,
+                      commercial,
+                      land,
+                      other,
+                    ]
+                down_payment:
+                  type: number
+                  nullable: true
+                loan_purpose:
+                  type: string
+                  nullable: true
+                estimated_close_date:
+                  type: string
+                  format: date
+                  nullable: true
+                interest_rate:
+                  type: number
+                  nullable: true
+                loan_term_months:
+                  type: integer
+                  nullable: true
+                priority:
+                  type: string
+                  enum: [low, medium, high, urgent]
+                  nullable: true
+                notes:
+                  type: string
+                  nullable: true
+                citizenship_status:
+                  type: string
+                  nullable: true
+                  enum: [us_citizen, permanent_resident, non_resident, other]
+                employment_status:
+                  type: string
+                  nullable: true
+                  enum:
+                    [
+                      employed,
+                      self_employed,
+                      unemployed,
+                      retired,
+                      retired_with_pension,
+                    ]
+                employer_name:
+                  type: string
+                  nullable: true
+                years_employed:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Loan details updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+        "400":
+          description: Validation error or no fields provided
+        "403":
+          description: Access denied
+        "404":
+          description: Loan not found
+
+  /loans/{loanId}/export-mismo:
+    get:
+      tags: [Loans]
+      summary: Export loan as MISMO 3.4 XML
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: loanId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: MISMO XML file
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  # ── Pre-Approval ──────────────────────────────────────────────────────────────
+  /loans/{loanId}/pre-approval-letter:
+    get:
+      tags: [Pre-Approval]
+      summary: Get pre-approval letter for a loan
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: loanId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Pre-approval letter data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      letter: { type: object }
+        "404":
+          description: No letter found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    post:
+      tags: [Pre-Approval]
+      summary: Create pre-approval letter
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: loanId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Pre-approval letter fields
+      responses:
+        "201":
+          description: Letter created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+    put:
+      tags: [Pre-Approval]
+      summary: Update pre-approval letter
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: loanId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Fields to update
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+    delete:
+      tags: [Pre-Approval]
+      summary: Delete pre-approval letter
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: loanId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /loans/{loanId}/pre-approval-letter/send-email:
+    post:
+      tags: [Pre-Approval]
+      summary: Email the pre-approval letter to the client
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: loanId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                recipient_email: { type: string, format: email }
+      responses:
+        "200":
+          description: Email sent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── Public Apply ──────────────────────────────────────────────────────────────
+  /apply:
+    post:
+      tags: [Public]
+      summary: Submit a loan application from the public wizard
+      description: Creates a client account (if new) and a loan application. No auth required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [first_name, last_name, email, loan_type, loan_amount]
+              properties:
+                first_name: { type: string }
+                last_name: { type: string }
+                email: { type: string, format: email }
+                phone: { type: string }
+                loan_type: { type: string }
+                loan_amount: { type: number }
+                property_value: { type: number }
+                property_address: { type: string }
+                citizenship_status: { type: string }
+                broker_token:
+                  type: string
+                  description: Optional — pre-assigns a specific broker's share link token
+                draft_id:
+                  type: integer
+                  description: Optional — if provided, promotes the existing draft application instead of creating a new record (prevents duplicates)
+      responses:
+        "201":
+          description: Application submitted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      application_id: { type: integer }
+                      client_id: { type: integer }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /apply/draft:
+    post:
+      tags: [Public]
+      summary: Save or update a wizard draft application
+      description: >
+        Creates or updates a draft loan application from the public wizard.
+        Minimum required: first_name, last_name, email.
+        If draft_id is supplied and matches an existing draft for this client it performs an UPDATE,
+        otherwise a new draft record is inserted. No authentication required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [first_name, last_name, email]
+              properties:
+                draft_id:
+                  {
+                    type: integer,
+                    description: "ID of an existing draft to update",
+                  }
+                first_name: { type: string }
+                last_name: { type: string }
+                email: { type: string, format: email }
+                phone: { type: string }
+                address_street: { type: string }
+                address_city: { type: string }
+                address_state: { type: string }
+                address_zip: { type: string }
+                loan_type: { type: string }
+                property_value: { type: number }
+                down_payment: { type: number }
+                property_type: { type: string }
+                property_address: { type: string }
+                property_city: { type: string }
+                property_state: { type: string }
+                property_zip: { type: string }
+                loan_purpose: { type: string }
+                citizenship_status: { type: string }
+                broker_token: { type: string }
+                wizard_step:
+                  { type: integer, description: "Current wizard step (1-5)" }
+      responses:
+        "200":
+          description: Draft saved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      draft_id: { type: integer }
+                      application_number: { type: string }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ── Public Broker Info ────────────────────────────────────────────────────────
+  /public/broker/{token}:
+    get:
+      tags: [Public]
+      summary: Get public broker info by share token
+      description: Used by the application wizard to pre-load the referring broker's info.
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string }
+          description: Broker's `public_token` UUID
+      responses:
+        "200":
+          description: Public broker profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      broker:
+                        type: object
+                        properties:
+                          id: { type: integer }
+                          first_name: { type: string }
+                          last_name: { type: string }
+                          avatar_url: { type: string, nullable: true }
+        "404":
+          description: Broker not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ── Clients ────────────────────────────────────────────────────────────────────
+  /clients:
+    get:
+      tags: [Clients]
+      summary: List all clients
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: query
+          name: search
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: Client list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      clients:
+                        type: array
+                        items: { $ref: "#/components/schemas/ClientInfo" }
+                      total: { type: integer }
+    post:
+      tags: [Clients]
+      summary: Create a new client profile
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [first_name, last_name]
+              properties:
+                first_name: { type: string }
+                middle_name: { type: string }
+                last_name: { type: string }
+                email: { type: string, format: email }
+                phone: { type: string }
+                address_street: { type: string }
+                address_unit: { type: string }
+                address_city: { type: string }
+                address_state: { type: string }
+                address_zip: { type: string }
+      responses:
+        "201":
+          description: Client created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      client: { $ref: "#/components/schemas/ClientInfo" }
+        "400":
+          description: Missing required fields
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: Email already exists
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /clients/{clientId}:
+    delete:
+      tags: [Clients]
+      summary: Delete a client record
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: clientId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+    put:
+      tags: [Clients]
+      summary: Update client profile fields
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: clientId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                first_name: { type: string }
+                last_name: { type: string }
+                phone: { type: string }
+                alternate_phone: { type: string }
+                date_of_birth: { type: string, format: date }
+                address_street: { type: string }
+                address_city: { type: string }
+                address_state: { type: string }
+                address_zip: { type: string }
+                employment_status: { type: string }
+                income_type:
+                  {
+                    type: string,
+                    enum: [W-2, 1099, Self-Employed, Investor, Mixed],
+                  }
+                annual_income: { type: number }
+                credit_score: { type: integer }
+                citizenship_status:
+                  {
+                    type: string,
+                    enum: [us_citizen, permanent_resident, non_resident, other],
+                  }
+                source: { type: string }
+      responses:
+        "200":
+          description: Updated client
+
+  /clients/{clientId}/profile:
+    get:
+      tags: [Clients]
+      summary: Get full client profile with loans, conversations, and activity
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: clientId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Full client profile
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  client:
+                    type: object
+                    properties:
+                      id: { type: integer }
+                      first_name: { type: string }
+                      last_name: { type: string }
+                      email: { type: string }
+                      phone: { type: string }
+                      alternate_phone: { type: string }
+                      date_of_birth: { type: string }
+                      address_street: { type: string }
+                      address_city: { type: string }
+                      address_state: { type: string }
+                      address_zip: { type: string }
+                      employment_status: { type: string }
+                      income_type: { type: string }
+                      annual_income: { type: number }
+                      credit_score: { type: integer }
+                      citizenship_status: { type: string }
+                      status: { type: string }
+                      source: { type: string }
+                      created_at: { type: string }
+                      assigned_broker: { type: object }
+                  loans: { type: array, items: { type: object } }
+                  conversations: { type: array, items: { type: object } }
+                  communications: { type: array, items: { type: object } }
+
+  # ── Voice / Calling ──────────────────────────────────────────────────────────
+  /voice/token:
+    post:
+      tags: [Voice]
+      summary: Generate Twilio Access Token for browser Voice SDK
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Access token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  token: { type: string }
+
+  /voice/twiml:
+    post:
+      tags: [Voice]
+      summary: TwiML webhook called by Twilio to route outbound calls
+      description: No authentication required — called by Twilio servers
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                To: { type: string, description: Destination phone number }
+                CallSid: { type: string }
+      responses:
+        "200":
+          description: TwiML response
+          content:
+            text/xml:
+              schema: { type: string }
+
+  /voice/incoming:
+    post:
+      tags: [Voice]
+      summary: TwiML webhook for inbound calls (Twilio → server)
+      description: |
+        Called by Twilio when an external caller dials a configured number.
+        Routes simultaneously to all available (voice_available=1) brokers.
+        Falls back to the assigned broker or first active broker if none is available.
+        No authentication required — called by Twilio servers.
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                From: { type: string, description: Caller's phone number }
+                To:
+                  { type: string, description: Twilio number that was dialled }
+                CallSid: { type: string }
+      responses:
+        "200":
+          description: TwiML response
+          content:
+            text/xml:
+              schema: { type: string }
+
+  /voice/availability:
+    post:
+      tags: [Voice]
+      summary: Update broker voice availability (online/offline toggle)
+      description: |
+        Called by the CRM frontend when the banker toggles Available / Unavailable.
+        Updates voice_available on the brokers table so inbound call routing
+        can ring only the bankers who are currently online.
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [available]
+              properties:
+                available:
+                  type: boolean
+                  description: true = broker is online and can receive inbound calls
+      responses:
+        "200":
+          description: Availability updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  available: { type: boolean }
+
+  /voice/voicemail-settings:
+    get:
+      tags: [Voice]
+      summary: Get voicemail overrides for the authenticated broker plus tenant defaults
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Voicemail settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  broker:
+                    type: object
+                    properties:
+                      voicemail_enabled:
+                        type: boolean
+                        nullable: true
+                        description: null = inherit tenant default
+                      voicemail_greeting_text: { type: string, nullable: true }
+                      voicemail_greeting_url: { type: string, nullable: true }
+                      has_personal_line: { type: boolean }
+                  tenant:
+                    type: object
+                    properties:
+                      voicemail_enabled: { type: boolean }
+                      voicemail_greeting_text: { type: string, nullable: true }
+                      voicemail_greeting_url: { type: string, nullable: true }
+                      voicemail_max_seconds: { type: integer }
+                      voicemail_transcribe: { type: boolean }
+    put:
+      tags: [Voice]
+      summary: Update the authenticated broker's voicemail overrides
+      description: Pass null on any field to clear the override and inherit the tenant default.
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: { type: boolean, nullable: true }
+                greeting_text: { type: string, nullable: true }
+                greeting_url: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /voice/voicemail-settings/tenant:
+    put:
+      tags: [Voice]
+      summary: Update tenant-level voicemail defaults (admin only)
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled: { type: boolean }
+                greeting_text: { type: string, nullable: true }
+                greeting_url: { type: string, nullable: true }
+                max_seconds: { type: integer, minimum: 10, maximum: 600 }
+                transcribe: { type: boolean }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+        "403":
+          description: Admin access required
+
+  /voice/voicemail-complete:
+    post:
+      tags: [Voice]
+      summary: TwiML callback fired by Twilio when caller finishes recording a voicemail
+      description: No authentication required — called by Twilio servers.
+      responses:
+        "200":
+          description: TwiML goodbye response
+          content:
+            text/xml:
+              schema: { type: string }
+
+  /voice/voicemail-recording:
+    post:
+      tags: [Voice]
+      summary: Twilio recordingStatusCallback for the voicemail Record verb
+      description: |
+        Inserts a new communications row with is_voicemail = 1 and broadcasts
+        an Ably event. No authentication required — called by Twilio servers.
+      responses:
+        "204":
+          description: Recording stored
+
+  /voice/voicemail-transcription:
+    post:
+      tags: [Voice]
+      summary: Twilio transcribeCallback for voicemail audio
+      description: |
+        Patches the matching voicemail communications row with the transcript.
+        No authentication required — called by Twilio servers.
+      responses:
+        "204":
+          description: Transcription saved
+
+  /voice/phone-numbers:
+    get:
+      tags: [Voice]
+      summary: List Twilio phone numbers with webhook status and broker assignments
+    get:
+      tags: [Voice]
+      summary: List Twilio phone numbers with webhook status and broker assignments
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Phone numbers list with assignment info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  incomingUrl: { type: string }
+                  numbers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        sid: { type: string }
+                        phoneNumber: { type: string }
+                        friendlyName: { type: string }
+                        voiceUrl: { type: string }
+                        configured: { type: boolean }
+                        capabilities:
+                          type: object
+                          properties:
+                            voice: { type: boolean }
+                            sms: { type: boolean }
+                            mms: { type: boolean }
+                        assignedBrokerId: { type: integer, nullable: true }
+                        assignedBrokerName: { type: string, nullable: true }
+                  brokers:
+                    type: array
+                    description: Active brokers for the assign dropdown
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        name: { type: string }
+
+  /voice/phone-numbers/{sid}/configure:
+    post:
+      tags: [Voice]
+      summary: Point a Twilio number's voice webhook to this portal
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: sid
+          required: true
+          schema: { type: string }
+          description: Twilio IncomingPhoneNumber SID, or "all" to configure every number
+      responses:
+        "200":
+          description: Webhook updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /voice/phone-numbers/{sid}/assign:
+    post:
+      tags: [Voice]
+      summary: Assign (or unassign) a Twilio phone number to a specific mortgage banker
+      description: |
+        Sets twilio_phone_sid and twilio_caller_id on the broker row.
+        The assigned broker rings first on inbound calls and their number appears as
+        caller ID on outbound calls. Pass brokerId: null to unassign.
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: sid
+          required: true
+          schema: { type: string }
+          description: Twilio IncomingPhoneNumber SID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [brokerId]
+              properties:
+                brokerId:
+                  type: integer
+                  nullable: true
+                  description: Broker ID to assign, or null to unassign
+      responses:
+        "200":
+          description: Assignment saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  sid: { type: string }
+                  brokerId: { type: integer, nullable: true }
+                  callerIdE164: { type: string }
+
+  /voice/log:
+    post:
+      tags: [Voice]
+      summary: Log a completed call to the communications table
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone]
+              properties:
+                phone: { type: string }
+                client_id: { type: integer }
+                application_id: { type: integer }
+                duration: { type: integer, description: Duration in seconds }
+                call_status: { type: string }
+                call_sid: { type: string }
+                client_name: { type: string }
+                direction:
+                  type: string
+                  enum: [inbound, outbound]
+                  description: Call direction (defaults to outbound)
+      responses:
+        "200":
+          description: Call logged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /voice/calls:
+    get:
+      tags: [Voice]
+      summary: Get paginated call history for the authenticated broker
+      security:
+        - BrokerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 100 }
+      responses:
+        "200":
+          description: Call history list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  calls:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        direction: { type: string, enum: [inbound, outbound] }
+                        body: { type: string }
+                        status: { type: string }
+                        external_id: { type: string, nullable: true }
+                        conversation_id: { type: string, nullable: true }
+                        client_name: { type: string, nullable: true }
+                        client_phone: { type: string, nullable: true }
+                        client_id: { type: integer, nullable: true }
+                        created_at: { type: string, format: date-time }
+                        sent_at:
+                          { type: string, format: date-time, nullable: true }
+                  pagination:
+                    type: object
+                    properties:
+                      page: { type: integer }
+                      limit: { type: integer }
+                      total: { type: integer }
+                      totalPages: { type: integer }
+
+  /conversations/lookup-contact:
+    get:
+      tags: [Conversations]
+      summary: Look up a client by phone number (used for resolving incoming call caller identity)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - name: phone
+          in: query
+          required: true
+          schema: { type: string }
+          description: E.164 or local phone number to look up
+      responses:
+        "200":
+          description: Contact lookup result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  found: { type: boolean }
+                  client_id: { type: integer }
+                  client_name: { type: string }
+                  phone: { type: string }
+
+  # ── Brokers ───────────────────────────────────────────────────────────────────
+  /brokers:
+    get:
+      tags: [Brokers]
+      summary: List all brokers / team members
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Broker list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      brokers:
+                        type: array
+                        items: { $ref: "#/components/schemas/BrokerUser" }
+    post:
+      tags: [Brokers]
+      summary: Create a new broker / invite a partner
+      description: |
+        Only `admin` (Mortgage Banker) can create brokers.
+        `role: "broker"` creates a Partner (Realtor); `role: "admin"` creates another Mortgage Banker.
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, first_name, last_name, role]
+              properties:
+                email: { type: string, format: email }
+                first_name: { type: string }
+                last_name: { type: string }
+                phone: { type: string }
+                role:
+                  type: string
+                  enum: [admin, broker]
+                license_number: { type: string }
+      responses:
+        "201":
+          description: Broker created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      broker: { $ref: "#/components/schemas/BrokerUser" }
+
+  /brokers/{brokerId}:
+    put:
+      tags: [Brokers]
+      summary: Update a broker record
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: brokerId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                first_name: { type: string }
+                last_name: { type: string }
+                phone: { type: string }
+                status:
+                  type: string
+                  enum: [active, inactive, suspended]
+                license_number: { type: string }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+    delete:
+      tags: [Brokers]
+      summary: Delete a broker
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: brokerId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /brokers/{brokerId}/share-link:
+    get:
+      tags: [Brokers]
+      summary: Get share link for a specific broker (admin management)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: brokerId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Share link
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      share_url: { type: string }
+
+  /brokers/{brokerId}/profile:
+    get:
+      tags: [Brokers]
+      summary: Get a broker's profile (admin view)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: brokerId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      profile: { $ref: "#/components/schemas/BrokerUser" }
+    put:
+      tags: [Brokers]
+      summary: Update a broker's profile (admin management)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: brokerId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                bio: { type: string }
+                years_experience: { type: integer }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /brokers/{brokerId}/avatar:
+    put:
+      tags: [Brokers]
+      summary: Update a broker's avatar (admin management)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: brokerId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [avatar_url]
+              properties:
+                avatar_url: { type: string, format: uri }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── Tasks ─────────────────────────────────────────────────────────────────────
+  /tasks:
+    get:
+      tags: [Tasks]
+      summary: List task templates
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Task templates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      tasks:
+                        type: array
+                        items: { $ref: "#/components/schemas/Task" }
+    post:
+      tags: [Tasks]
+      summary: Create a task template
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string }
+                description: { type: string }
+                due_days: { type: integer }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      task: { $ref: "#/components/schemas/Task" }
+
+  /tasks/{taskId}:
+    patch:
+      tags: [Tasks]
+      summary: Partially update a task (status, notes, etc.)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string }
+                notes: { type: string }
+                due_date: { type: string, format: date }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+    put:
+      tags: [Tasks]
+      summary: Full update of a task template
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+    delete:
+      tags: [Tasks]
+      summary: Delete a task template
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /tasks/instance/{taskId}:
+    delete:
+      tags: [Tasks]
+      summary: Delete a task instance (loan-linked, not a template)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /tasks/{taskId}/approve:
+    post:
+      tags: [Tasks]
+      summary: Approve a completed task
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                comment: { type: string }
+      responses:
+        "200":
+          description: Approved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /tasks/{taskId}/reopen:
+    post:
+      tags: [Tasks]
+      summary: Reopen an approved or completed task
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                comment: { type: string }
+      responses:
+        "200":
+          description: Reopened
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /tasks/{taskId}/form-fields:
+    post:
+      tags: [Tasks]
+      summary: Create form fields for a task
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fields:
+                  type: array
+                  items: { type: object }
+      responses:
+        "200":
+          description: Fields saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+    get:
+      tags: [Tasks]
+      summary: Get form fields for a task
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Form fields
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      fields: { type: array, items: { type: object } }
+
+  /tasks/{taskId}/responses:
+    get:
+      tags: [Tasks]
+      summary: Get form responses submitted by a client for a task
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Form responses
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      responses: { type: array, items: { type: object } }
+
+  /tasks/{taskId}/submit-form:
+    post:
+      tags: [Tasks]
+      summary: Submit a form response for a task (broker)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                responses: { type: array, items: { type: object } }
+      responses:
+        "200":
+          description: Submitted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /tasks/{taskId}/documents:
+    post:
+      tags: [Documents]
+      summary: Upload a document to a task (broker)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file_url, file_name]
+              properties:
+                file_url: { type: string, format: uri }
+                file_name: { type: string }
+                file_size: { type: integer }
+                mime_type: { type: string }
+      responses:
+        "201":
+          description: Uploaded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+    get:
+      tags: [Documents]
+      summary: Get documents for a task (broker)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Documents
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      documents: { type: array, items: { type: object } }
+
+  /tasks/documents/{documentId}:
+    delete:
+      tags: [Documents]
+      summary: Delete a task document (broker)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: documentId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /tasks/{templateId}/sign-document:
+    post:
+      tags: [Tasks]
+      summary: Save signature zones for a document task (broker)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: templateId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                zones: { type: array, items: { type: object } }
+      responses:
+        "200":
+          description: Zones saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+    get:
+      tags: [Tasks]
+      summary: Get signature zones for a document task (broker)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: templateId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Zones
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      zones: { type: array, items: { type: object } }
+
+  /tasks/{taskId}/signatures:
+    get:
+      tags: [Tasks]
+      summary: Get collected signatures for a task (broker)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Signatures
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      signatures: { type: array, items: { type: object } }
+
+  /documents:
+    get:
+      tags: [Documents]
+      summary: Get all task documents across all loans (admin documents page)
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: All documents
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      documents: { type: array, items: { type: object } }
+
+  # ── Client Portal ─────────────────────────────────────────────────────────────
+  /client/applications:
+    get:
+      tags: [Loans]
+      summary: Get authenticated client's loan applications
+      security:
+        - ClientAuth: []
+      responses:
+        "200":
+          description: Client's applications
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      applications:
+                        type: array
+                        items: { $ref: "#/components/schemas/LoanApplication" }
+
+  /client/tasks:
+    get:
+      tags: [Tasks]
+      summary: Get authenticated client's tasks
+      security:
+        - ClientAuth: []
+      responses:
+        "200":
+          description: Client tasks
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      tasks:
+                        type: array
+                        items: { $ref: "#/components/schemas/Task" }
+
+  /client/tasks/{taskId}:
+    patch:
+      tags: [Tasks]
+      summary: Update a client task (mark in-progress, etc.)
+      security:
+        - ClientAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /client/tasks/{taskId}/details:
+    get:
+      tags: [Tasks]
+      summary: Get full task details for a client task
+      security:
+        - ClientAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Task details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      task: { $ref: "#/components/schemas/Task" }
+
+  /client/tasks/{taskId}/submit-form:
+    post:
+      tags: [Tasks]
+      summary: Submit form response for a task (client)
+      security:
+        - ClientAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                responses: { type: array, items: { type: object } }
+      responses:
+        "200":
+          description: Submitted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /client/tasks/{taskId}/documents:
+    post:
+      tags: [Documents]
+      summary: Upload a document to a task (client)
+      security:
+        - ClientAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file_url, file_name]
+              properties:
+                file_url: { type: string, format: uri }
+                file_name: { type: string }
+                file_size: { type: integer }
+                mime_type: { type: string }
+      responses:
+        "201":
+          description: Uploaded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+    get:
+      tags: [Documents]
+      summary: Get documents for a task (client)
+      security:
+        - ClientAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Documents
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      documents: { type: array, items: { type: object } }
+
+  /client/tasks/documents/{documentId}:
+    delete:
+      tags: [Documents]
+      summary: Delete a task document (client)
+      security:
+        - ClientAuth: []
+      parameters:
+        - in: path
+          name: documentId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /client/tasks/{taskId}/sign-document:
+    get:
+      tags: [Tasks]
+      summary: Get signature zones for a document task (client)
+      security:
+        - ClientAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Signature zones
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      zones: { type: array, items: { type: object } }
+
+  /client/tasks/{taskId}/signatures:
+    post:
+      tags: [Tasks]
+      summary: Submit signatures for a task (client)
+      security:
+        - ClientAuth: []
+      parameters:
+        - in: path
+          name: taskId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                signatures: { type: array, items: { type: object } }
+      responses:
+        "200":
+          description: Submitted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /client/documents:
+    get:
+      tags: [Documents]
+      summary: Get all documents for the authenticated client
+      security:
+        - ClientAuth: []
+      responses:
+        "200":
+          description: All client documents
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      documents: { type: array, items: { type: object } }
+
+  /client/profile:
+    get:
+      tags: [Clients]
+      summary: Get authenticated client's profile
+      security:
+        - ClientAuth: []
+      responses:
+        "200":
+          description: Client profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      client: { $ref: "#/components/schemas/ClientInfo" }
+    put:
+      tags: [Clients]
+      summary: Update authenticated client's profile
+      security:
+        - ClientAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                first_name: { type: string }
+                last_name: { type: string }
+                phone: { type: string }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── Email Templates ───────────────────────────────────────────────────────────
+  /email-templates:
+    get:
+      tags: [Email Templates]
+      summary: List email templates
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Templates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      templates: { type: array, items: { type: object } }
+    post:
+      tags: [Email Templates]
+      summary: Create an email template
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, subject, body]
+              properties:
+                name: { type: string }
+                subject: { type: string }
+                body: { type: string }
+                category: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /email-templates/{templateId}:
+    put:
+      tags: [Email Templates]
+      summary: Update an email template
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: templateId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                subject: { type: string }
+                body: { type: string }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+    delete:
+      tags: [Email Templates]
+      summary: Delete an email template
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: templateId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── SMS Templates ─────────────────────────────────────────────────────────────
+  /sms-templates:
+    get:
+      tags: [SMS Templates]
+      summary: List SMS templates
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Templates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      templates: { type: array, items: { type: object } }
+    post:
+      tags: [SMS Templates]
+      summary: Create an SMS template
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, body]
+              properties:
+                name: { type: string }
+                body: { type: string }
+                category: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /sms-templates/{templateId}:
+    put:
+      tags: [SMS Templates]
+      summary: Update an SMS template
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: templateId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+    delete:
+      tags: [SMS Templates]
+      summary: Delete an SMS template
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: templateId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── WhatsApp Templates ────────────────────────────────────────────────────────
+  /whatsapp-templates:
+    get:
+      tags: [WhatsApp Templates]
+      summary: List WhatsApp templates
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Templates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      templates: { type: array, items: { type: object } }
+    post:
+      tags: [WhatsApp Templates]
+      summary: Create a WhatsApp template
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, body]
+              properties:
+                name: { type: string }
+                body: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /whatsapp-templates/{templateId}:
+    put:
+      tags: [WhatsApp Templates]
+      summary: Update a WhatsApp template
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: templateId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+    delete:
+      tags: [WhatsApp Templates]
+      summary: Delete a WhatsApp template
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: templateId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── Pipeline Step Templates ────────────────────────────────────────────────────
+  /pipeline-step-templates:
+    get:
+      tags: [Pipeline Step Templates]
+      summary: List pipeline step communication templates
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Templates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      templates: { type: array, items: { type: object } }
+    put:
+      tags: [Pipeline Step Templates]
+      summary: Upsert a pipeline step template
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [step, channel]
+              properties:
+                step: { type: string }
+                channel:
+                  type: string
+                  enum: [email, sms, whatsapp]
+                template_id: { type: integer }
+      responses:
+        "200":
+          description: Upserted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /pipeline-step-templates/{step}/{channel}:
+    delete:
+      tags: [Pipeline Step Templates]
+      summary: Delete a pipeline step template assignment
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: step
+          required: true
+          schema: { type: string }
+        - in: path
+          name: channel
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── Conversations ──────────────────────────────────────────────────────────────
+  /conversations/threads:
+    get:
+      tags: [Conversations]
+      summary: List conversation threads
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: query
+          name: search
+          schema: { type: string }
+        - in: query
+          name: channel
+          schema: { type: string, enum: [email, sms, whatsapp] }
+      responses:
+        "200":
+          description: Threads
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      threads: { type: array, items: { type: object } }
+
+  /conversations/{conversationId}/messages:
+    get:
+      tags: [Conversations]
+      summary: Get messages for a conversation thread
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Messages
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      messages: { type: array, items: { type: object } }
+
+  /conversations/send:
+    post:
+      tags: [Conversations]
+      summary: Send an outbound message
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [communication_type, body]
+              properties:
+                conversation_id: { type: string }
+                communication_type:
+                  type: string
+                  enum: [email, sms, whatsapp]
+                mailbox_id:
+                  type: integer
+                  description: Optional Office365 mailbox id used for outbound email sends
+                body: { type: string }
+                subject:
+                  {
+                    type: string,
+                    description: "Required for email communication_type",
+                  }
+      responses:
+        "200":
+          description: Sent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /conversations/{conversationId}:
+    put:
+      tags: [Conversations]
+      summary: Update conversation metadata (mark read, snooze, etc.)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_read: { type: boolean }
+                is_snoozed: { type: boolean }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /conversations/templates:
+    get:
+      tags: [Conversations]
+      summary: Get quick-reply templates for conversations
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Templates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      templates: { type: array, items: { type: object } }
+
+  /conversations/stats:
+    get:
+      tags: [Conversations]
+      summary: Get conversation statistics
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      stats: { type: object }
+
+  /conversations/ably-token:
+    get:
+      tags: [Conversations]
+      summary: Issue a short-lived Ably token for real-time subscriptions
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Ably token request object
+          content:
+            application/json:
+              schema:
+                type: object
+        "503":
+          description: Real-time service not configured
+
+  /conversations/{conversationId}/save-contact:
+    post:
+      tags: [Conversations]
+      summary: Save unknown conversation sender as a client (and optionally create a Draft pipeline entry)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [first_name, last_name]
+              properties:
+                first_name: { type: string }
+                last_name: { type: string }
+                email: { type: string, format: email }
+                phone: { type: string }
+                alternate_phone: { type: string }
+                date_of_birth: { type: string, format: date }
+                address_street: { type: string }
+                address_city: { type: string }
+                address_state: { type: string, maxLength: 2 }
+                address_zip: { type: string }
+                employment_status: { type: string }
+                income_type:
+                  type: string
+                  enum: [W-2, 1099, Self-Employed, Investor, Mixed]
+                annual_income: { type: number }
+                credit_score: { type: integer, minimum: 300, maximum: 850 }
+                citizenship_status:
+                  type: string
+                  enum: [us_citizen, permanent_resident, non_resident, other]
+                create_pipeline_draft: { type: boolean }
+                loan_type:
+                  type: string
+                  enum: [purchase, refinance]
+                notes: { type: string }
+      responses:
+        "200":
+          description: Contact saved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  client_id: { type: integer }
+                  client_name: { type: string }
+                  client_email: { type: string, nullable: true }
+                  pipeline_draft:
+                    type: object
+                    nullable: true
+                    properties:
+                      application_id: { type: integer }
+                      application_number: { type: string }
+        "409":
+          description: Thread already has a client, or duplicate email
+
+  /conversations/mailboxes:
+    get:
+      tags: [Conversations]
+      summary: List configured conversation mailboxes
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Mailboxes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  mailboxes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        provider: { type: string, enum: [office365, imap] }
+                        mailbox_email: { type: string }
+                        display_name: { type: string, nullable: true }
+                        status:
+                          type: string
+                          enum: [pending, active, disabled, error]
+                        is_default: { type: boolean }
+                        is_shared: { type: boolean }
+
+  /conversations/mailboxes/office365/connect:
+    post:
+      tags: [Conversations]
+      summary: Start Office365 mailbox OAuth connection
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mailbox_email]
+              properties:
+                mailbox_email: { type: string, format: email }
+                display_name: { type: string }
+                is_shared: { type: boolean }
+      responses:
+        "200":
+          description: OAuth URL generated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  mailbox_id: { type: integer }
+                  auth_url: { type: string }
+
+  /conversations/mailboxes/{mailboxId}/sync:
+    post:
+      tags: [Conversations]
+      summary: Sync inbound messages from a configured Office365 mailbox
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: mailboxId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Sync completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  mailbox_id: { type: integer }
+                  processed: { type: integer }
+                  errors: { type: integer }
+
+  /conversations/mailboxes/{mailboxId}/assign:
+    patch:
+      tags: [Conversations]
+      summary: Assign a mailbox to a specific broker or set it as shared
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: mailboxId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assigned_broker_id, is_shared]
+              properties:
+                assigned_broker_id:
+                  type: integer
+                  nullable: true
+                  description: Broker ID to assign, or null for shared
+                is_shared:
+                  type: boolean
+                  description: True when no specific broker is assigned
+                is_default:
+                  type: boolean
+                  description: Set this mailbox as the default for outbound email
+      responses:
+        "200":
+          description: Assignment updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  mailbox_id: { type: integer }
+
+  # ── Audit Logs ─────────────────────────────────────────────────────────────────
+  /audit-logs:
+    get:
+      tags: [Audit Logs]
+      summary: Get audit log entries
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: query
+          name: entity_type
+          schema: { type: string }
+        - in: query
+          name: entity_id
+          schema: { type: integer }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50 }
+      responses:
+        "200":
+          description: Audit logs
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      logs: { type: array, items: { type: object } }
+
+  /audit-logs/stats:
+    get:
+      tags: [Audit Logs]
+      summary: Get audit log statistics
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Audit stats
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      stats: { type: object }
+
+  # ── Reports ───────────────────────────────────────────────────────────────────
+  /reports/overview:
+    get:
+      tags: [Reports]
+      summary: Get reports overview (KPIs and summary metrics)
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Overview metrics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      overview: { type: object }
+
+  /reports/revenue:
+    get:
+      tags: [Reports]
+      summary: Get revenue report
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Revenue data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      revenue: { type: object }
+
+  /reports/performance:
+    get:
+      tags: [Reports]
+      summary: Get broker performance report
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Performance data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      performance: { type: object }
+
+  /reports/export:
+    post:
+      tags: [Reports]
+      summary: Export report as CSV or PDF
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [report_type, format]
+              properties:
+                report_type: { type: string }
+                format:
+                  type: string
+                  enum: [csv, pdf]
+                from: { type: string, format: date }
+                to: { type: string, format: date }
+      responses:
+        "200":
+          description: Export file or download URL
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      download_url: { type: string }
+
+  # ── Settings ──────────────────────────────────────────────────────────────────
+  /settings:
+    get:
+      tags: [Settings]
+      summary: Get tenant system settings
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Settings
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      settings: { type: object }
+    put:
+      tags: [Settings]
+      summary: Update tenant system settings
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Key-value settings fields to update
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── Reminder Flows ────────────────────────────────────────────────────────────
+  /reminder-flows:
+    get:
+      tags: [Reminder Flows]
+      summary: List all reminder flows
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Flows
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      flows: { type: array, items: { type: object } }
+    post:
+      tags: [Reminder Flows]
+      summary: Create a new reminder flow
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, trigger_event]
+              properties:
+                name: { type: string }
+                trigger_event: { type: string }
+                description: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      flow: { type: object }
+
+  /reminder-flows/{flowId}:
+    get:
+      tags: [Reminder Flows]
+      summary: Get a single reminder flow with full step/node data
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: flowId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Flow detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      flow: { type: object }
+    put:
+      tags: [Reminder Flows]
+      summary: Save (overwrite) a full reminder flow including nodes/edges
+      description: |
+        Replaces all steps and connections for the flow.
+
+        **Validation enforced by the server (returns 400 on failure):**
+          - `step_type` must be one of: trigger, wait, send_notification,
+            send_email, send_sms, send_whatsapp, condition, branch,
+            wait_for_response, wait_until_date, end.
+          - `edge_type` must be one of: default, condition_yes, condition_no,
+            loan_type_purchase, loan_type_refinance, no_response, responded.
+          - `trigger_event` (when step_type=trigger) must be one of the
+            `ReminderTriggerEvent` enum values.
+          - Every step must have a non-empty `label`.
+          - `step_key` values must be unique within the payload.
+          - `edge_key` values must be unique within the payload.
+          - Every connection's `source_step_key` and `target_step_key` must
+            reference a `step_key` present in the payload.
+          - `position_x` / `position_y` are NaN-guarded (default 0).
+          - `trigger_delay_days` is clamped to >= 0.
+
+        Also persists `flow_category` (`loan` | `realtor_prospecting`),
+        `loan_type_filter`, `realtor_role_filter`, and `is_active` when
+        provided.
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: flowId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string, nullable: true }
+                flow_category:
+                  type: string
+                  enum: [loan, realtor_prospecting]
+                loan_type_filter:
+                  type: string
+                  nullable: true
+                  enum: [purchase, refinance, null]
+                realtor_role_filter:
+                  type: string
+                  nullable: true
+                is_active: { type: boolean }
+                nodes: { type: array, items: { type: object } }
+                edges: { type: array, items: { type: object } }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+        "400":
+          description: Validation failure (invalid enum, duplicate key, missing label, or unresolved connection reference)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: false }
+                  message: { type: string }
+    delete:
+      tags: [Reminder Flows]
+      summary: Delete a reminder flow
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: flowId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /reminder-flows/{flowId}/toggle:
+    patch:
+      tags: [Reminder Flows]
+      summary: Toggle a reminder flow active/inactive
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: flowId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Toggled
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      is_active: { type: boolean }
+
+  /reminder-flow-executions:
+    get:
+      tags: [Reminder Flows]
+      summary: List reminder flow execution history
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Executions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      executions: { type: array, items: { type: object } }
+
+  /reminder-flow-executions/{executionId}/respond:
+    post:
+      tags: [Reminder Flows]
+      summary: Mark a flow execution as responded (stops further messages)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: executionId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Marked responded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── Scheduler (Public) ────────────────────────────────────────────────────────
+  /public/scheduler:
+    get:
+      tags: [Scheduler (Public)]
+      summary: Get default broker's scheduler info and available dates
+      description: Used by the public booking page when no broker token is specified.
+      responses:
+        "200":
+          description: Scheduler info and available dates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      broker: { type: object }
+                      available_dates:
+                        type: array
+                        items: { type: string, format: date }
+
+  /public/scheduler/{token}:
+    get:
+      tags: [Scheduler (Public)]
+      summary: Get specific broker's scheduler info and available dates by public token
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string }
+          description: Broker's `public_token`
+      responses:
+        "200":
+          description: Scheduler info and available dates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      broker: { type: object }
+                      available_dates:
+                        type: array
+                        items: { type: string, format: date }
+        "404":
+          description: Broker not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /public/scheduler/{token}/slots:
+    get:
+      tags: [Scheduler (Public)]
+      summary: Get available time slots for a specific date
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string }
+          description: Broker's `public_token` or `"default"`
+        - in: query
+          name: date
+          required: true
+          schema: { type: string, format: date }
+          description: Date in YYYY-MM-DD format
+      responses:
+        "200":
+          description: Available slots
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      slots:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            time: { type: string, example: "14:00" }
+                            end_time: { type: string, example: "14:30" }
+                            available: { type: boolean }
+
+  /public/scheduler/book:
+    post:
+      tags: [Scheduler (Public)]
+      summary: Book a meeting slot
+      description: |
+        Creates a confirmed meeting. Sends confirmation email to client and notification to broker.
+        Creates a Zoom meeting automatically if `meeting_type: "video"` and Zoom credentials are configured.
+        Creates a Teams meeting automatically if `meeting_type: "teams"` and Azure credentials are configured.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                [
+                  broker_token,
+                  client_name,
+                  client_email,
+                  meeting_date,
+                  meeting_time,
+                  meeting_type,
+                ]
+              properties:
+                broker_token:
+                  type: string
+                  description: Broker's `public_token` or `"default"`
+                client_name: { type: string }
+                client_email: { type: string, format: email }
+                client_phone: { type: string }
+                meeting_date: { type: string, format: date }
+                meeting_time:
+                  type: string
+                  example: "14:00"
+                  description: HH:MM format
+                meeting_type:
+                  type: string
+                  enum: [phone, video, teams]
+                notes: { type: string }
+      responses:
+        "200":
+          description: Meeting booked
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      meeting_id: { type: integer }
+                      booking_token: { type: string }
+                      zoom_join_url: { type: string, nullable: true }
+                      zoom_start_url: { type: string, nullable: true }
+                      teams_join_url: { type: string, nullable: true }
+                      meeting_date: { type: string, format: date }
+                      meeting_time: { type: string }
+                      meeting_type: { type: string }
+                      broker_name: { type: string }
+        "400":
+          description: Slot unavailable or validation error
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: Slot already taken
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "503":
+          description: Video meeting requested but provider meeting could not be created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /public/scheduler/cancel/{bookingToken}:
+    post:
+      tags: [Scheduler (Public)]
+      summary: Cancel a meeting by booking token
+      description: Client-facing cancellation. Sends cancellation emails to both parties.
+      parameters:
+        - in: path
+          name: bookingToken
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        "200":
+          description: Cancelled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+        "404":
+          description: Meeting not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /public/scheduler/reschedule/{bookingToken}:
+    get:
+      tags: [Scheduler (Public)]
+      summary: Get current booking details for reschedule confirmation
+      parameters:
+        - in: path
+          name: bookingToken
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Reschedule info loaded
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      broker_public_token: { type: string }
+                      broker_name: { type: string, nullable: true }
+                      broker_timezone: { type: string, nullable: true }
+                      client_name: { type: string }
+                      client_email: { type: string, format: email }
+                      client_phone: { type: string, nullable: true }
+                      meeting_type: { type: string, enum: [phone, video, teams] }
+                      old_meeting_date: { type: string, format: date }
+                      old_meeting_time: { type: string, example: "12:00:00" }
+        "404":
+          description: Booking not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "410":
+          description: Booking already cancelled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    post:
+      tags: [Scheduler (Public)]
+      summary: Cancel current booking and atomically book a new slot
+      parameters:
+        - in: path
+          name: bookingToken
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_date, new_time]
+              properties:
+                new_date:
+                  {
+                    type: string,
+                    example: "2026-05-10",
+                    description: "New meeting date (YYYY-MM-DD)",
+                  }
+                new_time:
+                  {
+                    type: string,
+                    example: "14:00",
+                    description: "New meeting time (HH:MM)",
+                  }
+      responses:
+        "200":
+          description: Old booking cancelled and new booking confirmed
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      booking_token: { type: string }
+                      meeting_date: { type: string }
+                      meeting_time: { type: string }
+                      zoom_join_url: { type: string, nullable: true }
+                      teams_join_url: { type: string, nullable: true }
+                      broker_name: { type: string }
+        "400":
+          description: Missing or invalid new_date / new_time, or slot unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: Booking not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: Requested slot is already taken
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "410":
+          description: Booking already cancelled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "503":
+          description: Video meeting requested but Zoom meeting could not be created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  # ── Scheduler (Admin) ─────────────────────────────────────────────────────────
+  /scheduler/settings:
+    get:
+      tags: [Scheduler (Admin)]
+      summary: Get broker's scheduler settings and availability
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Settings and availability
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      settings: { type: object }
+                      availability: { type: array, items: { type: object } }
+    put:
+      tags: [Scheduler (Admin)]
+      summary: Update scheduler settings and availability windows
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_enabled: { type: boolean }
+                meeting_title: { type: string }
+                meeting_description: { type: string }
+                slot_duration_minutes: { type: integer, example: 30 }
+                buffer_time_minutes: { type: integer, example: 15 }
+                advance_booking_days: { type: integer, example: 30 }
+                min_booking_hours: { type: integer, example: 2 }
+                timezone: { type: string, example: "America/Chicago" }
+                allow_phone: { type: boolean }
+                allow_video: { type: boolean }
+                allow_teams: { type: boolean }
+                availability:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      day_of_week: { type: integer, minimum: 0, maximum: 6 }
+                      start_time: { type: string, example: "09:00" }
+                      end_time: { type: string, example: "17:00" }
+                      is_active: { type: boolean }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /scheduler/teams-eligibility:
+    get:
+      tags: [Scheduler (Admin)]
+      summary: Check if current broker can enable Teams meetings
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Eligibility result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      eligible: { type: boolean }
+                      error: { type: string, nullable: true }
+
+  /scheduler/meetings:
+    get:
+      tags: [Scheduler (Admin)]
+      summary: List scheduled meetings
+      description: Admins see all meetings; Partners only see their own.
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            { type: string, enum: [confirmed, completed, cancelled, no_show] }
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+        - in: query
+          name: broker_id
+          schema: { type: integer }
+          description: Filter by broker (admin only)
+      responses:
+        "200":
+          description: Meetings list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      meetings:
+                        type: array
+                        items: { $ref: "#/components/schemas/ScheduledMeeting" }
+                      total: { type: integer }
+    post:
+      tags: [Scheduler (Admin)]
+      summary: Create a meeting manually (admin)
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                [
+                  client_name,
+                  client_email,
+                  meeting_date,
+                  meeting_time,
+                  meeting_type,
+                ]
+              properties:
+                client_name: { type: string }
+                client_email: { type: string, format: email }
+                client_phone: { type: string }
+                meeting_date: { type: string, format: date }
+                meeting_time: { type: string, example: "10:00" }
+                meeting_type: { type: string, enum: [phone, video, teams] }
+                notes: { type: string }
+                target_broker_id:
+                  type: integer
+                  description: Assign to a specific broker (admin only)
+      responses:
+        "200":
+          description: Created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      meeting_id: { type: integer }
+                      booking_token: { type: string }
+        "503":
+          description: Video meeting requested but provider meeting could not be created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /scheduler/meetings/{meetingId}:
+    put:
+      tags: [Scheduler (Admin)]
+      summary: Update a scheduled meeting (reschedule, cancel, add notes)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: meetingId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  {
+                    type: string,
+                    enum: [confirmed, completed, cancelled, no_show],
+                  }
+                broker_notes: { type: string }
+                meeting_date: { type: string, format: date }
+                meeting_time: { type: string, example: "15:00" }
+                meeting_type: { type: string, enum: [phone, video, teams] }
+                cancelled_reason: { type: string }
+                cancelled_by: { type: string, enum: [client, broker] }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  # ── Calendar Events ──────────────────────────────────────────────────────────
+
+  /scheduler/blocked-ranges:
+    get:
+      tags: [Scheduler (Admin)]
+      summary: List blocked date/time ranges
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: List of blocked ranges for the authenticated broker
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  blocked_ranges:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SchedulerBlockedRange"
+    post:
+      tags: [Scheduler (Admin)]
+      summary: Add a blocked date/time range
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [start_datetime, end_datetime]
+              properties:
+                start_datetime:
+                  {
+                    type: string,
+                    format: date-time,
+                    example: "2026-04-20T09:00",
+                  }
+                end_datetime:
+                  {
+                    type: string,
+                    format: date-time,
+                    example: "2026-04-20T17:00",
+                  }
+                label: { type: string, example: "Vacation" }
+      responses:
+        "200":
+          description: Blocked range created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  blocked_range:
+                    { $ref: "#/components/schemas/SchedulerBlockedRange" }
+        "400":
+          description: Validation error
+
+  /scheduler/blocked-ranges/{id}:
+    delete:
+      tags: [Scheduler (Admin)]
+      summary: Delete a blocked date/time range
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+        "404":
+          description: Not found
+
+  /calendar/events:
+    get:
+      tags: [Calendar]
+      summary: List calendar events (birthdays, anniversaries, reminders, etc.)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+          description: Filter events on or after this date (YYYY-MM-DD)
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+          description: Filter events on or before this date (YYYY-MM-DD)
+        - in: query
+          name: event_type
+          schema:
+            type: string
+            enum:
+              [
+                birthday,
+                home_anniversary,
+                realtor_anniversary,
+                important_date,
+                reminder,
+                other,
+                all,
+              ]
+          description: Filter by event type (omit or "all" for all types)
+        - in: query
+          name: search
+          schema: { type: string }
+          description: Full-text search against title, linked client name, and linked person name
+        - in: query
+          name: sort_by
+          schema:
+            type: string
+            enum:
+              [event_date, title, event_type, linked_client_name, recurrence]
+            default: event_date
+          description: Column to sort by
+        - in: query
+          name: sort_order
+          schema:
+            type: string
+            enum: [ASC, DESC]
+            default: ASC
+          description: Sort direction
+      responses:
+        "200":
+          description: List of calendar events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  events:
+                    type: array
+                    items: { $ref: "#/components/schemas/CalendarEvent" }
+                  total: { type: integer }
+    post:
+      tags: [Calendar]
+      summary: Create a new calendar event
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event_type, title, event_date]
+              properties:
+                event_type:
+                  type: string
+                  enum:
+                    [
+                      birthday,
+                      home_anniversary,
+                      realtor_anniversary,
+                      important_date,
+                      reminder,
+                      other,
+                    ]
+                title: { type: string }
+                description: { type: string }
+                event_date: { type: string, format: date }
+                event_time: { type: string, example: "10:00" }
+                all_day: { type: boolean, default: true }
+                recurrence:
+                  { type: string, enum: [none, yearly], default: none }
+                color: { type: string, example: "#e81932" }
+                linked_client_id: { type: integer, nullable: true }
+                linked_person_name: { type: string }
+      responses:
+        "201":
+          description: Event created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  event: { $ref: "#/components/schemas/CalendarEvent" }
+
+  /calendar/events/{eventId}:
+    put:
+      tags: [Calendar]
+      summary: Update a calendar event
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: eventId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event_type:
+                  type: string
+                  enum:
+                    [
+                      birthday,
+                      home_anniversary,
+                      realtor_anniversary,
+                      important_date,
+                      reminder,
+                      other,
+                    ]
+                title: { type: string }
+                description: { type: string, nullable: true }
+                event_date: { type: string, format: date }
+                event_time: { type: string, nullable: true }
+                all_day: { type: boolean }
+                recurrence: { type: string, enum: [none, yearly] }
+                color: { type: string, nullable: true }
+                linked_client_id: { type: integer, nullable: true }
+                linked_person_name: { type: string, nullable: true }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+    delete:
+      tags: [Calendar]
+      summary: Delete a calendar event
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: eventId
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /calendar/sync-birthdays:
+    post:
+      tags: [Calendar]
+      summary: Sync birthday events from clients and broker profiles
+      description: >
+        Upserts yearly birthday calendar events for all clients with a date_of_birth,
+        and all broker_profiles (partners + mortgage bankers) with a date_of_birth.
+        Admin only. Idempotent — safe to run multiple times.
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Sync result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  created:
+                    {
+                      type: integer,
+                      description: "Number of new birthday events created",
+                    }
+                  updated:
+                    {
+                      type: integer,
+                      description: "Number of existing birthday events updated",
+                    }
+        "403":
+          description: Admin only
+
+  # ── Contact ───────────────────────────────────────────────────────────────────
+  /contact:
+    post:
+      tags: [Contact]
+      summary: Submit the public contact form
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, subject, message]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                phone: { type: string }
+                subject: { type: string }
+                message: { type: string }
+      responses:
+        "201":
+          description: Message received
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+        "400":
+          description: Missing required fields or invalid email
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    get:
+      tags: [Contact]
+      summary: Get all contact form submissions (admin)
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Submissions
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      submissions: { type: array, items: { type: object } }
+
+  # ── Proxy Utilities ───────────────────────────────────────────────────────────
+  /proxy/pdf:
+    get:
+      tags: [Public]
+      summary: Server-side PDF proxy (avoids CORS)
+      description: Fetches a PDF from an external URL server-side and streams it to the browser. Used for PDF rendering in the client.
+      parameters:
+        - in: query
+          name: url
+          required: true
+          schema: { type: string, format: uri }
+      responses:
+        "200":
+          description: PDF stream
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid URL
+        "502":
+          description: Upstream error
+
+  /image-proxy:
+    get:
+      tags: [Public]
+      summary: Server-side image proxy (avoids CORS for PDF generation)
+      description: Fetches an image from an external URL and forwards it. Cached for 24 hours. Used by jsPDF for embedding external images.
+      parameters:
+        - in: query
+          name: url
+          required: true
+          schema: { type: string, format: uri }
+      responses:
+        "200":
+          description: Image bytes
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid URL
+
+  # ── Webhooks & Cron ───────────────────────────────────────────────────────────
+  /webhooks/inbound-email:
+    post:
+      tags: [Webhooks & Cron]
+      summary: Inbound email webhook (Postmark / Mailgun / SendGrid)
+      description: |
+        Receives inbound parsed emails from an email service provider and:
+        1. Creates an inbound `communications` record.
+        2. Upserts the `conversation_thread` via DB trigger.
+        3. Marks any active `reminder_flow_executions` waiting on this
+           conversation as responded so the cron can advance the flow.
+
+        Protected by `INBOUND_WEBHOOK_SECRET` header — do NOT expose to public callers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Webhook payload (format varies by provider — Postmark, Mailgun, or SendGrid)
+      responses:
+        "200":
+          description: Processed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /webhooks/inbound-sms:
+    post:
+      tags: [Webhooks & Cron]
+      summary: Inbound SMS webhook (Twilio)
+      description: |
+        Receives inbound SMS messages from Twilio and:
+        1. Looks up the client by sender phone number.
+        2. Finds the most recent active flow execution for that client
+           to determine the correct conversation_id.
+        3. Creates an inbound `communications` record.
+        4. Upserts the `conversation_thread` via DB trigger.
+        5. Marks any active `reminder_flow_executions` waiting on this
+           conversation as responded so the cron can advance the flow.
+
+        Configure in Twilio Console → Phone Numbers → Active Numbers → Messaging:
+          Webhook URL: `https://yourdomain.com/api/webhooks/inbound-sms`
+          HTTP Method: `POST`
+
+        Protected by optional `INBOUND_WEBHOOK_SECRET` header.
+        Returns an empty TwiML `<Response>` so Twilio does not auto-reply.
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [Body, From, To, MessageSid]
+              properties:
+                Body:
+                  type: string
+                  description: SMS message text
+                From:
+                  type: string
+                  description: Sender E.164 phone number (e.g. +15550001111)
+                To:
+                  type: string
+                  description: Your Twilio number (e.g. +15559990000)
+                MessageSid:
+                  type: string
+                  description: Twilio message SID
+                AccountSid:
+                  type: string
+                  description: Twilio account SID
+      responses:
+        "200":
+          description: Empty TwiML response
+          content:
+            text/xml:
+              schema:
+                type: string
+                example: "<Response></Response>"
+
+  /cron/poll-inbound-email:
+    get:
+      tags: [Webhooks & Cron]
+      summary: Poll IMAP inbox for inbound emails (cron trigger)
+      description: |
+        Called by Vercel Cron or cPanel cron via curl.
+        Polls the configured IMAP inbox, ingests new emails as conversation messages,
+        and marks matching active reminder flow executions as responded.
+      responses:
+        "200":
+          description: Poll complete
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /cron/process-reminder-flows:
+    get:
+      tags: [Webhooks & Cron]
+      summary: Process pending reminder flow executions (cron trigger)
+      description: |
+        Run every 5–15 minutes via cPanel cron:
+        `curl -s "https://yourdomain.com/api/cron/process-reminder-flows?secret=CRON_SECRET"`
+
+        Processes all pending flow execution steps and sends due messages.
+      parameters:
+        - in: query
+          name: secret
+          required: false
+          schema: { type: string }
+          description: Shared secret matching `CRON_SECRET` env var
+      responses:
+        "200":
+          description: Processing complete
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+
+  /cron/backfill-message-status:
+    get:
+      tags: [Webhooks & Cron]
+      summary: Backfill stale Twilio delivery_status (cron trigger)
+      description: |
+        Run every ~10 minutes via cPanel cron:
+        `curl -s "https://yourdomain.com/api/cron/backfill-message-status?secret=CRON_SECRET"`
+
+        Picks up to 50 outbound SMS/MMS/WhatsApp rows whose `delivery_status`
+        is still `sent`/`pending` more than 2 minutes after `sent_at`,
+        queries Twilio for the authoritative status, and updates the row.
+        Catches messages whose `statusCallback` webhook never arrived.
+      parameters:
+        - in: query
+          name: secret
+          required: false
+          schema: { type: string }
+          description: Shared secret matching `CRON_SECRET` env var
+      responses:
+        "200":
+          description: Backfill complete
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  checked: { type: integer }
+                  updated: { type: integer }
+                  unchanged: { type: integer }
+                  errors: { type: integer }
+
+  /cron/sync-teams-policy:
+    get:
+      tags: [Webhooks & Cron]
+      summary: Sync Teams application-access policy for teams-enabled users (cron trigger)
+      description: |
+        Runs the server script that grants Teams app-access policy for active users
+        with `allow_teams = 1`.
+
+        Run daily via cPanel cron:
+        `curl -s "https://yourdomain.com/api/cron/sync-teams-policy?secret=CRON_SECRET"`
+      parameters:
+        - in: query
+          name: secret
+          required: false
+          schema: { type: string }
+          description: Shared secret matching `CRON_SECRET` env var
+      responses:
+        "200":
+          description: Teams policy sync complete
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  message: { type: string }
+                  output: { type: string, nullable: true }
+                  warnings: { type: string, nullable: true }
+
+  # ─── Realtor Prospecting Pipeline ─────────────────────────────────────────
+  /realtor-prospects:
+    get:
+      tags: [Realtor Prospecting]
+      summary: List realtor prospects
+      description: >
+        Returns all realtor prospect opportunities for the logged-in broker.
+        Superadmins see all; others see only their own (created or owned).
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: stage
+          schema:
+            type: string
+            enum:
+              [
+                contact_attempted,
+                contacted,
+                appt_set,
+                waiting_for_1st_deal,
+                first_deal_funded,
+                second_deal_funded,
+                top_agent_whale,
+              ]
+        - in: query
+          name: status
+          schema: { type: string, enum: [open, won, lost] }
+        - in: query
+          name: search
+          schema: { type: string }
+        - in: query
+          name: owner_broker_id
+          schema: { type: integer }
+      responses:
+        "200":
+          description: List of realtor prospects
+    post:
+      tags: [Realtor Prospecting]
+      summary: Create a realtor prospect opportunity
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [opportunity_name]
+              properties:
+                opportunity_name: { type: string }
+                stage:
+                  {
+                    type: string,
+                    enum:
+                      [
+                        contact_attempted,
+                        contacted,
+                        appt_set,
+                        waiting_for_1st_deal,
+                        first_deal_funded,
+                        second_deal_funded,
+                        top_agent_whale,
+                      ],
+                  }
+                status: { type: string, enum: [open, won, lost] }
+                opportunity_value: { type: number }
+                contact_name: { type: string }
+                contact_email: { type: string }
+                contact_phone: { type: string }
+                business_name: { type: string }
+                opportunity_source: { type: string }
+                tags: { type: array, items: { type: string } }
+                notes: { type: string }
+                owner_broker_id: { type: integer, nullable: true }
+                followers: { type: array, items: { type: integer } }
+                progress_report:
+                  { type: string, enum: [ready_to_send, sent], nullable: true }
+                add_to_refi_rates_dropped: { type: boolean }
+      responses:
+        "201":
+          description: Realtor prospect created
+  /realtor-prospects/{id}:
+    get:
+      tags: [Realtor Prospecting]
+      summary: Get a single realtor prospect
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Realtor prospect details
+    patch:
+      tags: [Realtor Prospecting]
+      summary: Update a realtor prospect
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Updated prospect
+    delete:
+      tags: [Realtor Prospecting]
+      summary: Delete a realtor prospect
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Deleted
+  /realtor-prospects/{id}/stage:
+    patch:
+      tags: [Realtor Prospecting]
+      summary: Update the stage of a realtor prospect (drag & drop)
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stage]
+              properties:
+                stage:
+                  {
+                    type: string,
+                    enum:
+                      [
+                        contact_attempted,
+                        contacted,
+                        appt_set,
+                        waiting_for_1st_deal,
+                        first_deal_funded,
+                        second_deal_funded,
+                        top_agent_whale,
+                      ],
+                  }
+      responses:
+        "200":
+          description: Stage updated
+
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: List notifications for the authenticated broker
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: unread_only
+          schema: { type: string, enum: ["1"] }
+          description: When "1", returns only unread notifications.
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50, maximum: 200 }
+      responses:
+        "200":
+          description: List of broker notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  unread_count: { type: integer }
+                  notifications:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        title: { type: string }
+                        message: { type: string }
+                        notification_type:
+                          { type: string, enum: [info, success, warning, error] }
+                        category:
+                          {
+                            type: string,
+                            enum: [message, call, loan, client, task, flow, lead, system],
+                          }
+                        is_read: { type: boolean }
+                        action_url: { type: string, nullable: true }
+                        created_at: { type: string, format: date-time }
+                        read_at: { type: string, format: date-time, nullable: true }
+
+  /notifications/{id}/read:
+    put:
+      tags: [Notifications]
+      summary: Mark a single notification as read
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Notification marked as read
+
+  /notifications/read-all:
+    put:
+      tags: [Notifications]
+      summary: Mark all notifications as read for the authenticated broker
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: All notifications marked as read
+
+  /notifications/{id}:
+    delete:
+      tags: [Notifications]
+      summary: Dismiss (delete) a notification
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Notification deleted

@@ -8,6 +8,10 @@ import {
   setDeviceStatus,
   endOutboundCall,
   resolveOutboundCallName,
+  fetchVoiceToken,
+  fetchAblyToken,
+  updateVoiceAvailability,
+  lookupContact,
 } from "@/store/slices/voiceSlice";
 import VoiceCallPanel from "@/components/VoiceCallPanel";
 import { logger } from "@/lib/logger";
@@ -30,6 +34,11 @@ const GlobalVoiceManager: React.FC = () => {
   const ringingCallRef = useRef<Call | null>(null);
   // Tracks the CallSid of the current ringing call so Ably dismissal can match it.
   const ringingCallSidRef = useRef<string | null>(null);
+  // Tracks whether the broker is already busy with another call (active inbound
+  // or outbound). Used inside the Twilio "incoming" handler to reject a second
+  // simultaneous call — two concurrent WebRTC calls compete for the same mic
+  // and silently mute the first call's outgoing audio on Chrome/macOS.
+  const busyRef = useRef(false);
 
   const [ringingCall, setRingingCall] = useState<Call | null>(null);
   const [ringingPhone, setRingingPhone] = useState<string>("");
@@ -46,46 +55,32 @@ const GlobalVoiceManager: React.FC = () => {
   // POST /api/voice/availability — called ONLY from registered/unregistered events.
   const reportAvailability = useCallback(
     (available: boolean) => {
-      if (!sessionToken) return;
-      fetch("/api/voice/availability", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify({ available }),
-      }).catch(() => {});
+      dispatch(updateVoiceAvailability(available));
     },
-    [sessionToken],
+    [dispatch],
   );
 
   const fetchToken = useCallback(async (): Promise<string | null> => {
     try {
-      const res = await fetch("/api/voice/token", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
-      });
-      if (!res.ok) return null;
-      const { token } = await res.json();
-      return token || null;
+      return await dispatch(fetchVoiceToken()).unwrap();
     } catch {
       return null;
     }
-  }, [sessionToken]);
+  }, [dispatch]);
+
+  // Keep `busyRef` in sync so the Twilio "incoming" handler (which captures
+  // refs, not state) knows whether to reject a concurrent inbound call.
+  useEffect(() => {
+    busyRef.current = !!activeIncomingCall || !!outboundCall;
+  }, [activeIncomingCall, outboundCall]);
 
   // When an outbound call is dispatched without a client name (e.g. from the dialpad),
   // look up the phone number so the panel shows the real name instead of the raw number.
   useEffect(() => {
-    if (!outboundCall || outboundCall.clientName || !sessionToken) return;
+    if (!outboundCall || outboundCall.clientName) return;
     const { phone } = outboundCall;
-    fetch(
-      `/api/conversations/lookup-contact?phone=${encodeURIComponent(phone)}`,
-      { headers: { Authorization: `Bearer ${sessionToken}` } },
-    )
-      .then((r) => r.json())
+    dispatch(lookupContact(phone))
+      .unwrap()
       .then((data) => {
         if (data.found) {
           dispatch(
@@ -97,7 +92,7 @@ const GlobalVoiceManager: React.FC = () => {
         }
       })
       .catch(() => {});
-  }, [outboundCall?.phone, sessionToken, dispatch]);
+  }, [outboundCall?.phone, dispatch]);
 
   // Create the Device once per session token.
   useEffect(() => {
@@ -123,8 +118,11 @@ const GlobalVoiceManager: React.FC = () => {
         closeProtection: true,
         maxAverageBitrate: 40000,
         enableImprovedSignalingErrorPrecision: true,
-        // Allow inbound ringing even while in an active call
-        allowIncomingWhileBusy: true,
+        // Reject inbound calls while the broker is already on another call.
+        // Two concurrent WebRTC calls fight over the microphone and the active
+        // call's outgoing audio gets muted. The second caller falls through
+        // to dial-status → voicemail / other available bankers instead.
+        allowIncomingWhileBusy: false,
       } as ConstructorParameters<typeof Device>[1]);
       deviceRef.current = device;
 
@@ -163,12 +161,14 @@ const GlobalVoiceManager: React.FC = () => {
 
       // ── Incoming call ─────────────────────────────────────────────
       device.on("incoming", (call: Call) => {
-        // Guard: if already handling a call, reject the duplicate.
-        // This can happen if a stale Device registration from a previous page
-        // load causes Twilio to send incoming to two endpoints simultaneously.
-        if (ringingCallRef.current) {
+        // Guard: if already on/handling a call, reject so the caller falls
+        // through to dial-status (→ voicemail or another available banker).
+        // Accepting a second call while one is active causes the browser to
+        // re-acquire the mic for the new PeerConnection and silently mutes
+        // the first call's outgoing audio.
+        if (ringingCallRef.current || busyRef.current) {
           logger.warn(
-            "[GlobalVoiceManager] Already ringing — rejecting duplicate",
+            "[GlobalVoiceManager] Busy — rejecting incoming call so it routes to voicemail/next banker",
           );
           call.reject();
           return;
@@ -278,11 +278,7 @@ const GlobalVoiceManager: React.FC = () => {
 
     const connect = async () => {
       try {
-        const res = await fetch("/api/conversations/ably-token", {
-          headers: { Authorization: `Bearer ${sessionToken}` },
-        });
-        if (!res.ok) return;
-        const tokenRequest = await res.json();
+        const tokenRequest = await dispatch(fetchAblyToken()).unwrap();
 
         ablyClient = new AblyLib.Realtime({
           authCallback: (_tokenParams, callback) =>

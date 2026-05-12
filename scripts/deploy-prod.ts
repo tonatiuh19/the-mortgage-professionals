@@ -5,7 +5,6 @@ import { createInterface } from "node:readline/promises";
 import process from "node:process";
 import mysql from "mysql2/promise";
 
-// TMP default tenant is 2 (override with DEPLOY_SETTINGS_TENANT_ID when needed)
 const DEFAULT_TENANT_ID = Number(process.env.DEPLOY_SETTINGS_TENANT_ID ?? "2");
 
 function requireEnv(name: string): string {

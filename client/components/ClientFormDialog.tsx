@@ -28,11 +28,13 @@ interface ClientFormDialogProps {
 
 const validationSchema = Yup.object({
   first_name: Yup.string().trim().required("First name is required"),
+  middle_name: Yup.string().trim(),
   last_name: Yup.string().trim().required("Last name is required"),
-  email: Yup.string().email("Invalid email").required("Email is required"),
+  email: Yup.string().email("Invalid email").optional(),
   phone: Yup.string().trim(),
   date_of_birth: Yup.string(),
   address_street: Yup.string().trim(),
+  address_unit: Yup.string().trim(),
   address_city: Yup.string().trim(),
   address_state: Yup.string().trim(),
   address_zip: Yup.string().trim(),
@@ -51,16 +53,18 @@ const ClientFormDialog: React.FC<ClientFormDialogProps> = ({
     enableReinitialize: true,
     initialValues: {
       first_name: client?.first_name ?? "",
+      middle_name: (client as any)?.middle_name ?? "",
       last_name: client?.last_name ?? "",
       email: client?.email ?? "",
       phone: client?.phone ?? "",
       date_of_birth: client?.date_of_birth
         ? client.date_of_birth.split("T")[0]
         : "",
-      address_street: "",
-      address_city: "",
-      address_state: "",
-      address_zip: "",
+      address_street: (client as any)?.address_street ?? "",
+      address_unit: (client as any)?.address_unit ?? "",
+      address_city: (client as any)?.address_city ?? "",
+      address_state: (client as any)?.address_state ?? "",
+      address_zip: (client as any)?.address_zip ?? "",
     },
     validationSchema,
     onSubmit: async (values, { setSubmitting }) => {
@@ -71,10 +75,12 @@ const ClientFormDialog: React.FC<ClientFormDialogProps> = ({
               clientId: client.id,
               payload: {
                 first_name: values.first_name,
+                middle_name: values.middle_name || undefined,
                 last_name: values.last_name,
                 phone: values.phone || undefined,
                 date_of_birth: values.date_of_birth || undefined,
                 address_street: values.address_street || undefined,
+                address_unit: values.address_unit || undefined,
                 address_city: values.address_city || undefined,
                 address_state: values.address_state || undefined,
                 address_zip: values.address_zip || undefined,
@@ -89,9 +95,15 @@ const ClientFormDialog: React.FC<ClientFormDialogProps> = ({
           await dispatch(
             createClient({
               first_name: values.first_name,
+              middle_name: values.middle_name || undefined,
               last_name: values.last_name,
-              email: values.email,
+              email: values.email?.trim() || undefined,
               phone: values.phone || undefined,
+              address_street: values.address_street || undefined,
+              address_unit: values.address_unit || undefined,
+              address_city: values.address_city || undefined,
+              address_state: values.address_state || undefined,
+              address_zip: values.address_zip || undefined,
             }),
           ).unwrap();
           toast({
@@ -137,7 +149,9 @@ const ClientFormDialog: React.FC<ClientFormDialogProps> = ({
         }
       />
       {formik.touched[name] && formik.errors[name] && (
-        <p className="text-xs text-destructive">{formik.errors[name]}</p>
+        <p className="text-xs text-destructive">
+          {String(formik.errors[name])}
+        </p>
       )}
     </div>
   );
@@ -170,13 +184,11 @@ const ClientFormDialog: React.FC<ClientFormDialogProps> = ({
               {field("first_name", "First Name", "text", "Jane")}
               {field("last_name", "Last Name", "text", "Doe")}
             </div>
+            <div className="mt-3">
+              {field("middle_name", "Middle Name (optional)", "text", "Marie")}
+            </div>
             <div className="mt-3 space-y-3">
-              {field("email", "Email", "email", "jane@example.com")}
-              {isEdit && (
-                <p className="text-xs text-muted-foreground -mt-1">
-                  Email cannot be changed after creation.
-                </p>
-              )}
+              {field("email", "Email (optional)", "email", "jane@example.com")}
               {field("phone", "Phone", "tel", "(555) 000-0000")}
               {field("date_of_birth", "Date of Birth", "date")}
             </div>
@@ -193,10 +205,13 @@ const ClientFormDialog: React.FC<ClientFormDialogProps> = ({
             </p>
             <div className="space-y-3">
               {field("address_street", "Street", "text", "123 Main St")}
+              <div className="grid grid-cols-2 gap-3">
+                {field("address_unit", "Unit / Apt", "text", "Apt 4B")}
+                {field("address_zip", "ZIP", "text", "90001")}
+              </div>
               <div className="grid grid-cols-3 gap-3">
                 {field("address_city", "City", "text", "Los Angeles")}
                 {field("address_state", "State", "text", "CA")}
-                {field("address_zip", "ZIP", "text", "90001")}
               </div>
             </div>
           </div>

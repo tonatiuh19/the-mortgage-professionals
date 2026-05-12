@@ -362,6 +362,11 @@ const Tasks = () => {
                           </div>
                         )}
 
+                        {task.created_by_broker_name && (
+                          <p className="text-xs text-muted-foreground">
+                            Created by {task.created_by_broker_name}
+                          </p>
+                        )}
                         <div className="flex items-center justify-end gap-1 pt-2 border-t">
                           <Button
                             variant="ghost"
@@ -473,6 +478,9 @@ const Tasks = () => {
                         <TableHead className="min-w-[100px] whitespace-nowrap">
                           Active
                         </TableHead>
+                        <TableHead className="min-w-[130px] whitespace-nowrap">
+                          Created By
+                        </TableHead>
                         <TableHead className="min-w-[120px] text-right whitespace-nowrap">
                           Actions
                         </TableHead>
@@ -570,6 +578,11 @@ const Tasks = () => {
                               >
                                 {task.is_active ? "Active" : "Inactive"}
                               </Badge>
+                            </TableCell>
+                            <TableCell className="min-w-[130px] whitespace-nowrap">
+                              <span className="text-xs text-muted-foreground">
+                                {task.created_by_broker_name || "—"}
+                              </span>
                             </TableCell>
                             <TableCell className="min-w-[120px] text-right whitespace-nowrap">
                               <div className="flex items-center justify-end gap-1">

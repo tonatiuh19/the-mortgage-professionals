@@ -1,4 +1,3 @@
-import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAppSelector } from "@/store/hooks";
@@ -9,10 +8,7 @@ interface HeaderProps {
   transparent?: boolean;
 }
 
-export default function Header({
-  onGetPreApproved,
-  transparent = false,
-}: HeaderProps) {
+export default function Header({ transparent = false }: HeaderProps) {
   const [isOpen, setIsOpen] = useState(false);
   const navigate = useNavigate();
   const client = useAppSelector(selectClient);
@@ -81,19 +77,13 @@ export default function Header({
         <div className="flex items-center gap-3">
           <button
             onClick={handleMyApplicationsClick}
-            className={`hidden md:inline-flex px-6 py-2 font-semibold transition ${
+            className={`hidden md:inline-flex px-6 py-2 rounded-lg font-semibold transition ${
               transparent
                 ? "text-white hover:text-[#F9A826]"
-                : "text-[#0A2F52] hover:text-[#135E99]"
+                : "text-[#0A2F52] hover:text-[#135E99] bg-white"
             }`}
           >
             My Applications
-          </button>
-          <button
-            onClick={onGetPreApproved}
-            className="bg-primary hover:bg-primary-dark text-white px-6 py-2 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 transform hover:scale-105 shadow-md hover:shadow-lg"
-          >
-            Get Pre-Approved
           </button>
 
           {/* Mobile Menu Button */}

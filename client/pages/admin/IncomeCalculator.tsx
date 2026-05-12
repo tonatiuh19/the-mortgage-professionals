@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef } from "react";
 import { cn } from "@/lib/utils";
+import { logger } from "@/lib/logger";
 import {
   Home,
   TrendingUp,
@@ -699,14 +700,12 @@ function VariableTab({ onResultChange }: TabProps = {}) {
 
 function ScheduleCTab({ onResultChange }: TabProps = {}) {
   const [f, setF] = useState({
-    grossIncome1: "",
-    expenses1: "",
+    netProfit1: "",
     depreciation1: "",
     mileage1: "",
     meals1: "",
     homeOffice1: "",
-    grossIncome2: "",
-    expenses2: "",
+    netProfit2: "",
     depreciation2: "",
     mileage2: "",
     meals2: "",
@@ -716,14 +715,12 @@ function ScheduleCTab({ onResultChange }: TabProps = {}) {
     setF((p) => ({ ...p, [k]: v }));
   const reset = () =>
     setF({
-      grossIncome1: "",
-      expenses1: "",
+      netProfit1: "",
       depreciation1: "",
       mileage1: "",
       meals1: "",
       homeOffice1: "",
-      grossIncome2: "",
-      expenses2: "",
+      netProfit2: "",
       depreciation2: "",
       mileage2: "",
       meals2: "",
@@ -731,33 +728,29 @@ function ScheduleCTab({ onResultChange }: TabProps = {}) {
     });
 
   const calcYear = (
-    g: string,
-    e: string,
+    np: string,
     dep: string,
     mil: string,
     meals: string,
     ho: string,
   ) => {
-    const gross = numVal(g);
-    const exp = numVal(e);
+    const net = numVal(np);
     const d = numVal(dep);
     const m = numVal(mil);
     const ml = numVal(meals);
     const home = numVal(ho);
-    return gross - exp + d + m + ml * 0.5 + home;
+    return net + d + m + ml * 0.5 + home;
   };
 
   const y1 = calcYear(
-    f.grossIncome1,
-    f.expenses1,
+    f.netProfit1,
     f.depreciation1,
     f.mileage1,
     f.meals1,
     f.homeOffice1,
   );
   const y2 = calcYear(
-    f.grossIncome2,
-    f.expenses2,
+    f.netProfit2,
     f.depreciation2,
     f.mileage2,
     f.meals2,
@@ -784,35 +777,29 @@ function ScheduleCTab({ onResultChange }: TabProps = {}) {
       </h4>
       <div className="grid sm:grid-cols-2 gap-4">
         <DollarField
-          label="Gross Income (Line 7)"
-          value={f[`grossIncome${yr}`]}
-          onChange={set(`grossIncome${yr}` as any)}
+          label="Net Profit (Line 31)"
+          value={f[`netProfit${yr}`]}
+          onChange={set(`netProfit${yr}` as any)}
         />
-        <DollarField
-          label="Total Expenses (Line 28)"
-          value={f[`expenses${yr}`]}
-          onChange={set(`expenses${yr}` as any)}
-          hint="Before add-backs"
-        />
-      </div>
-      <div className="grid sm:grid-cols-2 gap-4">
         <DollarField
           label="Depreciation (Line 13)"
           value={f[`depreciation${yr}`]}
           onChange={set(`depreciation${yr}` as any)}
         />
+      </div>
+      <div className="grid sm:grid-cols-2 gap-4">
         <DollarField
           label="Mileage (Line 9 — $)"
           value={f[`mileage${yr}`]}
           onChange={set(`mileage${yr}` as any)}
         />
-      </div>
-      <div className="grid sm:grid-cols-2 gap-4">
         <DollarField
           label="Meals (Line 24b — 50% added back)"
           value={f[`meals${yr}`]}
           onChange={set(`meals${yr}` as any)}
         />
+      </div>
+      <div className="grid sm:grid-cols-2 gap-4">
         <DollarField
           label="Home Office (Line 30)"
           value={f[`homeOffice${yr}`]}
@@ -1675,8 +1662,7 @@ const IncomeCalculator: React.FC = () => {
         .from(html, "string")
         .save();
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error("PDF generation failed:", err);
+      logger.error("PDF generation failed:", err);
     } finally {
       setIsGeneratingPdf(false);
     }

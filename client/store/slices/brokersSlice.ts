@@ -57,12 +57,12 @@ interface FetchBrokersParams {
 
 export const fetchBrokers = createAsyncThunk(
   "brokers/fetchBrokers",
-  async (params: FetchBrokersParams = {}, { getState, rejectWithValue }) => {
+  async (params: FetchBrokersParams | void, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
       const { data } = await axios.get<GetBrokersResponse>("/api/brokers", {
         headers: { Authorization: `Bearer ${sessionToken}` },
-        params,
+        params: params ?? {},
       });
       return { brokers: data.brokers, pagination: data.pagination };
     } catch (error: any) {

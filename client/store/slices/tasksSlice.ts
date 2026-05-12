@@ -66,14 +66,14 @@ interface FetchTasksParams {
 
 export const fetchTasks = createAsyncThunk(
   "tasks/fetchAll",
-  async (params: FetchTasksParams = {}, { getState, rejectWithValue }) => {
+  async (params: FetchTasksParams | void, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
       const { data } = await axios.get<
         GetTasksResponse & { pagination: PaginationInfo }
       >("/api/tasks", {
         headers: { Authorization: `Bearer ${sessionToken}` },
-        params,
+        params: params ?? {},
       });
       return { tasks: data.tasks, pagination: data.pagination };
     } catch (error: any) {
@@ -273,6 +273,64 @@ export const fetchTaskDocuments = createAsyncThunk(
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.error || "Failed to fetch documents",
+      );
+    }
+  },
+);
+
+export const fetchTaskFormResponses = createAsyncThunk(
+  "tasks/fetchFormResponses",
+  async (taskId: number, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.get(`/api/tasks/${taskId}/responses`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      return { taskId, responses: (data.responses || []) as any[] };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to fetch task responses",
+      );
+    }
+  },
+);
+
+export const approveTask = createAsyncThunk(
+  "tasks/approve",
+  async (taskId: number, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      await axios.post(
+        `/api/tasks/${taskId}/approve`,
+        {},
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return { taskId };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to approve task",
+      );
+    }
+  },
+);
+
+export const reopenTask = createAsyncThunk(
+  "tasks/reopen",
+  async (
+    { taskId, reason }: { taskId: number; reason: string },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      await axios.post(
+        `/api/tasks/${taskId}/reopen`,
+        { reason },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return { taskId };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to reopen task",
       );
     }
   },

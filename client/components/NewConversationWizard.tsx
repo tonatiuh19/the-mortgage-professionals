@@ -442,7 +442,7 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
                   className={cn(
                     "flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-medium transition-all duration-150",
                     locked
-                      ? "opacity-40 cursor-not-allowed bg-background text-muted-foreground border border-border/60"
+                      ? "opacity-50 cursor-not-allowed bg-background text-muted-foreground border border-dashed border-border"
                       : active
                         ? "bg-primary text-primary-foreground shadow-sm"
                         : "bg-background text-muted-foreground hover:bg-muted border border-border/60",
@@ -450,7 +450,9 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
                 >
                   {meta.icon}
                   {meta.label}
-                  {locked && <Lock className="h-3 w-3 ml-0.5" />}
+                  {locked && (
+                    <Lock className="h-2.5 w-2.5 ml-0.5 text-muted-foreground/60" />
+                  )}
                 </button>
               );
             })}

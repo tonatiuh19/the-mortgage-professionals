@@ -30,7 +30,7 @@ const TEAM = [
     bio: "Sharing my expertise to personally assist thousands of families with sustainable home financing for the past 24 years. Daniel's deep roots in the local community make him the go-to advisor for first-time buyers and seasoned investors alike.",
     years: 24,
     avatar:
-      "https://disruptinglabs.com/data/api/data/themortgageprofessionals-profiles/profile-3/main_image/69a914674dc84_1772688487.png",
+      "https://disruptinglabs.com/data/api/data/encore-profiles/profile-3/main_image/69a914674dc84_1772688487.png",
     address: "15111 Whittier Blvd Suite 101-B, Whittier, CA 90603",
     specialties: ["FHA", "VA", "Conventional", "Self-Employed"],
   },
@@ -41,7 +41,7 @@ const TEAM = [
     bio: "Alex brings a passion for technology-driven mortgage solutions that simplify the homebuying journey. With deep expertise in FHA programs, Alex has helped hundreds of families achieve homeownership across Southern California.",
     years: null,
     avatar:
-      "https://disruptinglabs.com/data/api/data/themortgageprofessionals-profiles/profile-1/main_image/69a6138f45544_1772491663.png",
+      "https://disruptinglabs.com/data/api/data/encore-profiles/profile-1/main_image/69a6138f45544_1772491663.png",
     address: "3301 Lyon St, San Francisco, CA 94123",
     specialties: ["FHA Loans", "First-Time Buyers", "Digital Mortgage"],
   },
@@ -52,7 +52,7 @@ const TEAM = [
     bio: "Hebert specializes in investment properties and refinancing strategies that unlock equity and maximize wealth for his clients. His analytical approach and market knowledge have helped investors grow their portfolios with smart financing.",
     years: null,
     avatar:
-      "https://disruptinglabs.com/data/api/data/themortgageprofessionals-profiles/profile-4/main_image/69a635b968a3d_1772500409.png",
+      "https://disruptinglabs.com/data/api/data/encore-profiles/profile-4/main_image/69a635b968a3d_1772500409.png",
     address: null,
     specialties: ["Investment Properties", "Refinancing", "Jumbo Loans"],
   },

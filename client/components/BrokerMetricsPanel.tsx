@@ -412,7 +412,7 @@ const BrokerMetricsPanel: React.FC<BrokerMetricsPanelProps> = ({
   const month = propMonth ?? now.getMonth() + 1;
 
   useEffect(() => {
-    if (!isPartner && brokers.length === 0) dispatch(fetchBrokers({}));
+    if (!isPartner && brokers.length === 0) dispatch(fetchBrokers());
   }, [isPartner, brokers.length, dispatch]);
 
   const load = useCallback(

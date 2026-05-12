@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useRef } from "react";
-// Ably disabled — real-time via polling only
-type AblyRealtime = any;
+import * as AblyLib from "ably";
 import { useFormik } from "formik";
 import * as Yup from "yup";
+import { useLocation } from "react-router-dom";
 import {
   MessageCircle,
   Phone,
@@ -21,7 +21,6 @@ import {
   Clock,
   AlertCircle,
   CheckCircle,
-  Archive,
   ArchiveRestore,
   Star,
   Tag,
@@ -61,6 +60,7 @@ import {
   ImageIcon,
   Film,
   FileAudio,
+  Voicemail,
 } from "lucide-react";
 import { FaWhatsapp } from "react-icons/fa";
 import { uploadMMSMedia } from "@/lib/cdn-upload";
@@ -152,14 +152,19 @@ import {
   markConversationAsRead,
   checkWhatsAppAvailability,
   removeThread,
+  threadUpdatedRealtime,
+  threadReadRealtime,
   saveContactFromConversation,
   updateConversation,
   deleteConversation,
   patchMessageRecording,
 } from "@/store/slices/conversationsSlice";
+import { fetchBrokers } from "@/store/slices/brokersSlice";
 import {
   setVoiceAvailable,
   startOutboundCall,
+  fetchAblyToken,
+  checkRecordingUrl,
 } from "@/store/slices/voiceSlice";
 import type { DeviceStatus } from "@/store/slices/voiceSlice";
 import { cn } from "@/lib/utils";
@@ -167,20 +172,21 @@ import type {
   ConversationThread,
   Communication,
   CallRecord,
+  Broker,
 } from "@shared/api";
 
-type ChannelFilter = "all" | "sms" | "whatsapp" | "email" | "calls";
+type ChannelFilter = "all" | "sms" | "whatsapp" | "calls";
 
 const CHANNEL_TABS: { key: ChannelFilter; label: string }[] = [
   { key: "all", label: "All" },
   { key: "sms", label: "SMS" },
   { key: "whatsapp", label: "WhatsApp" },
-  { key: "email", label: "Email" },
   { key: "calls", label: "Calls" },
 ];
 
 const Conversations = () => {
   const dispatch = useAppDispatch();
+  const location = useLocation();
   const {
     threads,
     currentThread,
@@ -196,6 +202,10 @@ const Conversations = () => {
     callHistory,
     isLoadingCallHistory,
   } = useAppSelector((state) => state.conversations);
+
+  const brokerList = useAppSelector((state) =>
+    (state.brokers.brokers as Broker[]).filter((b) => b.status === "active"),
+  );
 
   const currentPhone = currentThread?.client_phone ?? null;
   const whatsappStatus: boolean | null = currentPhone
@@ -213,9 +223,7 @@ const Conversations = () => {
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
   const [isNewConversationOpen, setIsNewConversationOpen] = useState(false);
   const [messageText, setMessageText] = useState("");
-  const [messageType, setMessageType] = useState<"email" | "sms" | "whatsapp">(
-    "sms",
-  );
+  const [messageType, setMessageType] = useState<"sms" | "whatsapp">("sms");
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [messageSubject, setMessageSubject] = useState("");
   const [mobilePanel, setMobilePanel] = useState<"list" | "chat">("list");
@@ -239,17 +247,11 @@ const Conversations = () => {
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
 
-  // Thread-level archive / delete actions
-  // confirmDeleteId: the conversation_id that is in "confirm delete?" state
+  // Thread-level close / delete actions
+  // confirmDeleteId: the conversation_id that is in "confirm close?" state
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   // threadMenuOpenId: which thread's mobile ⋮ dropdown is open
   const [threadMenuOpenId, setThreadMenuOpenId] = useState<string | null>(null);
-  // undoArchive: the thread that was just archived, waiting for undo window
-  const undoArchiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  const [undoArchiveThread, setUndoArchiveThread] =
-    useState<ConversationThread | null>(null);
 
   // Smart compose: live preview + variable autocomplete
   const [showPreview, setShowPreview] = useState(false);
@@ -260,12 +262,21 @@ const Conversations = () => {
   );
   const composeTextareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Stable refs so Ably callbacks always see the latest state without stale closures
+  const threadsRef = useRef(threads);
+  const threadsFiltersRef = useRef(threadsFilters);
+  useEffect(() => {
+    threadsRef.current = threads;
+  }, [threads]);
+  useEffect(() => {
+    threadsFiltersRef.current = threadsFilters;
+  }, [threadsFilters]);
+
   // Optimistic messages: show immediately while API is in-flight
   type OptimisticMsg = {
     tempId: string;
     body: string;
-    subject?: string;
-    type: "email" | "sms" | "whatsapp";
+    type: "sms" | "whatsapp";
     status: "sending" | "sent" | "failed";
     ts: Date;
     /** DB id returned by the send API — used to suppress the optimistic once the real message arrives */
@@ -440,10 +451,10 @@ const Conversations = () => {
   // Phone numbers management
   const [isPhoneNumbersOpen, setIsPhoneNumbersOpen] = useState(false);
 
-  // Client-side channel filtering
+  // Client-side channel filtering — email threads are handled in the dedicated Email section
   const filteredThreads =
     channelFilter === "all"
-      ? threads
+      ? threads.filter((t) => t.last_message_type !== "email")
       : threads.filter((t) => t.last_message_type === channelFilter);
 
   // Show all messages regardless of channel — channel tabs only filter the thread list
@@ -462,9 +473,6 @@ const Conversations = () => {
       );
       if (template) {
         setMessageText(template.body || "");
-        if (template.subject && messageType === "email") {
-          setMessageSubject(template.subject);
-        }
       }
     }
   }, [selectedTemplate, templates, messageType]);
@@ -481,6 +489,7 @@ const Conversations = () => {
     dispatch(fetchConversationThreads(threadsFilters));
     dispatch(fetchConversationTemplates(undefined));
     dispatch(fetchConversationStats());
+    dispatch(fetchBrokers());
   }, [dispatch]);
 
   // Load call history when "calls" tab is selected
@@ -492,31 +501,45 @@ const Conversations = () => {
 
   // Real-time updates via Ably
   useEffect(() => {
-    let realtimeClient: AblyRealtime | null = null;
+    let realtimeClient: AblyLib.Realtime | null = null;
 
     const connect = async () => {
       try {
-        const token = localStorage.getItem("broker_session");
-        const res = await fetch("/api/conversations/ably-token", {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-        });
-        if (!res.ok) return;
-        const tokenRequest = await res.json();
+        const tokenRequest = await dispatch(fetchAblyToken()).unwrap();
 
-        const AblyRealtime = (window as any)?.Ably?.Realtime;
-        if (!AblyRealtime) return;
-        realtimeClient = new AblyRealtime({
-          authCallback: (_tokenParams: any, callback: any) =>
+        realtimeClient = new AblyLib.Realtime({
+          authCallback: (_tokenParams, callback) =>
             callback(null, tokenRequest),
         });
 
-        // Subscribe to thread-list changes so the sidebar stays fresh
+        // Subscribe to thread-list changes so the sidebar stays fresh.
+        // Apply patches in-place — no full refetch — to keep the UI feeling
+        // smooth and instant (WhatsApp/Telegram-style).
         const allChannel = realtimeClient.channels.get("conversations:all");
-        allChannel.subscribe("thread-updated", () => {
-          dispatch(fetchConversationThreads(threadsFilters));
+        allChannel.subscribe("thread-updated", (msg) => {
+          const { conversationId, thread } = (msg.data ?? {}) as {
+            conversationId?: string;
+            thread?: any;
+          };
+          if (conversationId && thread) {
+            dispatch(threadUpdatedRealtime({ conversationId, thread }));
+            // If the thread was previously closed and filtered out of the list,
+            // it won't be in state.threads — do a refresh so it reappears.
+            if (thread.status === "active") {
+              const alreadyInList = threadsRef.current.some(
+                (t) => t.conversation_id === conversationId,
+              );
+              if (!alreadyInList) {
+                dispatch(fetchConversationThreads(threadsFiltersRef.current));
+              }
+            }
+          }
+        });
+        allChannel.subscribe("thread-read", (msg) => {
+          const { conversationId } = (msg.data ?? {}) as {
+            conversationId?: string;
+          };
+          if (conversationId) dispatch(threadReadRealtime(conversationId));
         });
         // Another broker claimed an unassigned thread — remove it from our list.
         // If WE claimed it, refresh our threads so the "Unassigned" badge disappears
@@ -551,25 +574,17 @@ const Conversations = () => {
   useEffect(() => {
     if (!currentThread?.conversation_id) return;
 
-    let realtimeClient: AblyRealtime | null = null;
+    let realtimeClient: AblyLib.Realtime | null = null;
     const convId = currentThread.conversation_id;
 
     const subscribe = async () => {
       try {
-        const token = localStorage.getItem("broker_session");
-        const res = await fetch("/api/conversations/ably-token", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) return;
-        const tokenRequest = await res.json();
+        const tokenRequest = await dispatch(fetchAblyToken()).unwrap();
 
-        const AblyRt2 = (window as any)?.Ably?.Realtime;
-        if (!AblyRt2) return;
-        realtimeClient = new AblyRt2({
-          authCallback: (_tokenParams: any, callback: any) =>
+        realtimeClient = new AblyLib.Realtime({
+          authCallback: (_tokenParams, callback) =>
             callback(null, tokenRequest),
         });
-        if (!realtimeClient) return;
 
         const channel = realtimeClient.channels.get(`conversation:${convId}`);
         channel.subscribe("new-message", () => {
@@ -622,11 +637,7 @@ const Conversations = () => {
         sidsToCheck.map(async (sid) => {
           pollCounts[sid]++;
           try {
-            const res = await fetch(`/api/voice/recording-check/${sid}`, {
-              headers: { Authorization: `Bearer ${sessionToken}` },
-            });
-            if (!res.ok) return;
-            const data = await res.json();
+            const data = await dispatch(checkRecordingUrl(sid)).unwrap();
             if (data.ready && data.recording_url) {
               dispatch(
                 patchMessageRecording({
@@ -646,7 +657,7 @@ const Conversations = () => {
     }, POLL_INTERVAL_MS);
 
     return () => clearInterval(timer);
-  }, [messages, sessionToken, dispatch]);
+  }, [messages, dispatch]);
 
   const handleSelectThread = (thread: ConversationThread) => {
     // Reset initial-load tracker so the new thread shows its spinner
@@ -687,35 +698,38 @@ const Conversations = () => {
     dispatch(fetchConversationThreads({ ...threadsFilters, search: query }));
   };
 
-  const handleArchiveThread = (
+  const handleCloseThread = (
     thread: ConversationThread,
     e: React.MouseEvent,
   ) => {
     e.stopPropagation();
-    // Optimistically remove from active list
     dispatch(removeThread(thread.conversation_id));
     if (currentThread?.conversation_id === thread.conversation_id) {
       setMobilePanel("list");
     }
-    // Persist archive in background
     dispatch(
       updateConversation({
         conversationId: thread.conversation_id,
         updates: {
           conversation_id: thread.conversation_id,
-          status: "archived",
+          status: "closed",
         },
       }),
-    );
-    // Set up undo
-    setUndoArchiveThread(thread);
-    if (undoArchiveTimerRef.current) clearTimeout(undoArchiveTimerRef.current);
-    undoArchiveTimerRef.current = setTimeout(() => {
-      setUndoArchiveThread(null);
-    }, 6000);
+    ).then(() => {
+      // If user is already viewing closed conversations, refresh the list
+      if (selectedStatus === "closed") {
+        dispatch(
+          fetchConversationThreads({ ...threadsFilters, status: "closed" }),
+        );
+      }
+    });
+    toast({
+      title: "Conversation closed",
+      description: "You can view it in 'Closed conversations'.",
+    });
   };
 
-  const handleUnarchiveThread = (
+  const handleReopenThread = (
     thread: ConversationThread,
     e: React.MouseEvent,
   ) => {
@@ -727,26 +741,12 @@ const Conversations = () => {
         updates: { conversation_id: thread.conversation_id, status: "active" },
       }),
     ).then(() => {
-      // Refresh active list so it shows up when user switches back
-      dispatch(
-        fetchConversationThreads({ ...threadsFilters, status: undefined }),
-      );
+      // Reset view back to active conversations
+      setSelectedStatus("all");
+      dispatch(setThreadsFilters({}));
+      dispatch(fetchConversationThreads({}));
     });
-  };
-
-  const handleUndoArchive = () => {
-    if (!undoArchiveThread) return;
-    if (undoArchiveTimerRef.current) clearTimeout(undoArchiveTimerRef.current);
-    setUndoArchiveThread(null);
-    dispatch(
-      updateConversation({
-        conversationId: undoArchiveThread.conversation_id,
-        updates: {
-          conversation_id: undoArchiveThread.conversation_id,
-          status: "active",
-        },
-      }),
-    ).then(() => dispatch(fetchConversationThreads(threadsFilters)));
+    toast({ title: "Conversation reopened" });
   };
 
   const handleDeleteThread = async (
@@ -771,21 +771,25 @@ const Conversations = () => {
 
   const handleStatusFilter = (status: string) => {
     setSelectedStatus(status);
-    const filters = status === "all" ? {} : { status };
-    dispatch(setThreadsFilters(filters));
-    // Explicitly omit any previous status so "all" truly clears it
+    // Preserve any other active filters (priority/search) when changing status.
     const { status: _removed, ...restFilters } = threadsFilters as Record<
       string,
       unknown
     >;
-    dispatch(fetchConversationThreads({ ...restFilters, ...filters }));
+    const merged = status === "all" ? restFilters : { ...restFilters, status };
+    dispatch(setThreadsFilters(merged));
+    dispatch(fetchConversationThreads(merged));
   };
 
   const handlePriorityFilter = (priority: string) => {
     setSelectedPriority(priority);
-    const filters = priority === "" ? {} : { priority };
-    dispatch(setThreadsFilters(filters));
-    dispatch(fetchConversationThreads({ ...threadsFilters, ...filters }));
+    const { priority: _removed, ...restFilters } = threadsFilters as Record<
+      string,
+      unknown
+    >;
+    const merged = priority === "" ? restFilters : { ...restFilters, priority };
+    dispatch(setThreadsFilters(merged));
+    dispatch(fetchConversationThreads(merged));
   };
 
   const handleDeleteMessage = async (messageId: number | string) => {
@@ -838,7 +842,6 @@ const Conversations = () => {
     const optimistic: OptimisticMsg = {
       tempId,
       body: text,
-      subject: messageType === "email" ? messageSubject : undefined,
       type: messageType,
       status: "sending",
       ts: new Date(),
@@ -867,7 +870,6 @@ const Conversations = () => {
           communication_type: messageType,
           recipient_phone: currentThread?.client_phone || undefined,
           recipient_email: currentThread?.client_email || undefined,
-          subject: messageType === "email" ? optimistic.subject : undefined,
           body: text,
           message_type: sentTemplateId ? "template" : "text",
           template_id: sentTemplateId ?? undefined,
@@ -903,7 +905,19 @@ const Conversations = () => {
           prev.filter((m) => m.tempId !== tempId),
         );
       }
-      dispatch(fetchConversationThreads(threadsFilters));
+      // If the message was sent to a closed thread, reopen it and switch
+      // the view back to active so the user can continue the conversation.
+      if (selectedStatus === "closed") {
+        setSelectedStatus("all");
+        dispatch(setThreadsFilters({}));
+        dispatch(fetchConversationThreads({}));
+        toast({
+          title: "Conversation reopened",
+          description: "This conversation is now active again.",
+        });
+      } else {
+        dispatch(fetchConversationThreads(threadsFilters));
+      }
     } catch (error: any) {
       // 5. Mark as failed and restore the text so the user can retry
       setOptimisticMessages((prev) =>
@@ -1285,9 +1299,9 @@ const Conversations = () => {
                       disabled={locked}
                       title={locked ? "WhatsApp coming soon" : undefined}
                       className={cn(
-                        "flex-1 min-w-[2.5rem] inline-flex items-center justify-center gap-1 text-xs font-medium py-1 px-2 rounded-md transition-all whitespace-nowrap",
+                        "flex-1 min-w-[2.5rem] relative inline-flex items-center justify-center gap-1 text-xs font-medium py-1 px-2 rounded-md transition-all whitespace-nowrap",
                         locked
-                          ? "opacity-40 cursor-not-allowed text-muted-foreground"
+                          ? "opacity-50 cursor-not-allowed text-muted-foreground"
                           : channelFilter === key
                             ? "bg-card text-foreground shadow-sm"
                             : "text-muted-foreground hover:text-foreground",
@@ -1297,7 +1311,9 @@ const Conversations = () => {
                         {key === "whatsapp" ? "WA" : label}
                       </span>
                       <span className="hidden sm:inline">{label}</span>
-                      {locked && <Lock className="h-2.5 w-2.5 shrink-0" />}
+                      {locked && (
+                        <Lock className="h-2.5 w-2.5 shrink-0 text-muted-foreground/70" />
+                      )}
                     </button>
                   );
                 })}
@@ -1411,7 +1427,7 @@ const Conversations = () => {
                     })
                   )
                 ) : /* ── Thread list ── */
-                isLoadingThreads ? (
+                isLoadingThreads && filteredThreads.length === 0 ? (
                   <div className="flex items-center justify-center py-12">
                     <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
                   </div>
@@ -1419,33 +1435,33 @@ const Conversations = () => {
                   <div className="text-center py-12 text-muted-foreground">
                     <MessageCircle className="h-10 w-10 mx-auto mb-2 opacity-30" />
                     <p className="text-sm">
-                      {selectedStatus === "archived"
-                        ? "No archived conversations"
+                      {selectedStatus === "closed"
+                        ? "No closed conversations"
                         : `No ${
                             channelFilter !== "all"
                               ? channelFilter.toUpperCase() + " "
                               : ""
                           }conversations`}
                     </p>
-                    {selectedStatus === "archived" && (
+                    {selectedStatus === "closed" && (
                       <button
                         type="button"
                         onClick={() => handleStatusFilter("all")}
                         className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
                       >
-                        <Archive className="h-3.5 w-3.5" />← Back to
+                        <CircleCheck className="h-3.5 w-3.5" />← Back to
                         conversations
                       </button>
                     )}
                   </div>
                 ) : (
                   <TooltipProvider delayDuration={400}>
-                    {/* Archived-mode banner */}
-                    {selectedStatus === "archived" && (
-                      <div className="flex items-center gap-2 px-3 py-2 mb-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-700">
-                        <Archive className="h-3.5 w-3.5 shrink-0" />
+                    {/* Closed-mode banner */}
+                    {selectedStatus === "closed" && (
+                      <div className="flex items-center gap-2 px-3 py-2 mb-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-700">
+                        <CircleCheck className="h-3.5 w-3.5 shrink-0" />
                         <p className="text-xs flex-1 font-medium">
-                          Archived conversations
+                          Closed conversations
                         </p>
                         <button
                           type="button"
@@ -1463,33 +1479,33 @@ const Conversations = () => {
                         currentThread?.conversation_id ===
                         thread.conversation_id;
 
-                      // ── Confirm-delete mode ────────────────────────────────
+                      // ── Confirm-close mode ────────────────────────────────
                       if (isConfirmingDelete) {
                         return (
                           <div
                             key={thread.id}
-                            className="p-3 rounded-lg border border-destructive/40 bg-destructive/5 animate-in fade-in-0 slide-in-from-left-1"
+                            className="p-3 rounded-lg border border-blue-200 bg-blue-50 animate-in fade-in-0 slide-in-from-left-1"
                           >
                             <div className="flex items-center gap-2">
-                              <Trash2 className="h-4 w-4 text-destructive shrink-0" />
+                              <CircleCheck className="h-4 w-4 text-blue-600 shrink-0" />
                               <p className="text-xs text-foreground flex-1 min-w-0 truncate">
-                                Delete{" "}
+                                Close conversation with{" "}
                                 <span className="font-semibold">
-                                  {thread.client_name || "this conversation"}
-                                </span>{" "}
-                                forever?
+                                  {thread.client_name || "this contact"}
+                                </span>
+                                ?
                               </p>
                             </div>
                             <div className="flex gap-2 mt-2">
                               <Button
                                 size="sm"
-                                variant="destructive"
-                                className="h-7 text-xs flex-1"
-                                onClick={(e) =>
-                                  handleDeleteThread(thread.conversation_id, e)
-                                }
+                                className="h-7 text-xs flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                                onClick={(e) => {
+                                  setConfirmDeleteId(null);
+                                  handleCloseThread(thread, e);
+                                }}
                               >
-                                Delete forever
+                                Close conversation
                               </Button>
                               <Button
                                 size="sm"
@@ -1543,11 +1559,6 @@ const Conversations = () => {
                                 <div className="hidden md:flex items-center gap-1 flex-shrink-0">
                                   {/* Badges — hidden on group-hover */}
                                   <div className="flex items-center gap-1 group-hover:hidden">
-                                    {!thread.broker_id && (
-                                      <span className="bg-amber-100 text-amber-700 text-[10px] rounded px-1.5 py-0.5 font-semibold leading-none border border-amber-300">
-                                        Unassigned
-                                      </span>
-                                    )}
                                     {thread.unread_count > 0 && (
                                       <span className="bg-primary text-primary-foreground text-xs rounded-full px-1.5 py-0.5 font-bold leading-none">
                                         {thread.unread_count}
@@ -1568,13 +1579,13 @@ const Conversations = () => {
                                   </div>
                                   {/* Action icons — shown on group-hover */}
                                   <div className="hidden group-hover:flex items-center gap-0.5">
-                                    {selectedStatus === "archived" ? (
+                                    {selectedStatus === "closed" ? (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <button
                                             type="button"
                                             onClick={(e) =>
-                                              handleUnarchiveThread(thread, e)
+                                              handleReopenThread(thread, e)
                                             }
                                             className="p-1 rounded-md text-muted-foreground hover:text-emerald-600 hover:bg-emerald-50 transition-colors"
                                           >
@@ -1582,30 +1593,10 @@ const Conversations = () => {
                                           </button>
                                         </TooltipTrigger>
                                         <TooltipContent side="top">
-                                          Unarchive
+                                          Reopen
                                         </TooltipContent>
                                       </Tooltip>
-                                    ) : (
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <button
-                                            type="button"
-                                            onClick={(e) =>
-                                              handleArchiveThread(thread, e)
-                                            }
-                                            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-background transition-colors"
-                                          >
-                                            <Archive className="h-3.5 w-3.5" />
-                                          </button>
-                                        </TooltipTrigger>
-                                        <TooltipContent
-                                          side="top"
-                                          className="max-w-[180px] text-center"
-                                        >
-                                          Archive — auto-deleted after 7 days
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    )}
+                                    ) : null}
                                     <Tooltip>
                                       <TooltipTrigger asChild>
                                         <button
@@ -1616,13 +1607,13 @@ const Conversations = () => {
                                               thread.conversation_id,
                                             );
                                           }}
-                                          className="p-1 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                                          className="p-1 rounded-md text-muted-foreground hover:text-blue-600 hover:bg-blue-50 transition-colors"
                                         >
-                                          <Trash2 className="h-3.5 w-3.5" />
+                                          <X className="h-3.5 w-3.5" />
                                         </button>
                                       </TooltipTrigger>
                                       <TooltipContent side="top">
-                                        Delete forever
+                                        Close conversation
                                       </TooltipContent>
                                     </Tooltip>
                                   </div>
@@ -1630,11 +1621,6 @@ const Conversations = () => {
 
                                 {/* ── Mobile: badges + permanent ⋮ dropdown ── */}
                                 <div className="flex md:hidden items-center gap-1 flex-shrink-0">
-                                  {!thread.broker_id && (
-                                    <span className="bg-amber-100 text-amber-700 text-[10px] rounded px-1.5 py-0.5 font-semibold leading-none border border-amber-300">
-                                      Unassigned
-                                    </span>
-                                  )}
                                   {thread.unread_count > 0 && (
                                     <span className="bg-primary text-primary-foreground text-xs rounded-full px-1.5 py-0.5 font-bold leading-none">
                                       {thread.unread_count}
@@ -1676,45 +1662,33 @@ const Conversations = () => {
                                       align="end"
                                       className="w-44"
                                     >
-                                      {selectedStatus === "archived" ? (
+                                      {selectedStatus === "closed" ? (
                                         <DropdownMenuItem
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             setThreadMenuOpenId(null);
-                                            handleUnarchiveThread(thread, e);
+                                            handleReopenThread(thread, e);
                                           }}
                                           className="gap-2 text-sm text-emerald-700 focus:text-emerald-700"
                                         >
                                           <ArchiveRestore className="h-4 w-4" />
-                                          Unarchive
+                                          Reopen
                                         </DropdownMenuItem>
                                       ) : (
                                         <DropdownMenuItem
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             setThreadMenuOpenId(null);
-                                            handleArchiveThread(thread, e);
+                                            setConfirmDeleteId(
+                                              thread.conversation_id,
+                                            );
                                           }}
-                                          className="gap-2 text-sm"
+                                          className="gap-2 text-sm text-blue-700 focus:text-blue-700"
                                         >
-                                          <Archive className="h-4 w-4 text-muted-foreground" />
-                                          Archive
+                                          <X className="h-4 w-4" />
+                                          Close conversation
                                         </DropdownMenuItem>
                                       )}
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setThreadMenuOpenId(null);
-                                          setConfirmDeleteId(
-                                            thread.conversation_id,
-                                          );
-                                        }}
-                                        className="gap-2 text-sm text-destructive focus:text-destructive"
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                        Delete forever
-                                      </DropdownMenuItem>
                                     </DropdownMenuContent>
                                   </DropdownMenu>
                                 </div>
@@ -1753,39 +1727,17 @@ const Conversations = () => {
               </div>
             </ScrollArea>
 
-            {/* Archive toggle footer */}
-            {selectedStatus !== "archived" && (
+            {/* Closed conversations toggle footer */}
+            {selectedStatus !== "closed" && (
               <div className="border-t border-border">
                 <button
                   type="button"
-                  onClick={() => handleStatusFilter("archived")}
-                  className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                  onClick={() => handleStatusFilter("closed")}
+                  className="w-full flex items-center gap-2 px-4 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                 >
-                  <Archive className="h-3.5 w-3.5" />
-                  <span>View archived conversations</span>
+                  <CircleCheck className="h-3.5 w-3.5" />
+                  <span>View closed conversations</span>
                 </button>
-              </div>
-            )}
-
-            {/* Undo archive toast (floating, bottom of sidebar) */}
-            {undoArchiveThread && (
-              <div className="absolute bottom-3 left-3 right-3 z-20 animate-in slide-in-from-bottom-2 fade-in-0">
-                <div className="flex items-center gap-3 rounded-lg border border-border bg-card shadow-lg px-3 py-2.5">
-                  <Archive className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <p className="text-xs text-foreground flex-1 truncate">
-                    <span className="font-medium">
-                      {undoArchiveThread.client_name || "Conversation"}
-                    </span>{" "}
-                    archived
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleUndoArchive}
-                    className="text-xs font-semibold text-primary hover:underline shrink-0"
-                  >
-                    Undo
-                  </button>
-                </div>
               </div>
             )}
           </div>
@@ -1827,25 +1779,28 @@ const Conversations = () => {
                         {getInitials(currentThread.client_name)}
                       </AvatarFallback>
                     </Avatar>
-                    <div>
-                      <p className="font-semibold text-foreground text-sm">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-foreground text-sm truncate">
                         {currentThread.client_name || "Unknown Client"}
                       </p>
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground overflow-hidden">
                         {currentThread.client_phone && (
                           <PhoneLink
                             phone={currentThread.client_phone}
                             clientName={currentThread.client_name}
                             clientId={currentThread.client_id}
-                            className="text-xs text-muted-foreground"
+                            className="text-xs text-muted-foreground whitespace-nowrap"
                           />
                         )}
-                        {currentThread.client_email && (
-                          <EmailLink
-                            email={currentThread.client_email}
-                            className="text-xs text-muted-foreground"
-                          />
-                        )}
+                        {currentThread.client_email &&
+                          !currentThread.client_email.includes(
+                            "@noemail.placeholder",
+                          ) && (
+                            <EmailLink
+                              email={currentThread.client_email}
+                              className="text-xs text-muted-foreground min-w-0"
+                            />
+                          )}
                       </div>
                     </div>
                   </div>
@@ -1891,10 +1846,6 @@ const Conversations = () => {
                         <DropdownMenuItem>
                           <Star className="h-4 w-4 mr-2" />
                           Mark as Important
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <Archive className="h-4 w-4 mr-2" />
-                          Archive Thread
                         </DropdownMenuItem>
                         <DropdownMenuItem>
                           <Tag className="h-4 w-4 mr-2" />
@@ -1960,27 +1911,6 @@ const Conversations = () => {
                               new Date(prevDate).toDateString());
                         const isOutbound = message.direction === "outbound";
 
-                        // Delivery tick helper
-                        const DeliveryTick = () => {
-                          if (!isOutbound) return null;
-                          const ds = message.delivery_status;
-                          if (ds === "read") {
-                            return (
-                              <CheckCheck className="h-3 w-3 text-sky-400" />
-                            );
-                          }
-                          if (ds === "delivered") {
-                            return (
-                              <CheckCheck className="h-3 w-3 text-white/60" />
-                            );
-                          }
-                          if (ds === "failed" || ds === "rejected") {
-                            return <X className="h-3 w-3 text-red-400" />;
-                          }
-                          // sent / pending
-                          return <Check className="h-3 w-3 text-white/50" />;
-                        };
-
                         return (
                           <React.Fragment key={message.id}>
                             {showDateSep && msgDate && (
@@ -1994,228 +1924,302 @@ const Conversations = () => {
                             )}
                             <div
                               className={cn(
-                                "flex mb-2 group",
-                                isOutbound ? "justify-end" : "justify-start",
+                                "flex flex-col mb-2 group",
+                                isOutbound ? "items-end" : "items-start",
                               )}
                             >
-                              {isOutbound && (
-                                <button
-                                  onClick={() =>
-                                    handleDeleteMessage(message.id)
-                                  }
-                                  className="opacity-0 group-hover:opacity-100 transition-opacity mr-1.5 self-center p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                                  title="Delete message"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
                               <div
                                 className={cn(
-                                  "max-w-[72%] px-3.5 py-2.5 rounded-2xl text-sm shadow-sm",
-                                  isOutbound
-                                    ? "bg-slate-800 text-white rounded-br-sm"
-                                    : "bg-muted text-foreground rounded-bl-sm border border-border",
+                                  "flex items-end gap-1",
+                                  isOutbound ? "justify-end" : "justify-start",
+                                  "w-full",
                                 )}
                               >
+                                {isOutbound && (
+                                  <button
+                                    onClick={() =>
+                                      handleDeleteMessage(message.id)
+                                    }
+                                    className="opacity-0 group-hover:opacity-100 transition-opacity mr-0.5 self-center p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                                    title="Delete message"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
                                 <div
                                   className={cn(
-                                    "flex items-center gap-1.5 mb-1",
+                                    "max-w-[72%] px-3.5 py-2.5 rounded-2xl text-sm shadow-sm cursor-default select-text",
                                     isOutbound
-                                      ? "text-white/60"
-                                      : "text-muted-foreground",
+                                      ? "bg-slate-800 text-white rounded-br-sm"
+                                      : "bg-muted text-foreground rounded-bl-sm border border-border",
                                   )}
                                 >
-                                  <span
-                                    className={cn(
-                                      isOutbound
-                                        ? "text-white/70"
-                                        : getChannelColor(
-                                            message.communication_type,
-                                          ),
-                                    )}
-                                  >
-                                    {getChannelIcon(
-                                      message.communication_type,
-                                      "h-3 w-3",
-                                    )}
-                                  </span>
-                                  <span className="text-xs">
-                                    {msgDate ? formatTime(msgDate) : ""}
-                                  </span>
-                                </div>
-                                {message.subject && (
-                                  <p className="font-semibold text-xs mb-1 opacity-90">
-                                    {message.subject}
-                                  </p>
-                                )}
-                                {/* Call recordings get an inline audio player + download */}
-                                {message.communication_type === "call" &&
-                                message.recording_url &&
-                                message.external_id ? (
-                                  /* ✅ Recording is ready */
-                                  <div className="flex flex-col gap-2 min-w-[220px]">
-                                    <p className="leading-relaxed text-sm">
-                                      {message.body}
+                                  {message.subject && (
+                                    <p className="font-semibold text-xs mb-1 opacity-90">
+                                      {message.subject}
                                     </p>
-                                    {/* token query param required — <audio> can't send Authorization header */}
-                                    <audio
-                                      controls
-                                      preload="metadata"
-                                      className="w-full h-8 rounded"
-                                      style={{
-                                        colorScheme: isOutbound
-                                          ? "dark"
-                                          : "light",
-                                      }}
-                                      src={`/api/voice/recording/${message.external_id}?token=${encodeURIComponent(sessionToken ?? "")}`}
-                                    />
-                                    <a
-                                      href={`/api/voice/recording/${message.external_id}?download=1&token=${encodeURIComponent(sessionToken ?? "")}`}
-                                      download={`call-${message.external_id}.mp3`}
-                                      className={cn(
-                                        "flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5 font-medium transition-colors",
-                                        isOutbound
-                                          ? "bg-white/10 text-white/80 hover:bg-white/20"
-                                          : "bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20",
-                                      )}
-                                    >
-                                      <Download className="h-3.5 w-3.5" />
-                                      Download recording
-                                    </a>
-                                  </div>
-                                ) : message.communication_type === "call" &&
-                                  message.external_id &&
-                                  !(message as any).recording_url ? (
-                                  /* ⏳ Call ended but recording still processing */
-                                  <div className="flex flex-col gap-1.5 min-w-[200px]">
-                                    <p className="leading-relaxed text-sm">
-                                      {message.body}
-                                    </p>
-                                    <div
-                                      className={cn(
-                                        "flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5",
-                                        isOutbound
-                                          ? "bg-white/10 text-white/50"
-                                          : "bg-muted-foreground/10 text-muted-foreground",
-                                      )}
-                                    >
-                                      <Loader2 className="h-3 w-3 animate-spin" />
-                                      Recording processing…
+                                  )}
+                                  {/* Call recordings get an inline audio player + download */}
+                                  {message.communication_type === "call" &&
+                                  message.recording_url &&
+                                  message.external_id ? (
+                                    /* ✅ Recording is ready */
+                                    <div className="flex flex-col gap-2 min-w-[240px]">
+                                      {(message as any).is_voicemail ? (
+                                        <div
+                                          className={cn(
+                                            "inline-flex items-center gap-1.5 self-start text-[10px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5",
+                                            isOutbound
+                                              ? "bg-amber-400/20 text-amber-200"
+                                              : "bg-amber-100 text-amber-700",
+                                          )}
+                                        >
+                                          <Voicemail className="h-3 w-3" />
+                                          Voicemail
+                                        </div>
+                                      ) : null}
+                                      <p className="leading-relaxed text-sm">
+                                        {message.body}
+                                      </p>
+                                      {(message as any).is_voicemail &&
+                                      (message as any)
+                                        .voicemail_transcription ? (
+                                        <div
+                                          className={cn(
+                                            "rounded-lg px-2.5 py-2 text-xs italic leading-relaxed",
+                                            isOutbound
+                                              ? "bg-white/10 text-white/85"
+                                              : "bg-amber-50 text-amber-900 border border-amber-200",
+                                          )}
+                                        >
+                                          “
+                                          {
+                                            (message as any)
+                                              .voicemail_transcription
+                                          }
+                                          ”
+                                        </div>
+                                      ) : (message as any).is_voicemail ? (
+                                        <div
+                                          className={cn(
+                                            "text-[11px] italic",
+                                            isOutbound
+                                              ? "text-white/60"
+                                              : "text-muted-foreground",
+                                          )}
+                                        >
+                                          Transcription pending…
+                                        </div>
+                                      ) : null}
+                                      {/* token query param required — <audio> can't send Authorization header */}
+                                      <audio
+                                        controls
+                                        preload="metadata"
+                                        className="w-full h-8 rounded"
+                                        style={{
+                                          colorScheme: isOutbound
+                                            ? "dark"
+                                            : "light",
+                                        }}
+                                        src={`/api/voice/recording/${message.external_id}?token=${encodeURIComponent(sessionToken ?? "")}`}
+                                      />
+                                      <a
+                                        href={`/api/voice/recording/${message.external_id}?download=1&token=${encodeURIComponent(sessionToken ?? "")}`}
+                                        download={`${(message as any).is_voicemail ? "voicemail" : "call"}-${message.external_id}.mp3`}
+                                        className={cn(
+                                          "flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5 font-medium transition-colors",
+                                          isOutbound
+                                            ? "bg-white/10 text-white/80 hover:bg-white/20"
+                                            : "bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20",
+                                        )}
+                                      >
+                                        <Download className="h-3.5 w-3.5" />
+                                        Download{" "}
+                                        {(message as any).is_voicemail
+                                          ? "voicemail"
+                                          : "recording"}
+                                      </a>
                                     </div>
-                                  </div>
-                                ) : (
-                                  <div className="flex flex-col gap-2">
-                                    {/* MMS media attachment */}
-                                    {(message as any).media_url &&
-                                      (() => {
-                                        const rawUrl: string = (message as any)
-                                          .media_url;
-                                        const contentType: string =
-                                          (message as any).media_content_type ??
-                                          "";
-                                        // Support JSON array (multiple attachments) or single URL
-                                        let urls: string[];
-                                        try {
-                                          urls = JSON.parse(rawUrl);
-                                        } catch {
-                                          urls = [rawUrl];
-                                        }
-                                        const proxyUrl = (u: string) =>
-                                          // CDN URLs are already public — serve directly
-                                          // Twilio media URLs need our auth proxy
-                                          u.startsWith(
-                                            "https://disruptinglabs.com/",
-                                          )
-                                            ? u
-                                            : `/api/sms/media?url=${encodeURIComponent(u)}&token=${encodeURIComponent(sessionToken ?? "")}`;
-                                        return urls.map((u, i) => {
-                                          const ct = i === 0 ? contentType : "";
-                                          if (
-                                            ct.startsWith("image/") ||
-                                            (!ct &&
-                                              /\.(jpe?g|png|gif|webp|heic)$/i.test(
-                                                u,
-                                              ))
-                                          ) {
+                                  ) : message.communication_type === "call" &&
+                                    message.external_id &&
+                                    !(message as any).recording_url ? (
+                                    /* ⏳ Call ended but recording still processing */
+                                    <div className="flex flex-col gap-1.5 min-w-[200px]">
+                                      <p className="leading-relaxed text-sm">
+                                        {message.body}
+                                      </p>
+                                      <div
+                                        className={cn(
+                                          "flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5",
+                                          isOutbound
+                                            ? "bg-white/10 text-white/50"
+                                            : "bg-muted-foreground/10 text-muted-foreground",
+                                        )}
+                                      >
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                        Recording processing…
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="flex flex-col gap-2">
+                                      {/* MMS media attachment */}
+                                      {(message as any).media_url &&
+                                        (() => {
+                                          const rawUrl: string = (
+                                            message as any
+                                          ).media_url;
+                                          const contentType: string =
+                                            (message as any)
+                                              .media_content_type ?? "";
+                                          // Support JSON array (multiple attachments) or single URL
+                                          let urls: string[];
+                                          try {
+                                            urls = JSON.parse(rawUrl);
+                                          } catch {
+                                            urls = [rawUrl];
+                                          }
+                                          const proxyUrl = (u: string) =>
+                                            // CDN URLs are already public — serve directly
+                                            // Twilio media URLs need our auth proxy
+                                            u.startsWith(
+                                              "https://disruptinglabs.com/",
+                                            )
+                                              ? u
+                                              : `/api/sms/media?url=${encodeURIComponent(u)}&token=${encodeURIComponent(sessionToken ?? "")}`;
+                                          return urls.map((u, i) => {
+                                            const ct =
+                                              i === 0 ? contentType : "";
+                                            if (
+                                              ct.startsWith("image/") ||
+                                              (!ct &&
+                                                /\.(jpe?g|png|gif|webp|heic)$/i.test(
+                                                  u,
+                                                ))
+                                            ) {
+                                              return (
+                                                <a
+                                                  key={i}
+                                                  href={proxyUrl(u)}
+                                                  target="_blank"
+                                                  rel="noopener noreferrer"
+                                                >
+                                                  <img
+                                                    src={proxyUrl(u)}
+                                                    alt="MMS attachment"
+                                                    className="rounded-xl max-w-[260px] max-h-[320px] object-cover border border-white/10 cursor-pointer hover:opacity-90 transition-opacity"
+                                                    loading="lazy"
+                                                  />
+                                                </a>
+                                              );
+                                            }
+                                            if (ct.startsWith("video/")) {
+                                              return (
+                                                <video
+                                                  key={i}
+                                                  controls
+                                                  className="rounded-xl max-w-[260px]"
+                                                  preload="metadata"
+                                                >
+                                                  <source
+                                                    src={proxyUrl(u)}
+                                                    type={ct}
+                                                  />
+                                                </video>
+                                              );
+                                            }
+                                            if (ct.startsWith("audio/")) {
+                                              return (
+                                                <audio
+                                                  key={i}
+                                                  controls
+                                                  preload="metadata"
+                                                  className="w-full h-8 rounded"
+                                                >
+                                                  <source
+                                                    src={proxyUrl(u)}
+                                                    type={ct}
+                                                  />
+                                                </audio>
+                                              );
+                                            }
                                             return (
                                               <a
                                                 key={i}
                                                 href={proxyUrl(u)}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
+                                                className={cn(
+                                                  "flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5 font-medium transition-colors",
+                                                  isOutbound
+                                                    ? "bg-white/10 text-white/80 hover:bg-white/20"
+                                                    : "bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20",
+                                                )}
                                               >
-                                                <img
-                                                  src={proxyUrl(u)}
-                                                  alt="MMS attachment"
-                                                  className="rounded-xl max-w-[260px] max-h-[320px] object-cover border border-white/10 cursor-pointer hover:opacity-90 transition-opacity"
-                                                  loading="lazy"
-                                                />
+                                                <Download className="h-3.5 w-3.5" />
+                                                Download attachment
                                               </a>
                                             );
-                                          }
-                                          if (ct.startsWith("video/")) {
-                                            return (
-                                              <video
-                                                key={i}
-                                                controls
-                                                className="rounded-xl max-w-[260px]"
-                                                preload="metadata"
-                                              >
-                                                <source
-                                                  src={proxyUrl(u)}
-                                                  type={ct}
-                                                />
-                                              </video>
-                                            );
-                                          }
-                                          if (ct.startsWith("audio/")) {
-                                            return (
-                                              <audio
-                                                key={i}
-                                                controls
-                                                preload="metadata"
-                                                className="w-full h-8 rounded"
-                                              >
-                                                <source
-                                                  src={proxyUrl(u)}
-                                                  type={ct}
-                                                />
-                                              </audio>
-                                            );
-                                          }
-                                          return (
-                                            <a
-                                              key={i}
-                                              href={proxyUrl(u)}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className={cn(
-                                                "flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5 font-medium transition-colors",
-                                                isOutbound
-                                                  ? "bg-white/10 text-white/80 hover:bg-white/20"
-                                                  : "bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20",
-                                              )}
-                                            >
-                                              <Download className="h-3.5 w-3.5" />
-                                              Download attachment
-                                            </a>
-                                          );
-                                        });
-                                      })()}
-                                    {/* Text body (may be empty for image-only MMS) */}
-                                    {message.body ? (
-                                      <p className="leading-relaxed">
-                                        {message.body}
-                                      </p>
-                                    ) : null}
-                                  </div>
-                                )}
-                                {isOutbound && (
-                                  <div className="flex justify-end mt-1">
-                                    <DeliveryTick />
-                                  </div>
-                                )}
+                                          });
+                                        })()}
+                                      {/* Text body (may be empty for image-only MMS) */}
+                                      {message.body ? (
+                                        <p className="leading-relaxed">
+                                          {message.body}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
+                              {/* Timestamp — always visible short time, full date on hover */}
+                              {msgDate && (
+                                <Tooltip delayDuration={300}>
+                                  <TooltipTrigger asChild>
+                                    <div className="flex items-center gap-1 mt-0.5 cursor-default">
+                                      <span
+                                        className={cn(
+                                          "shrink-0",
+                                          isOutbound
+                                            ? "text-muted-foreground/50"
+                                            : getChannelColor(
+                                                message.communication_type,
+                                              ),
+                                        )}
+                                      >
+                                        {getChannelIcon(
+                                          message.communication_type,
+                                          "h-2.5 w-2.5",
+                                        )}
+                                      </span>
+                                      <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+                                        {formatTime(msgDate)}
+                                      </span>
+                                    </div>
+                                  </TooltipTrigger>
+                                  <TooltipContent
+                                    side={isOutbound ? "left" : "right"}
+                                    className="text-xs font-medium"
+                                  >
+                                    {new Date(
+                                      /[Zz+\-]\d{2}:?\d{2}$/.test(msgDate) ||
+                                        msgDate.endsWith("Z")
+                                        ? msgDate
+                                        : msgDate.replace(" ", "T") + "Z",
+                                    ).toLocaleString("en-US", {
+                                      weekday: "short",
+                                      month: "short",
+                                      day: "numeric",
+                                      year: "numeric",
+                                      hour: "numeric",
+                                      minute: "2-digit",
+                                      second: "2-digit",
+                                      hour12: true,
+                                      timeZone:
+                                        currentUser?.timezone || undefined,
+                                    })}
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
                             </div>
                           </React.Fragment>
                         );
@@ -2254,11 +2258,6 @@ const Conversations = () => {
                                 })}
                               </span>
                             </div>
-                            {opt.subject && (
-                              <p className="font-semibold text-xs mb-1 opacity-90">
-                                {opt.subject}
-                              </p>
-                            )}
                             <p className="leading-relaxed">{opt.body}</p>
                             <div className="flex justify-end mt-1">
                               {opt.status === "sending" && (
@@ -2281,6 +2280,19 @@ const Conversations = () => {
 
               {/* Composer */}
               <div className="p-3 border-t border-border bg-card flex-shrink-0">
+                {/* Unassigned claim notice */}
+                {!currentThread.broker_id && (
+                  <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 px-3 py-2 mb-2.5">
+                    <Info className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+                    <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-snug">
+                      <span className="font-semibold">
+                        Unassigned conversation —
+                      </span>{" "}
+                      replying will assign it to you and remove it from other
+                      bankers' queues.
+                    </p>
+                  </div>
+                )}
                 {/* Row 1: Channel + Smart Template picker */}
                 <div className="flex items-center gap-2 mb-2">
                   <Select
@@ -2325,12 +2337,6 @@ const Conversations = () => {
                               unavailable
                             </span>
                           )}
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="email">
-                        <div className="flex items-center gap-2">
-                          <Mail className="h-3.5 w-3.5 text-blue-500" />
-                          Email
                         </div>
                       </SelectItem>
                     </SelectContent>
@@ -2428,8 +2434,6 @@ const Conversations = () => {
                                   onSelect={() => {
                                     setSelectedTemplate(t.id.toString());
                                     setMessageText(t.body || "");
-                                    if (t.subject && messageType === "email")
-                                      setMessageSubject(t.subject);
                                     setTemplatePickerOpen(false);
                                   }}
                                   className="flex items-start gap-2 cursor-pointer py-2"
@@ -2512,16 +2516,6 @@ const Conversations = () => {
                     </PopoverContent>
                   </Popover>
                 </div>
-
-                {/* Email subject */}
-                {messageType === "email" && (
-                  <Input
-                    placeholder="Subject"
-                    value={messageSubject}
-                    onChange={(e) => setMessageSubject(e.target.value)}
-                    className="mb-2 h-8 text-sm"
-                  />
-                )}
 
                 {/* Smart variable preview banner */}
                 {(() => {
@@ -3138,23 +3132,26 @@ const Conversations = () => {
                     </div>
                   )}
 
-                  {currentThread.client_email && (
-                    <div className="flex items-start gap-3">
-                      <div className="p-1.5 bg-blue-50 rounded-md flex-shrink-0">
-                        <Mail className="h-3.5 w-3.5 text-blue-500" />
+                  {currentThread.client_email &&
+                    !currentThread.client_email.includes(
+                      "@noemail.placeholder",
+                    ) && (
+                      <div className="flex items-start gap-3">
+                        <div className="p-1.5 bg-blue-50 rounded-md flex-shrink-0">
+                          <Mail className="h-3.5 w-3.5 text-blue-500" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs text-muted-foreground font-medium">
+                            Email
+                          </p>
+                          <EmailLink
+                            email={currentThread.client_email}
+                            noIcon
+                            className="text-sm text-foreground"
+                          />
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-xs text-muted-foreground font-medium">
-                          Email
-                        </p>
-                        <EmailLink
-                          email={currentThread.client_email}
-                          noIcon
-                          className="text-sm text-foreground"
-                        />
-                      </div>
-                    </div>
-                  )}
+                    )}
 
                   {currentThread.application_id && (
                     <div className="flex items-start gap-3">
@@ -3257,9 +3254,7 @@ const Conversations = () => {
                       "text-sm",
                       currentThread.status === "active"
                         ? "bg-green-50 text-green-700 border-green-200"
-                        : currentThread.status === "archived"
-                          ? "bg-muted text-muted-foreground"
-                          : "bg-red-50 text-red-700 border-red-200",
+                        : "bg-blue-50 text-blue-700 border-blue-200",
                     )}
                   >
                     {currentThread.status}
@@ -4051,7 +4046,6 @@ const Conversations = () => {
       <PhoneNumbersPanel
         isOpen={isPhoneNumbersOpen}
         onClose={() => setIsPhoneNumbersOpen(false)}
-        sessionToken={sessionToken}
       />
 
       {/* Client detail panel — slides in from the right when a known client name is clicked */}

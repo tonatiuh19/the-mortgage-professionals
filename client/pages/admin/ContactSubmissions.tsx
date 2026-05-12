@@ -80,7 +80,7 @@ const ContactSubmissions = () => {
   const [selected, setSelected] = useState<ContactSubmission | null>(null);
 
   useEffect(() => {
-    dispatch(fetchContactSubmissions({}));
+    dispatch(fetchContactSubmissions());
   }, [dispatch]);
 
   const filtered = submissions.filter((s) => {
@@ -133,7 +133,7 @@ const ContactSubmissions = () => {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => dispatch(fetchContactSubmissions({}))}
+            onClick={() => dispatch(fetchContactSubmissions())}
             disabled={isLoading}
             className="gap-2 self-start sm:self-auto"
           >

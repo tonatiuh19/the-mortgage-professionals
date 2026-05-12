@@ -240,9 +240,6 @@ const Settings = () => {
   // Phone Configuration
   const [otpFromNumber, setOtpFromNumber] = useState("");
 
-  // Release Version
-  const [appVersion, setAppVersion] = useState("");
-
   // Saved flash state
   const [savedSections, setSavedSections] = useState<Set<string>>(new Set());
 
@@ -256,7 +253,6 @@ const Settings = () => {
       setEnableEmail(selectSettingValue(settings, "enable_email") !== "false");
       setEnableSms(selectSettingValue(settings, "enable_sms") === "true");
       setOtpFromNumber(selectSettingValue(settings, "otp_from_number") ?? "");
-      setAppVersion(selectSettingValue(settings, "app_version") ?? "");
     }
   }, [settings]);
 
@@ -302,8 +298,6 @@ const Settings = () => {
     [dispatch, toast],
   );
 
-  const currentVersionLabel = appVersion.trim() || "Not set";
-
   return (
     <>
       <MetaHelmet
@@ -321,7 +315,8 @@ const Settings = () => {
             <div className="flex flex-wrap items-center gap-2">
               <Badge className="border-sky-200 bg-sky-50 text-sky-700 self-start md:self-auto">
                 <Tag className="mr-1 h-3 w-3" />
-                Version {currentVersionLabel}
+                Version{" "}
+                {selectSettingValue(settings, "app_version") || "Not set"}
               </Badge>
               {!isAdmin ? (
                 <Badge className="bg-amber-50 text-amber-700 border-amber-200 self-start md:self-auto">
@@ -476,52 +471,6 @@ const Settings = () => {
                         {
                           setting_key: "otp_from_number",
                           setting_value: otpFromNumber.trim(),
-                        },
-                      ])
-                    }
-                  />
-                </div>
-              </SettingsSection>
-
-              <SettingsSection
-                index={3}
-                icon={Tag}
-                title="Release Version"
-                description="Display the current production deploy version in the Settings header"
-                accent="bg-sky-50/70"
-              >
-                <div className="space-y-4">
-                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-sky-200/70 bg-sky-50/60 px-4 py-3">
-                    <Badge className="border-sky-200 bg-white text-sky-700">
-                      <Tag className="mr-1 h-3 w-3" />
-                      Current version
-                    </Badge>
-                    <span className="text-sm font-medium text-foreground">
-                      {currentVersionLabel}
-                    </span>
-                  </div>
-
-                  <SettingRow
-                    icon={Tag}
-                    label="Deploy Version"
-                    hint="Enter the release label you want shown in the Settings header after each production deploy. Examples: v1.4.2, 2026.04.20.1, prod-2026-04-20."
-                    value={appVersion}
-                    onChange={setAppVersion}
-                    placeholder="v1.0.0"
-                    disabled={!isAdmin}
-                  />
-                </div>
-
-                <div className="flex justify-end pt-5 mt-5 border-t border-border/40">
-                  <SaveButton
-                    isSaving={isSaving}
-                    saved={savedSections.has("version")}
-                    disabled={!isAdmin}
-                    onClick={() =>
-                      handleSave("version", [
-                        {
-                          setting_key: "app_version",
-                          setting_value: appVersion.trim(),
                         },
                       ])
                     }

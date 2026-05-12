@@ -1,4 +1,5 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
+import axios from "axios";
 import type { RootState } from "../index";
 
 interface Lead {
@@ -33,20 +34,14 @@ export const fetchLeads = createAsyncThunk(
   async (_, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
-      const response = await fetch("/api/leads", {
-        headers: {
-          Authorization: `Bearer ${sessionToken}`,
-        },
+      const { data } = await axios.get("/api/leads", {
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
-
-      if (!response.ok) {
-        const error = await response.json();
-        return rejectWithValue(error.error || "Failed to fetch leads");
-      }
-
-      return await response.json();
-    } catch (error) {
-      return rejectWithValue("Network error");
+      return data;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to fetch leads",
+      );
     }
   },
 );
@@ -56,23 +51,14 @@ export const createLead = createAsyncThunk(
   async (leadData: any, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
-      const response = await fetch("/api/leads", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify(leadData),
+      const { data } = await axios.post("/api/leads", leadData, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
-
-      if (!response.ok) {
-        const error = await response.json();
-        return rejectWithValue(error.error || "Failed to create lead");
-      }
-
-      return await response.json();
-    } catch (error) {
-      return rejectWithValue("Network error");
+      return data;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to create lead",
+      );
     }
   },
 );
@@ -85,23 +71,14 @@ export const updateLead = createAsyncThunk(
   ) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
-      const response = await fetch(`/api/leads/${id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify(updates),
+      await axios.put(`/api/leads/${id}`, updates, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
-
-      if (!response.ok) {
-        const error = await response.json();
-        return rejectWithValue(error.error || "Failed to update lead");
-      }
-
       return { id, updates };
-    } catch (error) {
-      return rejectWithValue("Network error");
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to update lead",
+      );
     }
   },
 );

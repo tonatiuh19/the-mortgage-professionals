@@ -9,7 +9,7 @@ export async function uploadAvatarToCDN(
   brokerId: number,
 ): Promise<string> {
   const formData = new FormData();
-  formData.append("main_folder", "themortgageprofessionals-profiles");
+  formData.append("main_folder", "encore-profiles");
   formData.append("id", `profile-${brokerId}`);
   formData.append("main_image", file);
 
@@ -65,4 +65,44 @@ export async function uploadMMSMedia(
   }
 
   return { url: data.url as string, content_type: data.content_type as string };
+}
+
+/**
+ * Uploads a PDF (e.g., a sign-document template) to the Disrupting Labs CDN.
+ * Returns the public URL plus the original filename echoed back by the CDN.
+ */
+export async function uploadPdfToCDN(
+  file: File,
+  uploadId: number,
+): Promise<{ url: string; originalName: string }> {
+  const formData = new FormData();
+  formData.append("main_folder", "encore-sign-templates");
+  formData.append("id", String(uploadId));
+  formData.append("pdfs[]", file);
+
+  const res = await fetch(
+    "https://disruptinglabs.com/data/api/uploadPDFs.php",
+    { method: "POST", body: formData },
+  );
+
+  if (!res.ok) {
+    throw new Error(`CDN PDF upload failed: ${res.status}`);
+  }
+
+  const data = await res.json();
+  const uploaded = data?.uploaded?.[0];
+  if (!uploaded?.path) {
+    throw new Error(
+      "CDN PDF upload returned no path: " + (data?.error ?? "unknown error"),
+    );
+  }
+
+  const fullUrl = uploaded.path.startsWith("http")
+    ? uploaded.path
+    : `https://disruptinglabs.com/data/api${uploaded.path}`;
+
+  return {
+    url: fullUrl,
+    originalName: uploaded.original_name || uploaded.filename || file.name,
+  };
 }

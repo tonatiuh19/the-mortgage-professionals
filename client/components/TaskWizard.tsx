@@ -51,8 +51,8 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion, AnimatePresence } from "framer-motion";
 import { useFormik } from "formik";
-import axios from "axios";
 import * as Yup from "yup";
+import { uploadPdfToCDN } from "@/lib/cdn-upload";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   createTask,
@@ -1453,65 +1453,25 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                             setIsUploadingPdf(true);
                             setPdfUploadError("");
                             try {
-                              const formData = new FormData();
                               const uploadId =
                                 90000 + (brokerUserId ?? Date.now() % 10000);
-                              formData.append(
-                                "main_folder",
-                                "themortgageprofessionals-sign-templates",
-                              );
-                              formData.append("id", String(uploadId));
-                              formData.append("pdfs[]", file);
                               logger.log(
                                 "📄 PDF upload: sending to uploadPDFs.php",
                                 {
-                                  main_folder:
-                                    "themortgageprofessionals-sign-templates",
+                                  main_folder: "encore-sign-templates",
                                   id: uploadId,
                                   file: file.name,
                                 },
                               );
-                              const { data } = await axios.post(
-                                "https://disruptinglabs.com/data/api/uploadPDFs.php",
-                                formData,
-                                {
-                                  headers: {
-                                    "Content-Type": "multipart/form-data",
-                                  },
-                                },
-                              );
-                              logger.log("📄 PDF upload: raw response", data);
-                              const uploaded = data?.uploaded?.[0];
-                              logger.log(
-                                "📄 PDF upload: first uploaded item",
-                                uploaded,
-                              );
-                              if (uploaded?.path) {
-                                const fullUrl = uploaded.path.startsWith("http")
-                                  ? uploaded.path
-                                  : `https://disruptinglabs.com/data/api${uploaded.path}`;
-                                logger.log("📄 PDF upload: success", fullUrl);
-                                setSigningPdfUrl(fullUrl);
-                                setSigningOriginalFilename(
-                                  uploaded.original_name ||
-                                    uploaded.filename ||
-                                    file.name,
-                                );
-                                setSigningFileSize(file.size);
-                              } else {
-                                logger.error(
-                                  "📄 PDF upload: unexpected response shape",
-                                  data,
-                                );
-                                setPdfUploadError(
-                                  "Upload failed. Please try again.",
-                                );
-                              }
+                              const { url, originalName } =
+                                await uploadPdfToCDN(file, uploadId);
+                              logger.log("📄 PDF upload: success", url);
+                              setSigningPdfUrl(url);
+                              setSigningOriginalFilename(originalName);
+                              setSigningFileSize(file.size);
                             } catch (err: any) {
                               logger.error("📄 PDF upload: caught error", {
                                 message: err?.message,
-                                status: err?.response?.status,
-                                responseData: err?.response?.data,
                               });
                               setPdfUploadError(
                                 "Upload failed. Please try again.",

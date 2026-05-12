@@ -1,4 +1,5 @@
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
+import axios from "axios";
 import type { RootState } from "../index";
 
 interface Application {
@@ -35,21 +36,14 @@ export const fetchApplications = createAsyncThunk(
   async (_, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
-      const response = await fetch("/api/applications", {
-        headers: {
-          Authorization: `Bearer ${sessionToken}`,
-        },
+      const { data } = await axios.get("/api/applications", {
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
-
-      if (!response.ok) {
-        const error = await response.json();
-        return rejectWithValue(error.error || "Failed to fetch applications");
-      }
-
-      const data = await response.json();
       return data;
-    } catch (error) {
-      return rejectWithValue("Network error");
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to fetch applications",
+      );
     }
   },
 );
@@ -59,21 +53,14 @@ export const fetchApplicationById = createAsyncThunk(
   async (id: number, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
-      const response = await fetch(`/api/applications/${id}`, {
-        headers: {
-          Authorization: `Bearer ${sessionToken}`,
-        },
+      const { data } = await axios.get(`/api/applications/${id}`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
-
-      if (!response.ok) {
-        const error = await response.json();
-        return rejectWithValue(error.error || "Failed to fetch application");
-      }
-
-      const data = await response.json();
       return data;
-    } catch (error) {
-      return rejectWithValue("Network error");
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to fetch application",
+      );
     }
   },
 );
@@ -83,24 +70,14 @@ export const createApplication = createAsyncThunk(
   async (applicationData: any, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
-      const response = await fetch("/api/applications", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify(applicationData),
+      const { data } = await axios.post("/api/applications", applicationData, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
-
-      if (!response.ok) {
-        const error = await response.json();
-        return rejectWithValue(error.error || "Failed to create application");
-      }
-
-      const data = await response.json();
       return data;
-    } catch (error) {
-      return rejectWithValue("Network error");
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to create application",
+      );
     }
   },
 );
@@ -113,23 +90,14 @@ export const updateApplication = createAsyncThunk(
   ) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
-      const response = await fetch(`/api/applications/${id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify(updates),
+      await axios.put(`/api/applications/${id}`, updates, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
       });
-
-      if (!response.ok) {
-        const error = await response.json();
-        return rejectWithValue(error.error || "Failed to update application");
-      }
-
       return { id, updates };
-    } catch (error) {
-      return rejectWithValue("Network error");
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to update application",
+      );
     }
   },
 );
@@ -139,21 +107,16 @@ export const submitApplication = createAsyncThunk(
   async (id: number, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
-      const response = await fetch(`/api/applications/${id}/submit`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${sessionToken}`,
-        },
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        return rejectWithValue(error.error || "Failed to submit application");
-      }
-
+      await axios.post(
+        `/api/applications/${id}/submit`,
+        {},
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
       return id;
-    } catch (error) {
-      return rejectWithValue("Network error");
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to submit application",
+      );
     }
   },
 );

@@ -16,6 +16,11 @@ import type {
   CallRecord,
   SendMessageRequest,
   UpdateConversationRequest,
+  ConversationMailbox,
+  GetConversationMailboxesResponse,
+  ConnectOffice365MailboxResponse,
+  SyncConversationMailboxResponse,
+  AssignConversationMailboxResponse,
 } from "@shared/api";
 
 interface ConversationsState {
@@ -25,6 +30,7 @@ interface ConversationsState {
   messages: Communication[];
   templates: ConversationTemplate[];
   stats: ConversationStats | null;
+  mailboxes: ConversationMailbox[];
 
   // UI state
   isLoadingThreads: boolean;
@@ -32,6 +38,10 @@ interface ConversationsState {
   isLoadingTemplates: boolean;
   isLoadingStats: boolean;
   isSendingMessage: boolean;
+  isLoadingMailboxes: boolean;
+  isConnectingMailbox: boolean;
+  isSyncingMailbox: boolean;
+  isAssigningMailbox: boolean;
 
   // Filters and pagination
   threadsFilters: {
@@ -86,12 +96,17 @@ const initialState: ConversationsState = {
   messages: [],
   templates: [],
   stats: null,
+  mailboxes: [],
 
   isLoadingThreads: false,
   isLoadingMessages: false,
   isLoadingTemplates: false,
   isLoadingStats: false,
   isSendingMessage: false,
+  isLoadingMailboxes: false,
+  isConnectingMailbox: false,
+  isSyncingMailbox: false,
+  isAssigningMailbox: false,
 
   threadsFilters: {
     status: "all",
@@ -313,10 +328,7 @@ export const deleteConversation = createAsyncThunk(
 
 export const fetchConversationTemplates = createAsyncThunk(
   "conversations/fetchTemplates",
-  async (
-    type: string | undefined = undefined,
-    { getState, rejectWithValue },
-  ) => {
+  async (type: string | void, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
       const { data } = await axios.get<GetConversationTemplatesResponse>(
@@ -375,6 +387,135 @@ export const fetchCallHistory = createAsyncThunk(
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to fetch call history",
+      );
+    }
+  },
+);
+
+export const fetchConversationMailboxes = createAsyncThunk(
+  "conversations/fetchMailboxes",
+  async (_, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.get<GetConversationMailboxesResponse>(
+        "/api/conversations/mailboxes",
+        {
+          headers: { Authorization: `Bearer ${sessionToken}` },
+        },
+      );
+      return data.mailboxes;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.message ||
+          "Failed to fetch conversation mailboxes",
+      );
+    }
+  },
+);
+
+export const connectOffice365Mailbox = createAsyncThunk(
+  "conversations/connectOffice365Mailbox",
+  async (
+    {
+      mailbox_email,
+      display_name,
+      is_shared = true,
+      target_broker_id,
+      return_path,
+    }: {
+      mailbox_email: string;
+      display_name?: string;
+      is_shared?: boolean;
+      target_broker_id?: number;
+      return_path?: string;
+    },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.post<ConnectOffice365MailboxResponse>(
+        "/api/conversations/mailboxes/office365/connect",
+        {
+          mailbox_email,
+          display_name,
+          is_shared,
+          target_broker_id,
+          return_path,
+        },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return data;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to start Office365 connection",
+      );
+    }
+  },
+);
+
+export const disconnectConversationMailbox = createAsyncThunk(
+  "conversations/disconnectConversationMailbox",
+  async (mailboxId: number, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      await axios.delete(`/api/conversations/mailboxes/${mailboxId}`, {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+      return { mailboxId };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to disconnect mailbox",
+      );
+    }
+  },
+);
+
+export const syncConversationMailbox = createAsyncThunk(
+  "conversations/syncConversationMailbox",
+  async (mailboxId: number, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.post<SyncConversationMailboxResponse>(
+        `/api/conversations/mailboxes/${mailboxId}/sync`,
+        {},
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return data;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to sync mailbox",
+      );
+    }
+  },
+);
+
+export const assignConversationMailbox = createAsyncThunk(
+  "conversations/assignConversationMailbox",
+  async (
+    {
+      mailboxId,
+      assigned_broker_id,
+      is_shared,
+      is_default,
+    }: {
+      mailboxId: number;
+      assigned_broker_id: number | null;
+      is_shared: boolean;
+      is_default?: boolean;
+    },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.patch<AssignConversationMailboxResponse>(
+        `/api/conversations/mailboxes/${mailboxId}/assign`,
+        { assigned_broker_id, is_shared, is_default },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return { ...data, assigned_broker_id, is_shared, is_default, mailboxId };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to assign mailbox",
       );
     }
   },
@@ -562,12 +703,18 @@ const conversationsSlice = createSlice({
         state.threads.splice(threadIndex, 1);
         state.threads.unshift(updatedThread);
 
-        // Update current thread if it matches
+        // Update current thread if it matches — preserve resolved client_name
         if (
           state.currentThread &&
           state.currentThread.conversation_id === message.conversation_id
         ) {
-          state.currentThread = updatedThread;
+          state.currentThread = {
+            ...updatedThread,
+            client_name:
+              state.currentThread.client_name ||
+              updatedThread.client_name ||
+              null,
+          };
         }
       }
     },
@@ -603,6 +750,62 @@ const conversationsSlice = createSlice({
       if (state.currentThread?.conversation_id === conversationId) {
         state.currentThread = null;
         state.messages = [];
+      }
+    },
+
+    // Real-time thread update from Ably (status change, priority, tags, etc.).
+    // Merges the partial update into the existing thread without a refetch.
+    threadUpdatedRealtime: (
+      state,
+      action: { payload: { conversationId: string; thread: any } },
+    ) => {
+      const { conversationId, thread } = action.payload;
+      const idx = state.threads.findIndex(
+        (t) => t.conversation_id === conversationId,
+      );
+      if (idx >= 0) {
+        // Preserve already-resolved client_name in the thread list — never
+        // overwrite with null from a partial Ably push (e.g. { status: 'active' }).
+        const updated = {
+          ...state.threads[idx],
+          ...thread,
+          client_name:
+            state.threads[idx].client_name || thread.client_name || null,
+        };
+        // If a closed thread was just reopened, bubble it to the top so
+        // brokers see it immediately without scrolling.
+        if (
+          thread.status === "active" &&
+          state.threads[idx].status !== "active"
+        ) {
+          state.threads.splice(idx, 1);
+          state.threads.unshift(updated);
+        } else {
+          state.threads[idx] = updated;
+        }
+      }
+      if (state.currentThread?.conversation_id === conversationId) {
+        // Preserve already-resolved client_name — never overwrite with null
+        // from a raw Ably push that hasn't done the broker JOIN.
+        const resolvedName =
+          state.currentThread.client_name || thread.client_name || null;
+        state.currentThread = {
+          ...state.currentThread,
+          ...thread,
+          client_name: resolvedName,
+        };
+      }
+    },
+
+    // Real-time read receipt from Ably — zero out unread badge for everyone.
+    threadReadRealtime: (state, action: { payload: string }) => {
+      const conversationId = action.payload;
+      const thread = state.threads.find(
+        (t) => t.conversation_id === conversationId,
+      );
+      if (thread) thread.unread_count = 0;
+      if (state.currentThread?.conversation_id === conversationId) {
+        state.currentThread.unread_count = 0;
       }
     },
   },
@@ -641,7 +844,20 @@ const conversationsSlice = createSlice({
       .addCase(fetchConversationMessages.fulfilled, (state, action) => {
         state.isLoadingMessages = false;
         state.messages = action.payload.messages;
-        state.currentThread = action.payload.thread;
+        // Preserve the already-resolved client_name from the thread list if the
+        // API somehow returns null for the same conversation (e.g. broker-phone
+        // match timing gap). Only carry forward the name when conversation_id
+        // matches to avoid a race-condition where a different thread's name leaks.
+        const sameConversation =
+          state.currentThread?.conversation_id ===
+          action.payload.thread?.conversation_id;
+        state.currentThread = {
+          ...action.payload.thread,
+          client_name:
+            (sameConversation ? state.currentThread?.client_name : null) ||
+            action.payload.thread?.client_name ||
+            null,
+        };
         state.messagesPagination = action.payload.pagination;
         state.error = null;
       })
@@ -675,11 +891,19 @@ const conversationsSlice = createSlice({
             : existing.last_message_preview;
           existing.last_message_at = now;
           existing.message_count = (existing.message_count ?? 0) + 1;
+          // Note: we deliberately do NOT auto-reopen a closed thread when the
+          // broker sends an outbound message. A broker who closed a thread
+          // expects it to stay closed; reopening requires an explicit action.
           // Bubble the thread to the top
           state.threads = [
             existing,
             ...state.threads.filter((t) => t.conversation_id !== convId),
           ];
+          // Keep the right-pane currentThread in sync so the header / status
+          // chip flips to "active" immediately without waiting for a refetch.
+          if (state.currentThread?.conversation_id === convId) {
+            state.currentThread = { ...state.currentThread, ...existing };
+          }
         } else {
           // New thread — add a placeholder so it appears immediately while
           // fetchConversationThreads runs (avoids TiDB replication lag gap).
@@ -823,6 +1047,84 @@ const conversationsSlice = createSlice({
         state.error = action.payload as string;
       });
 
+    // Mailboxes
+    builder
+      .addCase(fetchConversationMailboxes.pending, (state) => {
+        state.isLoadingMailboxes = true;
+        state.error = null;
+      })
+      .addCase(fetchConversationMailboxes.fulfilled, (state, action) => {
+        state.isLoadingMailboxes = false;
+        state.mailboxes = action.payload;
+        state.error = null;
+      })
+      .addCase(fetchConversationMailboxes.rejected, (state, action) => {
+        state.isLoadingMailboxes = false;
+        state.error = action.payload as string;
+      });
+
+    builder
+      .addCase(connectOffice365Mailbox.pending, (state) => {
+        state.isConnectingMailbox = true;
+        state.error = null;
+      })
+      .addCase(connectOffice365Mailbox.fulfilled, (state) => {
+        state.isConnectingMailbox = false;
+        state.error = null;
+      })
+      .addCase(connectOffice365Mailbox.rejected, (state, action) => {
+        state.isConnectingMailbox = false;
+        state.error = action.payload as string;
+      });
+
+    builder
+      .addCase(syncConversationMailbox.pending, (state) => {
+        state.isSyncingMailbox = true;
+        state.error = null;
+      })
+      .addCase(syncConversationMailbox.fulfilled, (state) => {
+        state.isSyncingMailbox = false;
+        state.error = null;
+      })
+      .addCase(syncConversationMailbox.rejected, (state, action) => {
+        state.isSyncingMailbox = false;
+        state.error = action.payload as string;
+      });
+
+    builder.addCase(
+      disconnectConversationMailbox.fulfilled,
+      (state, action) => {
+        state.mailboxes = state.mailboxes.filter(
+          (m) => m.id !== action.payload.mailboxId,
+        );
+      },
+    );
+
+    builder
+      .addCase(assignConversationMailbox.pending, (state) => {
+        state.isAssigningMailbox = true;
+        state.error = null;
+      })
+      .addCase(assignConversationMailbox.fulfilled, (state, action) => {
+        state.isAssigningMailbox = false;
+        const mb = state.mailboxes.find(
+          (m) => m.id === action.payload.mailboxId,
+        );
+        if (mb) {
+          mb.assigned_broker_id = action.payload.assigned_broker_id;
+          mb.is_shared = action.payload.is_shared;
+          if (action.payload.is_default !== undefined) {
+            // Clear previous default
+            state.mailboxes.forEach((m) => (m.is_default = false));
+            mb.is_default = !!action.payload.is_default;
+          }
+        }
+      })
+      .addCase(assignConversationMailbox.rejected, (state, action) => {
+        state.isAssigningMailbox = false;
+        state.error = action.payload as string;
+      });
+
     builder.addCase(saveContactFromConversation.fulfilled, (state, action) => {
       const {
         conversationId: originalConvId,
@@ -866,6 +1168,8 @@ export const {
   addNewMessage,
   markConversationAsRead,
   removeThread,
+  threadUpdatedRealtime,
+  threadReadRealtime,
   patchMessageRecording,
 } = conversationsSlice.actions;
 

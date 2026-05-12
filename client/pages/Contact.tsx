@@ -2,7 +2,8 @@ import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { useFormik } from "formik";
 import * as Yup from "yup";
-import axios from "axios";
+import { useAppDispatch } from "@/store/hooks";
+import { submitContactForm } from "@/store/slices/contactSubmissionsSlice";
 import {
   Phone,
   Mail,
@@ -47,6 +48,7 @@ const validationSchema = Yup.object({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const Contact: React.FC = () => {
+  const dispatch = useAppDispatch();
   const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -61,24 +63,25 @@ const Contact: React.FC = () => {
     validationSchema,
     onSubmit: async (values, { setSubmitting, resetForm }) => {
       setSubmitError(null);
-      try {
-        await axios.post("/api/contact", {
+      const result = await dispatch(
+        submitContactForm({
           name: values.name.trim(),
           email: values.email.trim().toLowerCase(),
           phone: values.phone?.trim() || null,
           subject: values.subject.trim(),
           message: values.message.trim(),
-        });
+        }),
+      );
+      if (submitContactForm.fulfilled.match(result)) {
         setSubmitted(true);
         resetForm();
-      } catch (err: any) {
+      } else {
         setSubmitError(
-          err?.response?.data?.error ||
+          (result.payload as string) ||
             "Something went wrong. Please try again or call us directly.",
         );
-      } finally {
-        setSubmitting(false);
       }
+      setSubmitting(false);
     },
   });
 

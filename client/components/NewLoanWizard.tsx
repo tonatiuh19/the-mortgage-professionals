@@ -23,6 +23,19 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import {
   Home,
   DollarSign,
   FileText,
@@ -35,10 +48,13 @@ import {
   AlertCircle,
   ExternalLink,
   User,
+  Users,
   ClipboardEdit,
   Share2,
   Mail,
   ChevronRight,
+  ChevronsUpDown,
+  Check,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -162,6 +178,7 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
   const [matchedClient, setMatchedClient] = useState<
     GetClientsResponse["clients"][number] | null
   >(null);
+  const [clientPickerOpen, setClientPickerOpen] = useState(false);
   const [selectedBrokerId, setSelectedBrokerId] = useState<number | null>(null);
   const [showDraftPrompt, setShowDraftPrompt] = useState(false);
   const [wasSuccessfullySubmitted, setWasSuccessfullySubmitted] =
@@ -174,8 +191,14 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
       // Step 1: Client Info
       client_email: "",
       client_first_name: "",
+      client_middle_name: "",
       client_last_name: "",
       client_phone: "",
+      client_address_street: "",
+      client_address_unit: "",
+      client_address_city: "",
+      client_address_state: "",
+      client_address_zip: "",
       // Step 2: Loan Details
       loan_type: "purchase",
       loan_amount: "",
@@ -184,10 +207,15 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
       loan_purpose: "",
       // Step 3: Property Details
       property_address: "",
+      property_unit: "",
       property_city: "",
       property_state: "",
       property_zip: "",
       property_type: "single_family",
+      // Step 3 extra: Borrower profile
+      marital_status: "",
+      dependent_count: "",
+      years_at_address: "",
       // Additional
       estimated_close_date: "",
       notes: "",
@@ -214,11 +242,11 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
     if (open) {
       // Reset mode selection every time dialog opens
       setMode(null);
-      dispatch(fetchClients({}));
-      dispatch(fetchTasks({}));
+      dispatch(fetchClients());
+      dispatch(fetchTasks());
       // Fetch brokers if admin
       if (user && (user.role === "admin" || user.role === "superadmin")) {
-        dispatch(fetchBrokers({}));
+        dispatch(fetchBrokers());
       }
       // Set default broker assignment to current user
       if (user) {
@@ -396,18 +424,28 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
     formik.setValues({
       client_email: "test.client@example.com",
       client_first_name: "John",
+      client_middle_name: "A",
       client_last_name: "Doe",
       client_phone: "(555) 123-4567",
+      client_address_street: "456 Oak Ave",
+      client_address_unit: "",
+      client_address_city: "Los Angeles",
+      client_address_state: "CA",
+      client_address_zip: "90001",
       loan_type: "purchase",
       loan_amount: "350000",
       property_value: "450000",
       down_payment: "100000",
       loan_purpose: "Primary residence purchase",
       property_address: "123 Main Street",
+      property_unit: "",
       property_city: "San Francisco",
       property_state: "CA",
       property_zip: "94102",
       property_type: "single_family",
+      marital_status: "single",
+      dependent_count: "0",
+      years_at_address: "2",
       estimated_close_date: "2026-03-15",
       notes: "Test loan application for development",
     });
@@ -458,7 +496,7 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
           }
         }}
       >
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
           {/* ── Mode Selection ── shown when dialog first opens */}
           {mode === null && (
             <AnimatePresence>
@@ -641,6 +679,153 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
                     <h3 className="text-lg font-semibold">
                       Client Information
                     </h3>
+                    {/* Existing client picker */}
+                    <div>
+                      <Label>Select Existing Client</Label>
+                      <Popover
+                        open={clientPickerOpen}
+                        onOpenChange={setClientPickerOpen}
+                      >
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={clientPickerOpen}
+                            className="w-full justify-between font-normal mt-1"
+                          >
+                            <span className="flex items-center gap-2 truncate">
+                              <Users className="h-4 w-4 shrink-0 text-primary" />
+                              <span className="truncate">
+                                {matchedClient
+                                  ? `${matchedClient.first_name} ${matchedClient.last_name} • ${matchedClient.email}`
+                                  : clientsLoading
+                                    ? "Loading clients…"
+                                    : "Search & select an existing client…"}
+                              </span>
+                            </span>
+                            <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent
+                          align="start"
+                          className="w-[--radix-popover-trigger-width] p-0"
+                          sideOffset={4}
+                        >
+                          <Command
+                            filter={(value, search) =>
+                              value.toLowerCase().includes(search.toLowerCase())
+                                ? 1
+                                : 0
+                            }
+                          >
+                            <CommandInput
+                              placeholder="Search by name, email or phone…"
+                              className="h-9"
+                            />
+                            <CommandList className="max-h-72">
+                              <CommandEmpty>No clients found.</CommandEmpty>
+                              {matchedClient && (
+                                <CommandGroup>
+                                  <CommandItem
+                                    value="__clear__"
+                                    onSelect={() => {
+                                      setMatchedClient(null);
+                                      formik.setFieldValue("client_email", "");
+                                      formik.setFieldValue(
+                                        "client_first_name",
+                                        "",
+                                      );
+                                      formik.setFieldValue(
+                                        "client_last_name",
+                                        "",
+                                      );
+                                      formik.setFieldValue("client_phone", "");
+                                      setClientPickerOpen(false);
+                                    }}
+                                    className="text-muted-foreground italic text-xs"
+                                  >
+                                    ✕ Clear selection (enter new client)
+                                  </CommandItem>
+                                </CommandGroup>
+                              )}
+                              <CommandGroup
+                                heading={`Clients (${clients.length})`}
+                              >
+                                {clients.map((c) => {
+                                  const fullName =
+                                    `${c.first_name || ""} ${c.last_name || ""}`.trim();
+                                  const searchValue = `${fullName} ${c.email || ""} ${c.phone || ""}`;
+                                  const isSelected = matchedClient?.id === c.id;
+                                  return (
+                                    <CommandItem
+                                      key={c.id}
+                                      value={searchValue}
+                                      onSelect={() => {
+                                        setMatchedClient(c);
+                                        formik.setFieldValue(
+                                          "client_email",
+                                          c.email || "",
+                                        );
+                                        formik.setFieldValue(
+                                          "client_first_name",
+                                          c.first_name || "",
+                                        );
+                                        formik.setFieldValue(
+                                          "client_last_name",
+                                          c.last_name || "",
+                                        );
+                                        formik.setFieldValue(
+                                          "client_phone",
+                                          c.phone || "",
+                                        );
+                                        setClientPickerOpen(false);
+                                        toast({
+                                          title: "Client selected",
+                                          description: `${fullName} — details pre-filled.`,
+                                        });
+                                      }}
+                                      className="flex items-center gap-2 cursor-pointer py-2"
+                                    >
+                                      <Check
+                                        className={cn(
+                                          "h-4 w-4 shrink-0",
+                                          isSelected
+                                            ? "opacity-100 text-primary"
+                                            : "opacity-0",
+                                        )}
+                                      />
+                                      <div className="flex flex-col min-w-0 flex-1">
+                                        <span className="text-sm font-medium truncate">
+                                          {fullName || "(No name)"}
+                                        </span>
+                                        <span className="text-xs text-muted-foreground truncate">
+                                          {c.email}
+                                          {c.phone ? ` • ${c.phone}` : ""}
+                                        </span>
+                                      </div>
+                                    </CommandItem>
+                                  );
+                                })}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Or fill in the details below to create a new client.
+                      </p>
+                    </div>
+                    <div className="relative my-2">
+                      <div className="absolute inset-0 flex items-center">
+                        <span className="w-full border-t" />
+                      </div>
+                      <div className="relative flex justify-center text-xs uppercase">
+                        <span className="bg-background px-2 text-muted-foreground">
+                          Or enter new client
+                        </span>
+                      </div>
+                    </div>
                     <div>
                       <Label htmlFor="client_email">Email*</Label>
                       <Input
@@ -711,6 +896,19 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
                       </div>
                     </div>
                     <div>
+                      <Label htmlFor="client_middle_name">
+                        Middle Name{" "}
+                        <span className="text-muted-foreground text-xs">
+                          (optional)
+                        </span>
+                      </Label>
+                      <Input
+                        id="client_middle_name"
+                        placeholder="Middle name"
+                        {...formik.getFieldProps("client_middle_name")}
+                      />
+                    </div>
+                    <div>
                       <Label htmlFor="client_phone">Phone*</Label>
                       <Input
                         id="client_phone"
@@ -726,6 +924,57 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
                           {formik.errors.client_phone as string}
                         </p>
                       )}
+                    </div>
+                    {/* Current address */}
+                    <div className="pt-2 border-t">
+                      <p className="text-sm font-medium text-gray-700 mb-3">
+                        Current Address{" "}
+                        <span className="text-muted-foreground text-xs font-normal">
+                          (optional — for MISMO XML)
+                        </span>
+                      </p>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div className="col-span-2">
+                          <Label htmlFor="client_address_street">Street</Label>
+                          <Input
+                            id="client_address_street"
+                            placeholder="123 Main St"
+                            {...formik.getFieldProps("client_address_street")}
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="client_address_unit">Unit</Label>
+                          <Input
+                            id="client_address_unit"
+                            placeholder="Apt 4B"
+                            {...formik.getFieldProps("client_address_unit")}
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-3 mt-2">
+                        <div>
+                          <Label htmlFor="client_address_city">City</Label>
+                          <Input
+                            id="client_address_city"
+                            {...formik.getFieldProps("client_address_city")}
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="client_address_state">State</Label>
+                          <Input
+                            id="client_address_state"
+                            placeholder="CA"
+                            {...formik.getFieldProps("client_address_state")}
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="client_address_zip">ZIP</Label>
+                          <Input
+                            id="client_address_zip"
+                            {...formik.getFieldProps("client_address_zip")}
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -891,6 +1140,19 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
                         </p>
                       )}
                     </div>
+                    <div>
+                      <Label htmlFor="property_unit">
+                        Unit / Apt{" "}
+                        <span className="text-muted-foreground text-xs">
+                          (optional)
+                        </span>
+                      </Label>
+                      <Input
+                        id="property_unit"
+                        placeholder="e.g. Unit A, Apt 2B"
+                        {...formik.getFieldProps("property_unit")}
+                      />
+                    </div>
                     <div className="grid grid-cols-3 gap-4">
                       <div className="col-span-1">
                         <Label htmlFor="property_city">City*</Label>
@@ -974,6 +1236,70 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
                         {...formik.getFieldProps("estimated_close_date")}
                       />
                     </div>
+                    {/* Borrower profile for MISMO */}
+                    <div className="pt-2 border-t">
+                      <p className="text-sm font-medium text-gray-700 mb-3">
+                        Borrower Profile{" "}
+                        <span className="text-muted-foreground text-xs font-normal">
+                          (optional — for MISMO XML)
+                        </span>
+                      </p>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div>
+                          <Label htmlFor="marital_status">Marital Status</Label>
+                          <Select
+                            value={formik.values.marital_status || "__none__"}
+                            onValueChange={(v) =>
+                              formik.setFieldValue(
+                                "marital_status",
+                                v === "__none__" ? "" : v,
+                              )
+                            }
+                          >
+                            <SelectTrigger className="mt-1">
+                              <SelectValue placeholder="Select..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">
+                                — Not specified —
+                              </SelectItem>
+                              <SelectItem value="single">Single</SelectItem>
+                              <SelectItem value="married">Married</SelectItem>
+                              <SelectItem value="separated">
+                                Separated
+                              </SelectItem>
+                              <SelectItem value="divorced">Divorced</SelectItem>
+                              <SelectItem value="widowed">Widowed</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label htmlFor="dependent_count">Dependents</Label>
+                          <Input
+                            id="dependent_count"
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            className="mt-1"
+                            {...formik.getFieldProps("dependent_count")}
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="years_at_address">
+                            Years at Address
+                          </Label>
+                          <Input
+                            id="years_at_address"
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            placeholder="e.g. 2.5"
+                            className="mt-1"
+                            {...formik.getFieldProps("years_at_address")}
+                          />
+                        </div>
+                      </div>
+                    </div>
                     <div>
                       <Label htmlFor="notes">Additional Notes</Label>
                       <Textarea
@@ -1032,7 +1358,7 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
                           <h4 className="font-medium text-sm mb-3">
                             Available Templates
                           </h4>
-                          <div className="grid grid-cols-2 gap-2">
+                          <div className="flex flex-col gap-2">
                             {activeTemplates.map((template) => {
                               const isAdded = tasks.some(
                                 (t) => t.template_id === template.id,
@@ -1045,27 +1371,27 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
                                   size="sm"
                                   onClick={() => addTemplateTask(template)}
                                   disabled={isAdded}
-                                  className="justify-start h-auto p-3"
+                                  className="justify-start h-auto p-3 w-full"
                                 >
-                                  <div className="flex items-start gap-2 w-full">
+                                  <div className="flex items-start gap-2 w-full min-w-0">
                                     {isAdded ? (
-                                      <CheckCircle className="h-4 w-4 mt-0.5 text-primary" />
+                                      <CheckCircle className="h-4 w-4 mt-0.5 text-primary shrink-0" />
                                     ) : (
-                                      <Plus className="h-4 w-4 mt-0.5" />
+                                      <Plus className="h-4 w-4 mt-0.5 shrink-0" />
                                     )}
-                                    <div className="flex-1 text-left">
-                                      <p className="font-medium text-xs">
+                                    <div className="flex-1 text-left min-w-0">
+                                      <p className="font-medium text-xs truncate">
                                         {template.title}
                                       </p>
                                       {template.description && (
-                                        <p className="text-xs text-muted-foreground line-clamp-1">
+                                        <p className="text-xs text-muted-foreground truncate">
                                           {template.description}
                                         </p>
                                       )}
                                     </div>
                                     <Badge
                                       variant="outline"
-                                      className="text-xs"
+                                      className="text-xs shrink-0 ml-2"
                                     >
                                       {template.default_due_days || 3}d
                                     </Badge>

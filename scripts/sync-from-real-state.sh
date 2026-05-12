@@ -43,9 +43,12 @@ FILES=(
   # Components
   "client/components/BrokerDetailPanel.tsx"
   "client/components/BrokerMetricsPanel.tsx"
+  "client/components/ClientDetailPanel.tsx"
+  "client/components/ClientFormDialog.tsx"
   "client/components/GlobalVoiceManager.tsx"
   "client/components/LeadSourceClientsDrawer.tsx"
   "client/components/MetaHelmet.tsx"
+  "client/components/PhoneNumbersPanel.tsx"
   "client/components/SaveAsTemplateDialog.tsx"
   "client/components/TaskCompletionModal.tsx"
   "client/components/TaskWizard.tsx"
@@ -56,13 +59,16 @@ FILES=(
   "client/components/PreApprovalLetterModal.tsx"
   "client/components/PDFSigningViewer.tsx"
   "client/components/PDFSignatureZoneEditor.tsx"
+  "client/components/VoiceCallPanel.tsx"
   "client/components/layout/AdminLayout.tsx"
   "client/components/layout/AppLayout.tsx"
   "client/components/layout/ClientLayout.tsx"
   "client/components/layout/Navbar.tsx"
   "client/components/layout/Footer.tsx"
+  "client/components/layout/NotificationBell.tsx"
 
   "client/components/ui/calendar.tsx"
+  "client/components/ui/deletion-modal.ts"
 
   # Pages – Admin
   "client/pages/admin/Calendar.tsx"
@@ -91,6 +97,7 @@ FILES=(
   "client/pages/client/Calculator.tsx"
 
   # Pages – Public
+  "client/AppRoutes.tsx"
   "client/pages/BrokerLogin.tsx"
   "client/pages/ClientLogin.tsx"
   "client/pages/ApplicationWizard.tsx"
@@ -101,6 +108,7 @@ FILES=(
   "client/pages/NotFound.tsx"
   "client/pages/Scheduler.tsx"
   "client/pages/SchedulerReschedule.tsx"
+  "client/pages/admin/Email.tsx"
 
   # Shared
   "shared/api.ts"
@@ -108,22 +116,37 @@ FILES=(
   # Store root + slices
   "client/store/index.ts"
   "client/store/slices/applicationWizardSlice.ts"
+  "client/store/slices/applicationsSlice.ts"
+  "client/store/slices/brokersSlice.ts"
   "client/store/slices/brokerAuthSlice.ts"
+  "client/store/slices/clientsSlice.ts"
   "client/store/slices/clientAuthSlice.ts"
   "client/store/slices/clientPortalSlice.ts"
   "client/store/slices/communicationTemplatesSlice.ts"
+  "client/store/slices/conversationsSlice.ts"
   "client/store/slices/contactSubmissionsSlice.ts"
   "client/store/slices/dashboardSlice.ts"
   "client/store/slices/documentsSlice.ts"
+  "client/store/slices/emailSlice.ts"
+  "client/store/slices/leadsSlice.ts"
+  "client/store/slices/notificationsSlice.ts"
+  "client/store/slices/pipelineSlice.ts"
+  "client/store/slices/preApprovalSlice.ts"
+  "client/store/slices/reminderFlowsSlice.ts"
+  "client/store/slices/schedulerSlice.ts"
   "client/store/slices/settingsSlice.ts"
+  "client/store/slices/tasksSlice.ts"
+  "client/store/slices/voiceSlice.ts"
 
   # Hooks
   "client/hooks/use-bulk-deletion.ts"
   "client/hooks/use-deletion-modal.ts"
 
   # Lib
+  "client/lib/ably-client.ts"
   "client/lib/cdn-upload.ts"
   "client/lib/env.ts"
+  "client/lib/notification-sound.ts"
 
   # Swagger (kept in sync with api/index.ts)
   "api/swagger.yaml"
@@ -140,6 +163,7 @@ SKIP=(
   "client/global.css"                    # our brand colors (DM Sans, blue/amber) — NOT real-state's red theme
   "client/components/BrokerDetailPanel.tsx"  # our field names (conversation_id, recipient_email/phone) are correct; real-state is behind
   "client/components/layout/AdminLayout.tsx" # Conversations nav forceDisabled + route guard must stay
+  "client/AppRoutes.tsx"                 # / route must use showHeader=false/showFooter=false — Index.tsx renders its own Header+Footer
   "database/schema.sql"                  # managed via migrations only
 )
 

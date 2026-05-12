@@ -38,6 +38,13 @@ import {
 } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useAppDispatch } from "@/store/hooks";
+import {
+  fetchPhoneNumbers as fetchPhoneNumbersThunk,
+  assignPhoneNumber,
+  configurePhoneNumber,
+  fixCallSetup,
+} from "@/store/slices/voiceSlice";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -59,17 +66,17 @@ type BrokerOption = { id: number; name: string };
 interface PhoneNumbersPanelProps {
   isOpen: boolean;
   onClose: () => void;
-  sessionToken: string | null;
+  sessionToken?: string | null;
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── Component ─────────────────────────────────────────────────────
 
 const PhoneNumbersPanel: React.FC<PhoneNumbersPanelProps> = ({
   isOpen,
   onClose,
-  sessionToken,
 }) => {
   const { toast } = useToast();
+  const dispatch = useAppDispatch();
 
   const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumberEntry[]>([]);
   const [brokerOptions, setBrokerOptions] = useState<BrokerOption[]>([]);
@@ -81,13 +88,10 @@ const PhoneNumbersPanel: React.FC<PhoneNumbersPanelProps> = ({
 
   // ── Data fetching ──────────────────────────────────────────────────────────
 
-  const fetchPhoneNumbers = useCallback(async () => {
+  const loadPhoneNumbers = useCallback(async () => {
     setIsLoadingNumbers(true);
     try {
-      const res = await fetch("/api/voice/phone-numbers", {
-        headers: { Authorization: `Bearer ${sessionToken}` },
-      });
-      const data = await res.json();
+      const data = await dispatch(fetchPhoneNumbersThunk()).unwrap();
       if (data.success) {
         setPhoneNumbers(data.numbers);
         if (data.brokers) setBrokerOptions(data.brokers);
@@ -97,26 +101,18 @@ const PhoneNumbersPanel: React.FC<PhoneNumbersPanelProps> = ({
     } finally {
       setIsLoadingNumbers(false);
     }
-  }, [sessionToken]);
+  }, [dispatch]);
 
   useEffect(() => {
-    if (isOpen) fetchPhoneNumbers();
-  }, [isOpen, fetchPhoneNumbers]);
+    if (isOpen) loadPhoneNumbers();
+  }, [isOpen, loadPhoneNumbers]);
 
   // ── Actions ────────────────────────────────────────────────────────────────
 
   const assignNumber = async (sid: string, brokerId: number | null) => {
     setAssigningSid(sid);
     try {
-      const res = await fetch(`/api/voice/phone-numbers/${sid}/assign`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify({ brokerId }),
-      });
-      const data = await res.json();
+      const data = await dispatch(assignPhoneNumber({ sid, brokerId })).unwrap();
       if (data.success) {
         toast({
           title: "Routing updated",
@@ -124,7 +120,7 @@ const PhoneNumbersPanel: React.FC<PhoneNumbersPanelProps> = ({
             ? "Number assigned to banker"
             : "Number set to shared (All Mortgage Bankers)",
         });
-        await fetchPhoneNumbers();
+        await loadPhoneNumbers();
       } else {
         toast({
           title: "Error",
@@ -147,11 +143,7 @@ const PhoneNumbersPanel: React.FC<PhoneNumbersPanelProps> = ({
     if (sid === "all") setIsConfiguringAll(true);
     else setConfiguringSid(sid);
     try {
-      const res = await fetch(`/api/voice/phone-numbers/${sid}/configure`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${sessionToken}` },
-      });
-      const data = await res.json();
+      const data = await dispatch(configurePhoneNumber(sid)).unwrap();
       if (data.success) {
         toast({
           title: "Configured",
@@ -160,7 +152,7 @@ const PhoneNumbersPanel: React.FC<PhoneNumbersPanelProps> = ({
               ? `All ${data.updated} numbers configured`
               : "Number configured for incoming calls",
         });
-        await fetchPhoneNumbers();
+        await loadPhoneNumbers();
       } else {
         toast({
           title: "Error",
@@ -183,11 +175,7 @@ const PhoneNumbersPanel: React.FC<PhoneNumbersPanelProps> = ({
   const syncCallSetup = async () => {
     setIsSyncingCallSetup(true);
     try {
-      const res = await fetch("/api/voice/fix-call-setup", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${sessionToken}` },
-      });
-      const data = await res.json();
+      const data = await dispatch(fixCallSetup()).unwrap();
       if (data.success) {
         toast({
           title: "Outbound calls ready",
@@ -266,7 +254,7 @@ const PhoneNumbersPanel: React.FC<PhoneNumbersPanelProps> = ({
               variant="outline"
               size="sm"
               className="h-8 gap-1.5 text-xs"
-              onClick={fetchPhoneNumbers}
+              onClick={loadPhoneNumbers}
               disabled={isLoadingNumbers}
             >
               <RefreshCw

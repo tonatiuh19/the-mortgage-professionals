@@ -89,7 +89,15 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { fetchLoanDetails } from "@/store/slices/pipelineSlice";
+import {
+  fetchLoanDetails,
+  updateLoanDetails,
+  updateLoanStatus,
+  updateLoanSource,
+  assignLoanBroker,
+  assignLoanPartner,
+  exportLoanMismo,
+} from "@/store/slices/pipelineSlice";
 import { fetchBrokers } from "@/store/slices/brokersSlice";
 import { fetchTaskDocuments } from "@/store/slices/clientPortalSlice";
 import {
@@ -98,13 +106,15 @@ import {
   createTask,
   fetchTasks,
   fetchTaskSignatures,
+  fetchTaskFormResponses,
+  approveTask,
+  reopenTask,
 } from "@/store/slices/tasksSlice";
 import PDFSigningViewer from "@/components/PDFSigningViewer";
 import { PreApprovalLetterModal } from "@/components/PreApprovalLetterModal";
 import { fetchEmailTemplates } from "@/store/slices/communicationTemplatesSlice";
 import { fetchPreApprovalLetter } from "@/store/slices/preApprovalSlice";
 import { fetchAnnualMetrics } from "@/store/slices/dashboardSlice";
-import axios from "axios";
 import { toast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
@@ -214,6 +224,7 @@ export function LoanOverlay({
           ? String(selectedLoan.down_payment)
           : "",
       property_address: selectedLoan?.property_address ?? "",
+      property_unit: selectedLoan?.property_unit ?? "",
       property_city: selectedLoan?.property_city ?? "",
       property_state: selectedLoan?.property_state ?? "",
       property_zip: selectedLoan?.property_zip ?? "",
@@ -230,6 +241,15 @@ export function LoanOverlay({
       employment_status: selectedLoan?.employment_status ?? "",
       employer_name: selectedLoan?.employer_name ?? "",
       years_employed: selectedLoan?.years_employed ?? "",
+      marital_status: selectedLoan?.marital_status ?? "",
+      dependent_count:
+        selectedLoan?.dependent_count != null
+          ? String(selectedLoan.dependent_count)
+          : "",
+      years_at_address:
+        selectedLoan?.years_at_address != null
+          ? String(selectedLoan.years_at_address)
+          : "",
       loan_purpose: selectedLoan?.loan_purpose ?? "",
       estimated_close_date: selectedLoan?.estimated_close_date
         ? String(selectedLoan.estimated_close_date).slice(0, 10)
@@ -273,14 +293,24 @@ export function LoanOverlay({
         else payload[k] = null;
       });
       // Empty strings → null for optional selects
-      ["property_type", "citizenship_status", "employment_status"].forEach(
-        (k) => {
-          if (payload[k] === "") payload[k] = null;
-        },
-      );
-      await axios.patch(`/api/loans/${selectedLoan.id}/details`, payload, {
-        headers: { Authorization: `Bearer ${sessionToken}` },
+      [
+        "property_type",
+        "citizenship_status",
+        "employment_status",
+        "marital_status",
+      ].forEach((k) => {
+        if (payload[k] === "") payload[k] = null;
       });
+      if (payload["dependent_count"] !== "")
+        payload["dependent_count"] = parseInt(payload["dependent_count"]) || 0;
+      else payload["dependent_count"] = null;
+      if (payload["years_at_address"] !== "")
+        payload["years_at_address"] =
+          parseFloat(payload["years_at_address"]) || null;
+      else payload["years_at_address"] = null;
+      await dispatch(
+        updateLoanDetails({ loanId: selectedLoan.id, payload }),
+      ).unwrap();
       toast({ title: "Saved", description: "Loan details updated." });
       await dispatch(fetchLoanDetails(selectedLoan.id));
       setIsDraftEditOpen(false);
@@ -314,19 +344,27 @@ export function LoanOverlay({
         if (payload[k] !== "") payload[k] = parseInt(payload[k]) || null;
         else payload[k] = null;
       });
-      ["property_type", "citizenship_status", "employment_status"].forEach(
-        (k) => {
-          if (payload[k] === "") payload[k] = null;
-        },
-      );
-      await axios.patch(`/api/loans/${selectedLoan.id}/details`, payload, {
-        headers: { Authorization: `Bearer ${sessionToken}` },
+      [
+        "property_type",
+        "citizenship_status",
+        "employment_status",
+        "marital_status",
+      ].forEach((k) => {
+        if (payload[k] === "") payload[k] = null;
       });
-      await axios.patch(
-        `/api/loans/${selectedLoan.id}/status`,
-        { status: "app_sent" },
-        { headers: { Authorization: `Bearer ${sessionToken}` } },
-      );
+      if (payload["dependent_count"] !== "")
+        payload["dependent_count"] = parseInt(payload["dependent_count"]) || 0;
+      else payload["dependent_count"] = null;
+      if (payload["years_at_address"] !== "")
+        payload["years_at_address"] =
+          parseFloat(payload["years_at_address"]) || null;
+      else payload["years_at_address"] = null;
+      await dispatch(
+        updateLoanDetails({ loanId: selectedLoan.id, payload }),
+      ).unwrap();
+      await dispatch(
+        updateLoanStatus({ loanId: selectedLoan.id, status: "app_sent" }),
+      ).unwrap();
       toast({ title: "Promoted!", description: "Loan moved to App Sent." });
       await dispatch(fetchLoanDetails(selectedLoan.id));
       setIsDraftEditOpen(false);
@@ -369,11 +407,12 @@ export function LoanOverlay({
     const newSource = value === "unset" ? null : value;
     try {
       setIsUpdatingSource(true);
-      await axios.patch(
-        `/api/loans/${selectedLoan.id}/source`,
-        { source_category: newSource },
-        { headers: { Authorization: `Bearer ${sessionToken}` } },
-      );
+      await dispatch(
+        updateLoanSource({
+          loanId: selectedLoan.id,
+          source_category: newSource,
+        }),
+      ).unwrap();
       const label =
         LEAD_SOURCES.find((s) => s.value === newSource)?.label ?? "Unknown";
       toast({
@@ -394,7 +433,9 @@ export function LoanOverlay({
       toast({
         title: "Error",
         description:
-          error.response?.data?.error || "Failed to update lead source",
+          typeof error === "string"
+            ? error
+            : error.response?.data?.error || "Failed to update lead source",
         variant: "destructive",
       });
     } finally {
@@ -423,11 +464,9 @@ export function LoanOverlay({
     if (!selectedLoan || newStatus === selectedLoan.status) return;
     try {
       setIsUpdatingPipelineStatus(true);
-      await axios.patch(
-        `/api/loans/${selectedLoan.id}/status`,
-        { status: newStatus },
-        { headers: { Authorization: `Bearer ${sessionToken}` } },
-      );
+      await dispatch(
+        updateLoanStatus({ loanId: selectedLoan.id, status: newStatus }),
+      ).unwrap();
       toast({
         title: "Pipeline Status Updated",
         description: `Loan moved to "${PIPELINE_STATUSES.find((s) => s.value === newStatus)?.label ?? newStatus}".`,
@@ -437,7 +476,9 @@ export function LoanOverlay({
       toast({
         title: "Error",
         description:
-          error.response?.data?.error || "Failed to update pipeline status",
+          typeof error === "string"
+            ? error
+            : error.response?.data?.error || "Failed to update pipeline status",
         variant: "destructive",
       });
     } finally {
@@ -449,11 +490,12 @@ export function LoanOverlay({
     if (!selectedLoan) return;
     try {
       setIsAssigning(true);
-      await axios.patch(
-        `/api/loans/${selectedLoan.id}/assign-broker`,
-        { broker_id: brokerId === "unassigned" ? null : parseInt(brokerId) },
-        { headers: { Authorization: `Bearer ${sessionToken}` } },
-      );
+      await dispatch(
+        assignLoanBroker({
+          loanId: selectedLoan.id,
+          brokerId: brokerId === "unassigned" ? null : parseInt(brokerId),
+        }),
+      ).unwrap();
       toast({
         title: "Realtor Updated",
         description:
@@ -466,7 +508,10 @@ export function LoanOverlay({
       toast({
         title: "Error",
         description:
-          error.response?.data?.error || "Failed to update realtor assignment",
+          typeof error === "string"
+            ? error
+            : error.response?.data?.error ||
+              "Failed to update realtor assignment",
         variant: "destructive",
       });
     } finally {
@@ -478,11 +523,12 @@ export function LoanOverlay({
     if (!selectedLoan) return;
     try {
       setIsAssigningPartner(true);
-      await axios.patch(
-        `/api/loans/${selectedLoan.id}/assign-partner`,
-        { partner_id: partnerId === "unassigned" ? null : parseInt(partnerId) },
-        { headers: { Authorization: `Bearer ${sessionToken}` } },
-      );
+      await dispatch(
+        assignLoanPartner({
+          loanId: selectedLoan.id,
+          partnerId: partnerId === "unassigned" ? null : parseInt(partnerId),
+        }),
+      ).unwrap();
       toast({
         title: "Partner Updated",
         description:
@@ -495,7 +541,10 @@ export function LoanOverlay({
       toast({
         title: "Error",
         description:
-          error.response?.data?.error || "Failed to update partner assignment",
+          typeof error === "string"
+            ? error
+            : error.response?.data?.error ||
+              "Failed to update partner assignment",
         variant: "destructive",
       });
     } finally {
@@ -533,14 +582,12 @@ export function LoanOverlay({
     try {
       const [docsResult] = await Promise.all([
         dispatch(fetchTaskDocuments(taskId)).unwrap(),
-        axios
-          .get(`/api/tasks/${taskId}/responses`, {
-            headers: { Authorization: `Bearer ${sessionToken}` },
-          })
+        dispatch(fetchTaskFormResponses(taskId))
+          .unwrap()
           .then((r) =>
             setTaskFormResponses((prev) => ({
               ...prev,
-              [taskId]: { loading: false, responses: r.data.responses || [] },
+              [taskId]: { loading: false, responses: r.responses },
             })),
           )
           .catch(() =>
@@ -570,15 +617,7 @@ export function LoanOverlay({
   const handleApproveTask = async (taskId: number) => {
     try {
       setApprovingTaskId(taskId);
-      await axios.post(
-        `/api/tasks/${taskId}/approve`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${sessionToken}`,
-          },
-        },
-      );
+      await dispatch(approveTask(taskId)).unwrap();
 
       toast({
         title: "Task Approved",
@@ -593,7 +632,10 @@ export function LoanOverlay({
       logger.error("Error approving task:", error);
       toast({
         title: "Error",
-        description: error.response?.data?.error || "Failed to approve task",
+        description:
+          typeof error === "string"
+            ? error
+            : error.response?.data?.error || "Failed to approve task",
         variant: "destructive",
       });
     } finally {
@@ -684,17 +726,9 @@ export function LoanOverlay({
 
     try {
       setIsSubmitting(true);
-      await axios.post(
-        `/api/tasks/${selectedTaskId}/reopen`,
-        {
-          reason: reopenReason,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${sessionToken}`,
-          },
-        },
-      );
+      await dispatch(
+        reopenTask({ taskId: selectedTaskId, reason: reopenReason }),
+      ).unwrap();
 
       toast({
         title: "Task Reopened",
@@ -714,7 +748,10 @@ export function LoanOverlay({
       logger.error("Error reopening task:", error);
       toast({
         title: "Error",
-        description: error.response?.data?.error || "Failed to reopen task",
+        description:
+          typeof error === "string"
+            ? error
+            : error.response?.data?.error || "Failed to reopen task",
         variant: "destructive",
       });
     } finally {
@@ -817,18 +854,9 @@ export function LoanOverlay({
 
     try {
       setIsSubmitting(true);
-      const response = await axios.get(
-        `/api/loans/${selectedLoan.id}/export-mismo`,
-        {
-          headers: {
-            Authorization: `Bearer ${sessionToken}`,
-          },
-          responseType: "blob",
-        },
-      );
+      const blob = await dispatch(exportLoanMismo(selectedLoan.id)).unwrap();
 
       // Create download link
-      const blob = new Blob([response.data], { type: "application/xml" });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -847,8 +875,10 @@ export function LoanOverlay({
       toast({
         title: "Export Failed",
         description:
-          error.response?.data?.error ||
-          "Failed to generate MISMO file. Please try again.",
+          typeof error === "string"
+            ? error
+            : error.response?.data?.error ||
+              "Failed to generate MISMO file. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -1530,6 +1560,22 @@ export function LoanOverlay({
                           </div>
                           <div className="space-y-1">
                             <label className="text-xs font-medium text-gray-600">
+                              Unit / Apt
+                            </label>
+                            <Input
+                              className="text-sm h-9"
+                              placeholder="e.g. Apt 4B"
+                              value={draftForm.property_unit}
+                              onChange={(e) =>
+                                handleDraftFieldChange(
+                                  "property_unit",
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
                               City
                             </label>
                             <Input
@@ -1759,6 +1805,85 @@ export function LoanOverlay({
                               onChange={(e) =>
                                 handleDraftFieldChange(
                                   "years_employed",
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Borrower Profile */}
+                      <div>
+                        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                          <Users className="h-3.5 w-3.5" />
+                          Borrower Profile
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Marital Status
+                            </label>
+                            <Select
+                              value={draftForm.marital_status || "__none__"}
+                              onValueChange={(v) =>
+                                handleDraftFieldChange(
+                                  "marital_status",
+                                  v === "__none__" ? "" : v,
+                                )
+                              }
+                            >
+                              <SelectTrigger className="text-sm h-9">
+                                <SelectValue placeholder="Select..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">
+                                  — None —
+                                </SelectItem>
+                                <SelectItem value="single">Single</SelectItem>
+                                <SelectItem value="married">Married</SelectItem>
+                                <SelectItem value="separated">
+                                  Separated
+                                </SelectItem>
+                                <SelectItem value="divorced">
+                                  Divorced
+                                </SelectItem>
+                                <SelectItem value="widowed">Widowed</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Dependents
+                            </label>
+                            <Input
+                              className="text-sm h-9"
+                              type="number"
+                              min="0"
+                              placeholder="0"
+                              value={draftForm.dependent_count}
+                              onChange={(e) =>
+                                handleDraftFieldChange(
+                                  "dependent_count",
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-gray-600">
+                              Years at Address
+                            </label>
+                            <Input
+                              className="text-sm h-9"
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              placeholder="e.g. 2.5"
+                              value={draftForm.years_at_address}
+                              onChange={(e) =>
+                                handleDraftFieldChange(
+                                  "years_at_address",
                                   e.target.value,
                                 )
                               }

@@ -469,24 +469,18 @@ export default function BrokerLogin() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setDeliveryMethod("sms")}
-                      className={`flex items-center justify-center gap-2 h-10 rounded-lg border-2 text-sm font-medium transition-all ${
-                        deliveryMethod === "sms"
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-gray-200 text-gray-500 hover:border-gray-300"
-                      }`}
+                      disabled
+                      title="Coming soon"
+                      className="flex items-center justify-center gap-2 h-10 rounded-lg border-2 text-sm font-medium border-gray-100 text-gray-300 cursor-not-allowed bg-gray-50"
                     >
                       <MessageSquare className="h-4 w-4" />
                       SMS
                     </button>
                     <button
                       type="button"
-                      onClick={() => setDeliveryMethod("call")}
-                      className={`flex items-center justify-center gap-2 h-10 rounded-lg border-2 text-sm font-medium transition-all ${
-                        deliveryMethod === "call"
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-gray-200 text-gray-500 hover:border-gray-300"
-                      }`}
+                      disabled
+                      title="Coming soon"
+                      className="flex items-center justify-center gap-2 h-10 rounded-lg border-2 text-sm font-medium border-gray-100 text-gray-300 cursor-not-allowed bg-gray-50"
                     >
                       <Phone className="h-4 w-4" />
                       Call

@@ -531,12 +531,11 @@ export default function Brokers() {
                 ? [
                     {
                       key: "actions",
-                      label: "",
+                      label: "Actions",
                       shrink: true,
-                      className: "w-[140px] pr-2",
-                      headerClassName: "w-[140px] pr-2 text-right",
+                      headerClassName: "text-right",
                       render: (b: Broker) => (
-                        <div className="flex items-center justify-end gap-1.5">
+                        <div className="flex items-center justify-end gap-2">
                           <Button
                             variant="ghost"
                             size="sm"

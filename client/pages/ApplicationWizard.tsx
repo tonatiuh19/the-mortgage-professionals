@@ -121,6 +121,16 @@ const stepSchemas: Record<number, Yup.AnyObjectSchema> = {
       otherwise: (s) => s.notRequired(),
     }),
     years_employed: Yup.string().notRequired(),
+    marital_status: Yup.string().required("Marital status is required"),
+    dependent_count: Yup.number()
+      .typeError("Must be a number")
+      .min(0, "Cannot be negative")
+      .integer("Must be a whole number")
+      .notRequired(),
+    years_at_address: Yup.number()
+      .typeError("Must be a number")
+      .min(0, "Cannot be negative")
+      .notRequired(),
   }),
   5: Yup.object({}),
 };
@@ -136,10 +146,12 @@ const CITIZENSHIP_OPTIONS = [
 
 const initialValues = {
   first_name: "",
+  middle_name: "",
   last_name: "",
   email: "",
   phone: "",
   address_street: "",
+  address_unit: "",
   address_city: "",
   address_state: "",
   address_zip: "",
@@ -149,6 +161,7 @@ const initialValues = {
   down_payment: "",
   property_type: "single_family",
   property_address: "",
+  property_unit: "",
   property_city: "",
   property_state: "",
   property_zip: "",
@@ -159,6 +172,9 @@ const initialValues = {
   employment_status: "",
   employer_name: "",
   years_employed: "",
+  marital_status: "",
+  dependent_count: "",
+  years_at_address: "",
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -206,15 +222,15 @@ const AvatarCircle = ({
   size?: "sm" | "lg";
   onClick?: () => void;
 }) => {
-  const dim = size === "lg" ? "h-[106px] w-[106px]" : "h-8 w-8";
-  const text = size === "lg" ? "text-[2rem]" : "text-xs";
+  const dim = size === "lg" ? "h-[110px] w-[110px]" : "h-8 w-8";
+  const text = size === "lg" ? "text-3xl" : "text-xs";
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
         dim,
-        "rounded-[34px] overflow-hidden ring-4 ring-[#e8eff6] border-[2px] border-[#0A2F52] shadow-[0_12px_26px_-14px_rgba(10,47,82,0.55)] transition-transform hover:scale-[1.03] focus:outline-none shrink-0 bg-white",
+        "rounded-full overflow-hidden ring-4 ring-white border-[3px] border-primary shadow-lg transition-transform hover:scale-105 focus:outline-none shrink-0",
         onClick ? "cursor-pointer" : "cursor-default",
       )}
     >
@@ -227,7 +243,7 @@ const AvatarCircle = ({
       ) : (
         <div
           className={cn(
-            "h-full w-full bg-gradient-to-br from-[#0A2F52] to-[#184f80] flex items-center justify-center text-white font-bold tracking-wide",
+            "h-full w-full bg-primary flex items-center justify-center text-white font-bold",
             text,
           )}
         >
@@ -340,10 +356,12 @@ const ApplicationWizard = () => {
   const fillTestData = () => {
     formik.setValues({
       first_name: "Jane",
+      middle_name: "",
       last_name: "Doe",
       email: "test.client@example.com",
       phone: "(555) 123-4567",
       address_street: "789 Elm Street",
+      address_unit: "",
       address_city: "Los Angeles",
       address_state: "CA",
       address_zip: "90001",
@@ -353,6 +371,7 @@ const ApplicationWizard = () => {
       down_payment: "110000",
       property_type: "single_family",
       property_address: "123 Oak Avenue",
+      property_unit: "",
       property_city: "San Francisco",
       property_state: "CA",
       property_zip: "94102",
@@ -363,6 +382,9 @@ const ApplicationWizard = () => {
       employment_status: "employed",
       employer_name: "Acme Corp",
       years_employed: "5",
+      marital_status: "single",
+      dependent_count: "0",
+      years_at_address: "3",
     });
     toast({
       title: "Test data filled",
@@ -379,10 +401,12 @@ const ApplicationWizard = () => {
       const result = await dispatch(
         submitPublicApplication({
           first_name: values.first_name,
+          middle_name: values.middle_name || undefined,
           last_name: values.last_name,
           email: values.email,
           phone: values.phone,
           address_street: values.address_street,
+          address_unit: values.address_unit || undefined,
           address_city: values.address_city,
           address_state: values.address_state,
           address_zip: values.address_zip,
@@ -392,6 +416,7 @@ const ApplicationWizard = () => {
           down_payment: values.down_payment,
           property_type: values.property_type,
           property_address: values.property_address,
+          property_unit: values.property_unit || undefined,
           property_city: values.property_city,
           property_state: values.property_state,
           property_zip: values.property_zip,
@@ -402,6 +427,15 @@ const ApplicationWizard = () => {
           employment_status: values.employment_status,
           employer_name: values.employer_name,
           years_employed: values.years_employed,
+          marital_status: values.marital_status || undefined,
+          dependent_count:
+            values.dependent_count !== ""
+              ? Number(values.dependent_count)
+              : undefined,
+          years_at_address:
+            values.years_at_address !== ""
+              ? Number(values.years_at_address)
+              : undefined,
           // Pass broker_token so this application is tracked to the broker
           broker_token: brokerToken || undefined,
         }),
@@ -501,7 +535,7 @@ const ApplicationWizard = () => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4 }}
-              className="w-full max-w-lg"
+              className="w-full max-w-md"
             >
               {(() => {
                 const isHomeTeam =
@@ -509,15 +543,14 @@ const ApplicationWizard = () => {
 
                 return (
                   <>
-                    <div className="bg-white/95 rounded-[28px] border border-[#d9e4ef] shadow-[0_18px_40px_-24px_rgba(10,47,82,0.45)] overflow-hidden backdrop-blur">
-                      <div className="h-1.5 bg-gradient-to-r from-[#0A2F52] via-[#1B4F7A] to-[#F9A826]" />
-                      <div className="px-8 py-9 sm:px-10">
+                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                      <div className="h-1 bg-primary" />
+                      <div className="p-9">
                         {isHomeTeam ? (
                           /* ── My Home Team Layout ── */
                           <>
                             {/* Overlapping avatars */}
-                            <div className="relative flex justify-center mb-7">
-                              <div className="absolute -top-3 h-24 w-56 rounded-full bg-gradient-to-r from-[#eaf2fa] via-[#fff8eb] to-[#eaf2fa] blur-sm" />
+                            <div className="flex justify-center mb-5">
                               <div className="flex items-center">
                                 <div className="relative z-10">
                                   <AvatarCircle
@@ -527,7 +560,7 @@ const ApplicationWizard = () => {
                                     }
                                   />
                                 </div>
-                                <div className="-ml-4 relative z-0">
+                                <div className="-ml-7 relative z-0">
                                   <AvatarCircle
                                     person={brokerInfo.mortgage_banker!}
                                     onClick={() =>
@@ -542,10 +575,10 @@ const ApplicationWizard = () => {
 
                             {/* Title */}
                             <div className="text-center mb-5">
-                              <h1 className="text-[2rem] leading-tight font-extrabold text-[#0A2F52] tracking-tight">
+                              <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">
                                 My Home Team
                               </h1>
-                              <p className="text-[13px] uppercase tracking-[0.08em] text-slate-500 mt-1.5">
+                              <p className="text-sm text-gray-400 mt-1">
                                 Your dedicated home loan professionals
                               </p>
                             </div>
@@ -557,7 +590,7 @@ const ApplicationWizard = () => {
                                 onClick={() =>
                                   setContactModalPerson(brokerInfo)
                                 }
-                                className="text-base font-semibold text-[#0A2F52] hover:text-[#1B4F7A] hover:underline underline-offset-2 transition-colors"
+                                className="text-base font-semibold text-primary hover:underline underline-offset-2 transition-colors"
                               >
                                 {brokerInfo.first_name} {brokerInfo.last_name}
                               </button>
@@ -571,14 +604,14 @@ const ApplicationWizard = () => {
                                     brokerInfo.mortgage_banker,
                                   )
                                 }
-                                className="text-base font-semibold text-[#0A2F52] hover:text-[#1B4F7A] hover:underline underline-offset-2 transition-colors"
+                                className="text-base font-semibold text-primary hover:underline underline-offset-2 transition-colors"
                               >
                                 {brokerInfo.mortgage_banker!.first_name}{" "}
                                 {brokerInfo.mortgage_banker!.last_name}
                               </button>
                             </div>
 
-                            <Separator className="mb-6 bg-[#d9e4ef]" />
+                            <Separator className="mb-5" />
                           </>
                         ) : (
                           /* ── Single Mortgage Banker Layout ── */
@@ -646,22 +679,22 @@ const ApplicationWizard = () => {
                               </p>
                             )}
 
-                            <Separator className="mb-6 bg-[#d9e4ef]" />
+                            <Separator className="mb-5" />
                           </>
                         )}
 
                         {/* Email form — shared by both layouts */}
-                        <div className="space-y-1.5">
-                          <h2 className="text-[1.75rem] leading-tight font-extrabold text-[#0A2F52] mb-0.5">
+                        <div className="space-y-1">
+                          <h2 className="text-lg font-bold text-gray-900 mb-0.5">
                             Ready to get started?
                           </h2>
-                          <p className="text-sm text-slate-600 mb-3">
+                          <p className="text-sm text-gray-500 mb-3">
                             Enter your email to begin your mortgage application.
                           </p>
                           <div className="space-y-1.5">
                             <label
                               htmlFor="guest-email"
-                              className="text-sm font-semibold text-slate-700"
+                              className="text-sm font-semibold text-gray-700"
                             >
                               Your Email Address
                             </label>
@@ -680,7 +713,7 @@ const ApplicationWizard = () => {
                                   e.key === "Enter" && handleStep0Continue()
                                 }
                                 className={cn(
-                                  "pl-10 h-11 text-sm rounded-xl border-slate-300 focus-visible:ring-[#0A2F52]",
+                                  "pl-10 h-11 text-sm",
                                   guestEmailError
                                     ? "border-red-400 focus-visible:ring-red-400"
                                     : "",
@@ -695,7 +728,7 @@ const ApplicationWizard = () => {
                             )}
                             <Button
                               onClick={handleStep0Continue}
-                              className="w-full h-11 mt-2 text-sm shadow-md bg-[#0A2F52] hover:bg-[#123f69] text-white rounded-xl"
+                              className="w-full h-11 mt-2 text-sm shadow-sm"
                             >
                               Start Application{" "}
                               <ArrowRight className="ml-2 h-4 w-4" />
@@ -706,7 +739,7 @@ const ApplicationWizard = () => {
                     </div>
 
                     {/* Trust badges */}
-                    <div className="flex justify-center gap-3 sm:gap-4 mt-5">
+                    <div className="flex justify-center gap-6 mt-5">
                       {[
                         {
                           icon: <LockIcon className="h-3.5 w-3.5" />,
@@ -723,7 +756,7 @@ const ApplicationWizard = () => {
                       ].map((b) => (
                         <div
                           key={b.label}
-                          className="flex flex-col items-center gap-1 text-slate-500 bg-white/70 border border-[#d9e4ef] rounded-full px-3 py-2 min-w-[92px]"
+                          className="flex flex-col items-center gap-1 text-gray-400"
                         >
                           {b.icon}
                           <span className="text-[10px]">{b.label}</span>
@@ -1380,6 +1413,20 @@ const ApplicationWizard = () => {
                             />
                           </div>
                           <div className="space-y-1.5">
+                            <Label htmlFor="middle_name">
+                              Middle Name{" "}
+                              <span className="text-muted-foreground text-xs">
+                                (optional)
+                              </span>
+                            </Label>
+                            <Input
+                              id="middle_name"
+                              placeholder="Elizabeth"
+                              className="h-12 rounded-xl"
+                              {...formik.getFieldProps("middle_name")}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
                             <Label htmlFor="email">Email Address *</Label>
                             <Input
                               id="email"
@@ -1419,7 +1466,7 @@ const ApplicationWizard = () => {
                             </Label>
                             <Input
                               id="address_street"
-                              placeholder="123 Main St, Apt 4B"
+                              placeholder="123 Main St"
                               className="h-12 rounded-xl"
                               {...formik.getFieldProps("address_street")}
                             />
@@ -1429,6 +1476,20 @@ const ApplicationWizard = () => {
                                   ? formik.errors.address_street
                                   : undefined
                               }
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label htmlFor="address_unit">
+                              Apt / Unit{" "}
+                              <span className="text-muted-foreground text-xs">
+                                (optional)
+                              </span>
+                            </Label>
+                            <Input
+                              id="address_unit"
+                              placeholder="Apt 4B"
+                              className="h-12 rounded-xl"
+                              {...formik.getFieldProps("address_unit")}
                             />
                           </div>
                           <div className="space-y-1.5">
@@ -1639,6 +1700,20 @@ const ApplicationWizard = () => {
                                   ? formik.errors.property_address
                                   : undefined
                               }
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label htmlFor="property_unit">
+                              Unit / Apt{" "}
+                              <span className="text-muted-foreground text-xs">
+                                (optional)
+                              </span>
+                            </Label>
+                            <Input
+                              id="property_unit"
+                              placeholder="Unit A"
+                              className="h-12 rounded-xl"
+                              {...formik.getFieldProps("property_unit")}
                             />
                           </div>
                           <div className="space-y-1.5">
@@ -1950,6 +2025,95 @@ const ApplicationWizard = () => {
                                 </p>
                               </div>
                             )}
+
+                          {/* Marital Status */}
+                          <div className="space-y-3 md:col-span-2">
+                            <Label>Marital Status *</Label>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                              {[
+                                { v: "single", label: "Single" },
+                                { v: "married", label: "Married" },
+                                { v: "separated", label: "Separated" },
+                                { v: "divorced", label: "Divorced" },
+                              ].map(({ v, label }) => (
+                                <button
+                                  key={v}
+                                  type="button"
+                                  onClick={() =>
+                                    formik.setFieldValue("marital_status", v)
+                                  }
+                                  className={cn(
+                                    "h-12 rounded-xl border-2 text-sm font-semibold transition-all",
+                                    formik.values.marital_status === v
+                                      ? "border-primary bg-primary/5 text-primary"
+                                      : "border-muted hover:border-primary/40",
+                                  )}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                            <FieldError
+                              msg={
+                                formik.touched.marital_status
+                                  ? formik.errors.marital_status
+                                  : undefined
+                              }
+                            />
+                          </div>
+
+                          {/* Dependents + Years at Address */}
+                          <div className="space-y-1.5">
+                            <Label htmlFor="dependent_count">
+                              Number of Dependents{" "}
+                              <span className="text-muted-foreground text-xs">
+                                (optional)
+                              </span>
+                            </Label>
+                            <Input
+                              id="dependent_count"
+                              type="number"
+                              min="0"
+                              placeholder="0"
+                              className="h-12 rounded-xl"
+                              {...formik.getFieldProps("dependent_count")}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Children or other dependents you financially
+                              support
+                            </p>
+                            <FieldError
+                              msg={
+                                formik.touched.dependent_count
+                                  ? (formik.errors.dependent_count as string)
+                                  : undefined
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label htmlFor="years_at_address">
+                              Years at Current Address{" "}
+                              <span className="text-muted-foreground text-xs">
+                                (optional)
+                              </span>
+                            </Label>
+                            <Input
+                              id="years_at_address"
+                              type="number"
+                              min="0"
+                              step="0.5"
+                              placeholder="2"
+                              className="h-12 rounded-xl"
+                              {...formik.getFieldProps("years_at_address")}
+                            />
+                            <FieldError
+                              msg={
+                                formik.touched.years_at_address
+                                  ? (formik.errors.years_at_address as string)
+                                  : undefined
+                              }
+                            />
+                          </div>
                         </div>
                       )}
 
@@ -2119,10 +2283,10 @@ const ApplicationWizard = () => {
                           <div className="flex items-start gap-3 rounded-xl bg-primary/5 border border-primary/10 p-4 text-sm text-muted-foreground">
                             <FileText className="h-4 w-4 mt-0.5 text-primary shrink-0" />
                             <p>
-                              By submitting, you authorize The Mortgage
-                              Professionals to obtain your credit report and
-                              verify the information provided. A loan officer
-                              will contact you within 1–2 business days.
+                              By submitting, you authorize The Mortgage Professionals to
+                              obtain your credit report and verify the
+                              information provided. A loan officer will contact
+                              you within 1–2 business days.
                             </p>
                           </div>
                         </div>

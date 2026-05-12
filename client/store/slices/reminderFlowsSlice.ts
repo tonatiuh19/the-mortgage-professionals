@@ -4,8 +4,10 @@ import type { RootState } from "../index";
 import type {
   ReminderFlow,
   ReminderFlowExecution,
+  ReminderFlowStepLog,
   GetReminderFlowsResponse,
   GetReminderFlowResponse,
+  GetReminderFlowTraceResponse,
   SaveReminderFlowRequest,
   SaveReminderFlowResponse,
   ToggleReminderFlowResponse,
@@ -20,6 +22,9 @@ interface ReminderFlowsState {
   selectedFlow: ReminderFlow | null;
   executions: ReminderFlowExecution[];
   pagination: PaginationInfo | null;
+  /** Trace logs for the most recently inspected flow. Empty unless trace logging is enabled on that flow. */
+  traceLogs: ReminderFlowStepLog[];
+  isLoadingTrace: boolean;
   isLoading: boolean;
   isLoadingFlow: boolean;
   isSaving: boolean;
@@ -31,6 +36,8 @@ const initialState: ReminderFlowsState = {
   selectedFlow: null,
   executions: [],
   pagination: null,
+  traceLogs: [],
+  isLoadingTrace: false,
   isLoading: false,
   isLoadingFlow: false,
   isSaving: false,
@@ -221,6 +228,38 @@ export const markFlowExecutionResponded = createAsyncThunk(
   },
 );
 
+/**
+ * Fetch per-step trace logs for a specific flow. Backend filters by the
+ * caller's brokerId (flow visibility), so this will 404 if the flow is
+ * restricted to another broker.
+ */
+export const fetchReminderFlowTrace = createAsyncThunk(
+  "reminderFlows/fetchTrace",
+  async (
+    args: { flowId: number; executionId?: number; limit?: number },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const params: Record<string, any> = {};
+      if (args.executionId) params.execution_id = args.executionId;
+      if (args.limit) params.limit = args.limit;
+      const { data } = await axios.get<GetReminderFlowTraceResponse>(
+        `/api/reminder-flows/${args.flowId}/trace`,
+        {
+          headers: { Authorization: `Bearer ${sessionToken}` },
+          params,
+        },
+      );
+      return data.logs;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to fetch trace logs",
+      );
+    }
+  },
+);
+
 // ---------------------------------------------------------------
 // Slice
 // ---------------------------------------------------------------
@@ -333,6 +372,21 @@ const reminderFlowsSlice = createSlice({
         exec.responded_at = new Date().toISOString();
       }
     });
+
+    // Fetch trace logs
+    builder
+      .addCase(fetchReminderFlowTrace.pending, (state) => {
+        state.isLoadingTrace = true;
+        state.error = null;
+      })
+      .addCase(fetchReminderFlowTrace.fulfilled, (state, action) => {
+        state.isLoadingTrace = false;
+        state.traceLogs = action.payload;
+      })
+      .addCase(fetchReminderFlowTrace.rejected, (state, action) => {
+        state.isLoadingTrace = false;
+        state.error = action.payload as string;
+      });
   },
 });
 

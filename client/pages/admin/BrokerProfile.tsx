@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { useFormik } from "formik";
 import * as Yup from "yup";
 import {
@@ -20,6 +21,10 @@ import {
   Smartphone,
   Zap,
   Globe,
+  RefreshCw,
+  Plus,
+  Voicemail,
+  Volume2,
 } from "lucide-react";
 import { MetaHelmet } from "@/components/MetaHelmet";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -47,6 +52,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import type { ConversationMailbox } from "@shared/api";
+
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   fetchBrokerProfile,
@@ -54,6 +61,20 @@ import {
   uploadBrokerAvatar,
   clearProfileError,
 } from "@/store/slices/brokerAuthSlice";
+import {
+  connectOffice365Mailbox,
+  disconnectConversationMailbox,
+  fetchConversationMailboxes,
+  syncConversationMailbox,
+} from "@/store/slices/conversationsSlice";
+import {
+  fetchCallForwardingSettings,
+  saveCallForwardingSettings,
+  fetchVoicemailSettings,
+  saveVoicemailSettings,
+  saveTenantVoicemailSettings,
+  type VoicemailSettingsResponse,
+} from "@/store/slices/voiceSlice";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -138,6 +159,36 @@ const profileSchema = Yup.object({
 const BrokerProfile = () => {
   const dispatch = useAppDispatch();
   const { toast } = useToast();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+
+  // Handle Office365 OAuth callback redirect
+  useEffect(() => {
+    const result = searchParams.get("office365");
+    if (!result) return;
+    if (result === "connected") {
+      toast({
+        title: "Email Inbox connected",
+        description: "Your Office 365 mailbox is now active.",
+      });
+      dispatch(fetchConversationMailboxes());
+    } else if (result === "error") {
+      const reason = searchParams.get("reason") || "unknown_error";
+      const expected = searchParams.get("expected");
+      const got = searchParams.get("got");
+      const description =
+        reason === "account_mismatch" && expected && got
+          ? `Wrong Microsoft account signed in. Expected ${expected} but got ${got}. Please sign in with the correct account.`
+          : `Could not connect the Office 365 mailbox: ${reason.replace(/_/g, " ")}.`;
+      toast({
+        title: "Connection failed",
+        description,
+        variant: "destructive",
+      });
+    }
+    navigate("/admin/profile", { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const { user, profileLoading, profileSaving, avatarUploading, profileError } =
     useAppSelector((state) => state.brokerAuth);
   const { sessionToken } = useAppSelector((s) => s.brokerAuth);
@@ -148,17 +199,118 @@ const BrokerProfile = () => {
   const [fwdLoading, setFwdLoading] = useState(false);
   const [fwdSaving, setFwdSaving] = useState(false);
 
+  // ── Voicemail settings ─────────────────────────────────────────────
+  const [vmLoading, setVmLoading] = useState(false);
+  const [vmSaving, setVmSaving] = useState(false);
+  const [vmData, setVmData] = useState<VoicemailSettingsResponse | null>(null);
+  // null = "inherit tenant default"
+  const [vmEnabled, setVmEnabled] = useState<boolean | null>(null);
+  const [vmGreetingText, setVmGreetingText] = useState("");
+  const [vmGreetingUrl, setVmGreetingUrl] = useState("");
+  // tenant-level (admin only)
+  const [tenantVmEnabled, setTenantVmEnabled] = useState(true);
+  const [tenantVmGreetingText, setTenantVmGreetingText] = useState("");
+  const [tenantVmGreetingUrl, setTenantVmGreetingUrl] = useState("");
+  const [tenantVmMaxSeconds, setTenantVmMaxSeconds] = useState(120);
+  const [tenantVmTranscribe, setTenantVmTranscribe] = useState(true);
+
+  // ── Email mailbox state ──────────────────────────────────────────────────
+  const myMailbox = useAppSelector((s) =>
+    (s.conversations.mailboxes as ConversationMailbox[]).find(
+      (m) =>
+        m.assigned_broker_id === user?.id ||
+        (m.is_shared && m.status === "active"),
+    ),
+  );
+  const myOwnMailbox = useAppSelector((s) =>
+    (s.conversations.mailboxes as ConversationMailbox[]).find(
+      (m) => m.assigned_broker_id === user?.id,
+    ),
+  );
+  const isLoadingMailboxes = useAppSelector(
+    (s) => s.conversations.isLoadingMailboxes,
+  );
+  const isConnectingMailbox = useAppSelector(
+    (s) => s.conversations.isConnectingMailbox,
+  );
+  const [mailboxEmailInput, setMailboxEmailInput] = useState("");
+  const [isSyncingMyMailbox, setIsSyncingMyMailbox] = useState(false);
+
+  useEffect(() => {
+    dispatch(fetchConversationMailboxes());
+  }, [dispatch]);
+
+  const handleConnectMyMailbox = async (emailOverride?: string) => {
+    const email = (emailOverride ?? mailboxEmailInput).trim();
+    if (!email.includes("@")) return;
+
+    try {
+      const result = await dispatch(
+        connectOffice365Mailbox({
+          mailbox_email: email,
+          is_shared: false,
+          return_path: "/admin/profile",
+        }),
+      ).unwrap();
+      if (result.auth_url) window.location.href = result.auth_url;
+    } catch (err: any) {
+      toast({
+        title: "Connection failed",
+        description: err || "Could not start Office365 authentication",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
+
+  const handleDisconnectMyMailbox = async (mailboxId: number) => {
+    setIsDisconnecting(true);
+    try {
+      await dispatch(disconnectConversationMailbox(mailboxId)).unwrap();
+      toast({
+        title: "Mailbox disconnected",
+        description: "You can connect a new account at any time.",
+      });
+    } catch (err: any) {
+      toast({
+        title: "Disconnect failed",
+        description: err || "Could not disconnect the mailbox",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDisconnecting(false);
+    }
+  };
+
+  const handleSyncMyMailbox = async (mailboxId: number) => {
+    setIsSyncingMyMailbox(true);
+    try {
+      const result = await dispatch(
+        syncConversationMailbox(mailboxId),
+      ).unwrap();
+      toast({
+        title: "Sync complete",
+        description: `Processed ${result.processed} new message(s).`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Sync failed",
+        description: err || "Could not sync mailbox",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSyncingMyMailbox(false);
+    }
+  };
+
   const loadFwdSettings = async () => {
-    if (!sessionToken) return;
     setFwdLoading(true);
     try {
-      const res = await fetch("/api/voice/call-forwarding", {
-        headers: { Authorization: `Bearer ${sessionToken}` },
-      });
-      const data = await res.json();
+      const data = await dispatch(fetchCallForwardingSettings()).unwrap();
       if (data.success) {
         setFwdEnabled(!!data.call_forwarding_enabled);
-        setFwdPhone(data.call_forwarding_phone ?? "");
+        setFwdPhone(data.call_forwarding_number ?? "");
       }
     } catch {
       // graceful degradation
@@ -172,19 +324,86 @@ const BrokerProfile = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionToken]);
 
+  // ── Voicemail loaders / savers ────────────────────────────────────────
+  const loadVmSettings = async () => {
+    setVmLoading(true);
+    try {
+      const data = await dispatch(fetchVoicemailSettings()).unwrap();
+      if (data?.success) {
+        setVmData(data);
+        setVmEnabled(data.broker.voicemail_enabled);
+        setVmGreetingText(data.broker.voicemail_greeting_text ?? "");
+        setVmGreetingUrl(data.broker.voicemail_greeting_url ?? "");
+        setTenantVmEnabled(!!data.tenant.voicemail_enabled);
+        setTenantVmGreetingText(data.tenant.voicemail_greeting_text ?? "");
+        setTenantVmGreetingUrl(data.tenant.voicemail_greeting_url ?? "");
+        setTenantVmMaxSeconds(data.tenant.voicemail_max_seconds || 120);
+        setTenantVmTranscribe(!!data.tenant.voicemail_transcribe);
+      }
+    } catch {
+      // graceful degradation
+    } finally {
+      setVmLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadVmSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionToken]);
+
+  const saveVoicemail = async () => {
+    setVmSaving(true);
+    try {
+      // Save broker-level overrides
+      await dispatch(
+        saveVoicemailSettings({
+          enabled: vmEnabled,
+          greeting_text: vmGreetingText.trim() ? vmGreetingText.trim() : null,
+          greeting_url: vmGreetingUrl.trim() ? vmGreetingUrl.trim() : null,
+        }),
+      ).unwrap();
+
+      // Save tenant-level defaults if user is admin
+      if (user?.role === "admin") {
+        await dispatch(
+          saveTenantVoicemailSettings({
+            enabled: tenantVmEnabled,
+            greeting_text: tenantVmGreetingText.trim()
+              ? tenantVmGreetingText.trim()
+              : null,
+            greeting_url: tenantVmGreetingUrl.trim()
+              ? tenantVmGreetingUrl.trim()
+              : null,
+            max_seconds: tenantVmMaxSeconds,
+            transcribe: tenantVmTranscribe,
+          }),
+        ).unwrap();
+      }
+
+      toast({
+        title: "Voicemail saved",
+        description: "Your voicemail settings have been updated.",
+      });
+      // Refresh to show resolved state
+      loadVmSettings();
+    } catch (e: any) {
+      toast({
+        title: "Save failed",
+        description: e?.message || "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setVmSaving(false);
+    }
+  };
+
   const saveForwarding = async () => {
-    if (!sessionToken) return;
     setFwdSaving(true);
     try {
-      const res = await fetch("/api/voice/call-forwarding", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify({ enabled: fwdEnabled, phone: fwdPhone }),
-      });
-      const data = await res.json();
+      const data = await dispatch(
+        saveCallForwardingSettings({ enabled: fwdEnabled, phone: fwdPhone }),
+      ).unwrap();
       if (data.success) {
         setFwdPhone(data.call_forwarding_phone ?? fwdPhone);
         toast({
@@ -908,6 +1127,376 @@ const BrokerProfile = () => {
                   </>
                 )}
               </CardContent>
+            </Card>
+
+            {/* Voicemail Greeting — only visible when banker has a personal Twilio number */}
+            {vmLoading ? null : vmData?.broker.has_personal_line ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Voicemail className="h-4 w-4 text-primary" />
+                    Voicemail
+                  </CardTitle>
+                  <CardDescription>
+                    When no one picks up, callers hear a greeting and can leave
+                    a message. Recordings (and transcriptions) appear in your
+                    conversations inbox.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">
+                          Personal Line Voicemail
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Callers who dial your dedicated number hear this
+                          greeting if you don't pick up.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          {vmEnabled === false ? "Disabled" : "Enabled"}
+                        </span>
+                        <Switch
+                          checked={vmEnabled !== false}
+                          onCheckedChange={(v) =>
+                            setVmEnabled(v ? true : false)
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-xs">
+                        Greeting (text-to-speech)
+                      </Label>
+                      <Textarea
+                        rows={3}
+                        placeholder={
+                          vmData?.tenant.voicemail_greeting_text ||
+                          "Hi, you've reached [your name]. Please leave a message after the tone…"
+                        }
+                        value={vmGreetingText}
+                        onChange={(e) => setVmGreetingText(e.target.value)}
+                        maxLength={1000}
+                        className="text-sm"
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        Leave blank to inherit the team default. Max 1000
+                        characters. Spoken in a natural female voice
+                        (Polly.Joanna).
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-xs flex items-center gap-1.5">
+                        <Volume2 className="h-3.5 w-3.5" />
+                        Pre-recorded Greeting (optional)
+                      </Label>
+                      <Input
+                        type="url"
+                        placeholder="https://… .mp3 or .wav"
+                        value={vmGreetingUrl}
+                        onChange={(e) => setVmGreetingUrl(e.target.value)}
+                        className="text-sm"
+                      />
+                      {vmGreetingUrl ? (
+                        <audio
+                          controls
+                          preload="none"
+                          src={vmGreetingUrl}
+                          className="w-full h-8 mt-1"
+                        />
+                      ) : null}
+                      <p className="text-[11px] text-muted-foreground">
+                        If set, this audio plays instead of the text-to-speech
+                        greeting.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVmEnabled(null);
+                        setVmGreetingText("");
+                        setVmGreetingUrl("");
+                      }}
+                      className="text-[11px] text-primary hover:underline"
+                    >
+                      Reset to team default
+                    </button>
+                  </div>
+
+                  {/* Tenant-level (admin only) */}
+                  {user?.role === "admin" ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-4 space-y-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-amber-900">
+                            Team Voicemail (Default)
+                          </p>
+                          <p className="text-xs text-amber-700/80">
+                            Fallback greeting for any banker who hasn't
+                            customized their own. Admin-only.
+                          </p>
+                        </div>
+                        <Switch
+                          checked={tenantVmEnabled}
+                          onCheckedChange={setTenantVmEnabled}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label className="text-xs">
+                          Default greeting (text-to-speech)
+                        </Label>
+                        <Textarea
+                          rows={3}
+                          value={tenantVmGreetingText}
+                          onChange={(e) =>
+                            setTenantVmGreetingText(e.target.value)
+                          }
+                          maxLength={1000}
+                          placeholder="Hello, you've reached [Company Name]. We can't take your call right now — please leave your name, number, and a brief message after the tone."
+                          className="text-sm"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label className="text-xs flex items-center gap-1.5">
+                          <Volume2 className="h-3.5 w-3.5" />
+                          Default pre-recorded greeting URL
+                        </Label>
+                        <Input
+                          type="url"
+                          placeholder="https://… .mp3"
+                          value={tenantVmGreetingUrl}
+                          onChange={(e) =>
+                            setTenantVmGreetingUrl(e.target.value)
+                          }
+                          className="text-sm"
+                        />
+                        {tenantVmGreetingUrl ? (
+                          <audio
+                            controls
+                            preload="none"
+                            src={tenantVmGreetingUrl}
+                            className="w-full h-8 mt-1"
+                          />
+                        ) : null}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <Label className="text-xs">
+                            Max length (seconds)
+                          </Label>
+                          <Input
+                            type="number"
+                            min={10}
+                            max={600}
+                            value={tenantVmMaxSeconds}
+                            onChange={(e) =>
+                              setTenantVmMaxSeconds(
+                                parseInt(e.target.value, 10) || 120,
+                              )
+                            }
+                            className="text-sm"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs">Auto-transcribe</Label>
+                          <div className="flex items-center gap-2 h-9">
+                            <Switch
+                              checked={tenantVmTranscribe}
+                              onCheckedChange={setTenantVmTranscribe}
+                            />
+                            <span className="text-xs text-muted-foreground">
+                              {tenantVmTranscribe ? "Yes" : "No"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="gap-2"
+                      onClick={saveVoicemail}
+                      disabled={vmSaving}
+                    >
+                      {vmSaving ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Saving…
+                        </>
+                      ) : (
+                        <>
+                          <Save className="h-3.5 w-3.5" />
+                          Save Voicemail Settings
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            {/* Email Mailbox */}
+            <Card className={!user?.office365_enabled ? "opacity-60" : ""}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Mail className="h-4 w-4 text-primary" />
+                  Email Inbox
+                  {!user?.office365_enabled && (
+                    <span className="ml-auto text-[10px] font-normal bg-muted text-muted-foreground rounded px-2 py-0.5 tracking-wide uppercase">
+                      Not configured
+                    </span>
+                  )}
+                </CardTitle>
+                <CardDescription>
+                  {user?.office365_enabled
+                    ? "Connect your Office 365 mailbox so emails you send and receive in Conversations route through your personal address."
+                    : "Office 365 integration is not yet configured for this platform. Contact your administrator to set up the Azure app credentials."}
+                </CardDescription>
+              </CardHeader>
+              {user?.office365_enabled && (
+                <CardContent className="space-y-4">
+                  {isLoadingMailboxes ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading…
+                    </div>
+                  ) : myOwnMailbox ? (
+                    /* Connected — show status + sync */
+                    <div className="flex items-center gap-3 rounded-lg border border-border px-4 py-3">
+                      <div
+                        className={cn(
+                          "h-2.5 w-2.5 rounded-full shrink-0",
+                          myOwnMailbox.status === "active"
+                            ? "bg-green-500"
+                            : myOwnMailbox.status === "error"
+                              ? "bg-red-500"
+                              : "bg-yellow-400",
+                        )}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {myOwnMailbox.mailbox_email}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {myOwnMailbox.status === "active"
+                            ? myOwnMailbox.last_sync_at
+                              ? `Last synced ${new Date(myOwnMailbox.last_sync_at).toLocaleString()}`
+                              : "Connected — not yet synced"
+                            : myOwnMailbox.status === "error"
+                              ? myOwnMailbox.last_sync_error || "Sync error"
+                              : myOwnMailbox.status === "disabled"
+                                ? "Disconnected — click Connect to re-link"
+                                : "Pending authorization"}
+                        </p>
+                      </div>
+                      {myOwnMailbox.status === "active" && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 gap-1.5 text-xs shrink-0"
+                          onClick={() => handleSyncMyMailbox(myOwnMailbox.id)}
+                          disabled={isSyncingMyMailbox}
+                        >
+                          <RefreshCw
+                            className={cn(
+                              "h-3.5 w-3.5",
+                              isSyncingMyMailbox && "animate-spin",
+                            )}
+                          />
+                          Sync now
+                        </Button>
+                      )}
+                      {(myOwnMailbox.status === "pending" ||
+                        myOwnMailbox.status === "disabled" ||
+                        myOwnMailbox.status === "error") && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs shrink-0"
+                          onClick={() =>
+                            handleConnectMyMailbox(myOwnMailbox.mailbox_email)
+                          }
+                          disabled={isConnectingMailbox}
+                        >
+                          {myOwnMailbox.status === "disabled"
+                            ? "Connect"
+                            : "Re-authorize"}
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-xs shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={() =>
+                          handleDisconnectMyMailbox(myOwnMailbox.id)
+                        }
+                        disabled={isDisconnecting}
+                      >
+                        {isDisconnecting ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          "Disconnect"
+                        )}
+                      </Button>
+                    </div>
+                  ) : (
+                    /* Not connected — show connect form */
+                    <div className="space-y-3">
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            type="email"
+                            placeholder="yourname@themortgageprofessionals.net"
+                            value={mailboxEmailInput}
+                            onChange={(e) =>
+                              setMailboxEmailInput(e.target.value)
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleConnectMyMailbox();
+                            }}
+                            className="pl-9 h-9 text-sm"
+                          />
+                        </div>
+                        <Button
+                          size="sm"
+                          className="h-9 gap-1.5 shrink-0"
+                          onClick={() => handleConnectMyMailbox()}
+                          disabled={
+                            isConnectingMailbox ||
+                            !mailboxEmailInput.trim().includes("@")
+                          }
+                        >
+                          {isConnectingMailbox ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <>
+                              <Plus className="h-3.5 w-3.5" />
+                              Connect
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        You'll be redirected to Microsoft to authorize access.
+                        Make sure the address is a valid Office 365 account.
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              )}
             </Card>
 
             {/* Office Address */}

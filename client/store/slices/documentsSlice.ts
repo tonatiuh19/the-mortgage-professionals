@@ -59,13 +59,16 @@ interface FetchDocumentsParams {
 
 export const fetchAllDocuments = createAsyncThunk(
   "documents/fetchAll",
-  async (params: FetchDocumentsParams = {}, { getState, rejectWithValue }) => {
+  async (
+    params: FetchDocumentsParams | void,
+    { getState, rejectWithValue },
+  ) => {
     try {
       const state = getState() as RootState;
       const token = state.brokerAuth.sessionToken;
       const response = await axios.get("/api/documents", {
         headers: { Authorization: `Bearer ${token}` },
-        params,
+        params: params ?? {},
       });
       return {
         documents: response.data.documents,

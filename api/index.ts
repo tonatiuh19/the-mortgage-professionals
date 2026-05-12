@@ -1,8 +1,10 @@
 import "dotenv/config";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import express, { type RequestHandler } from "express";
+import { create } from "xmlbuilder2";
 import cors from "cors";
 import multer from "multer";
+import axios from "axios";
 import mysql, {
   type ResultSetHeader,
   type RowDataPacket,
@@ -11,8 +13,15 @@ import jwt from "jsonwebtoken";
 import { Resend } from "resend";
 import twilio from "twilio";
 import crypto from "crypto";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import path from "path";
 import { ImapFlow } from "imapflow";
 import Ably from "ably";
+import helmet from "helmet";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+
+const execFileAsync = promisify(execFile);
 
 // Validate critical environment variables
 if (
@@ -26,15 +35,13 @@ if (
   );
 }
 
-// JWT Secret with fallback (warn in production)
-const JWT_SECRET =
-  process.env.JWT_SECRET ||
-  (() => {
-    console.warn(
-      "⚠️  WARNING: Using default JWT_SECRET. Set JWT_SECRET in .env for production!",
-    );
-    return "default-jwt-secret-CHANGE-THIS-IN-PRODUCTION";
-  })();
+// JWT Secret — fail-fast if missing or weak. No insecure default in any env.
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  throw new Error(
+    "JWT_SECRET environment variable is required and must be at least 32 characters. Generate one with: openssl rand -hex 32",
+  );
+}
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Tenant Configuration
 const MORTGAGE_TENANT_ID = 2;
@@ -130,6 +137,485 @@ async function sendViaResend(options: {
   });
   if (error) throw new Error(error.message);
   return { messageId: data?.id };
+}
+
+type ConversationMailboxRow = RowDataPacket & {
+  id: number;
+  tenant_id: number;
+  provider: "office365" | "imap";
+  mailbox_email: string;
+  display_name: string | null;
+  is_shared: number;
+  assigned_broker_id: number | null;
+  status: "pending" | "active" | "disabled" | "error";
+  is_default: number;
+  office365_tenant_id: string | null;
+  office365_client_id: string | null;
+  oauth_access_token: string | null;
+  oauth_refresh_token: string | null;
+  oauth_expires_at: string | null;
+};
+
+const OFFICE365_SCOPES = [
+  "offline_access",
+  "Mail.Read",
+  "Mail.Send",
+  "User.Read",
+];
+
+const getOffice365OAuthConfig = () => {
+  const tenantId = process.env.OFFICE365_TENANT_ID;
+  const clientId = process.env.OFFICE365_CLIENT_ID;
+  const clientSecret = process.env.OFFICE365_CLIENT_SECRET;
+  const redirectUri =
+    process.env.OFFICE365_REDIRECT_URI ||
+    `${getBaseUrl()}/api/conversations/mailboxes/office365/callback`;
+  return { tenantId, clientId, clientSecret, redirectUri };
+};
+
+const signOffice365State = (payload: string) =>
+  crypto.createHmac("sha256", JWT_SECRET).update(payload).digest("hex");
+
+function createOffice365State(
+  brokerId: number,
+  mailboxId: number,
+  returnPath?: string,
+): string {
+  const ts = Date.now();
+  const nonce = crypto.randomBytes(8).toString("hex");
+  const returnPathB64 = returnPath
+    ? Buffer.from(returnPath).toString("base64url")
+    : "";
+  const payload = `${brokerId}.${mailboxId}.${ts}.${nonce}.${returnPathB64}`;
+  const sig = signOffice365State(payload);
+  return `${payload}.${sig}`;
+}
+
+function verifyOffice365State(stateRaw: string): {
+  valid: boolean;
+  brokerId?: number;
+  mailboxId?: number;
+  returnPath?: string;
+} {
+  const parts = stateRaw.split(".");
+  // Support old format (5 parts) and new format with returnPath (6 parts)
+  if (parts.length !== 5 && parts.length !== 6) return { valid: false };
+
+  let brokerIdRaw: string,
+    mailboxIdRaw: string,
+    tsRaw: string,
+    nonce: string,
+    returnPathB64: string,
+    sig: string;
+
+  if (parts.length === 6) {
+    [brokerIdRaw, mailboxIdRaw, tsRaw, nonce, returnPathB64, sig] = parts;
+  } else {
+    [brokerIdRaw, mailboxIdRaw, tsRaw, nonce, sig] = parts;
+    returnPathB64 = "";
+  }
+
+  const payload = `${brokerIdRaw}.${mailboxIdRaw}.${tsRaw}.${nonce}.${returnPathB64}`;
+  const expected = signOffice365State(payload);
+  if (sig !== expected) return { valid: false };
+
+  const ts = Number(tsRaw);
+  if (!Number.isFinite(ts)) return { valid: false };
+  // 15-minute state validity
+  if (Date.now() - ts > 15 * 60 * 1000) return { valid: false };
+
+  const brokerId = Number(brokerIdRaw);
+  const mailboxId = Number(mailboxIdRaw);
+  if (!Number.isFinite(brokerId) || !Number.isFinite(mailboxId)) {
+    return { valid: false };
+  }
+
+  const returnPath = returnPathB64
+    ? Buffer.from(returnPathB64, "base64url").toString("utf8")
+    : undefined;
+
+  return { valid: true, brokerId, mailboxId, returnPath };
+}
+
+const stripHtmlForStorage = (html: string) =>
+  html
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+async function refreshOffice365Token(mailbox: ConversationMailboxRow) {
+  const { tenantId, clientId, clientSecret, redirectUri } =
+    getOffice365OAuthConfig();
+  const refreshToken = mailbox.oauth_refresh_token;
+  if (!tenantId || !clientId || !clientSecret || !refreshToken) {
+    throw new Error("Office365 OAuth config is incomplete");
+  }
+
+  const tokenUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/token`;
+  const params = new URLSearchParams();
+  params.set("grant_type", "refresh_token");
+  params.set("client_id", clientId);
+  params.set("client_secret", clientSecret);
+  params.set("refresh_token", refreshToken);
+  params.set("scope", OFFICE365_SCOPES.join(" "));
+  params.set("redirect_uri", redirectUri);
+
+  const { data } = await axios.post(tokenUrl, params.toString(), {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  });
+
+  const expiresIn = Number(data.expires_in || 3600);
+  const expiresAt = new Date(Date.now() + Math.max(300, expiresIn - 120) * 1000)
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
+
+  await pool.query(
+    `UPDATE conversation_email_mailboxes
+     SET oauth_access_token = ?,
+         oauth_refresh_token = ?,
+         oauth_expires_at = ?,
+         status = 'active',
+         updated_at = NOW()
+     WHERE id = ? AND tenant_id = ?`,
+    [
+      String(data.access_token || ""),
+      String(data.refresh_token || refreshToken),
+      expiresAt,
+      mailbox.id,
+      MORTGAGE_TENANT_ID,
+    ],
+  );
+
+  return String(data.access_token || "");
+}
+
+async function getOffice365AccessToken(mailbox: ConversationMailboxRow) {
+  if (!mailbox.oauth_access_token) {
+    return refreshOffice365Token(mailbox);
+  }
+
+  if (!mailbox.oauth_expires_at) return mailbox.oauth_access_token;
+  const expiresAtMs = new Date(mailbox.oauth_expires_at).getTime();
+  const remaining = expiresAtMs - Date.now();
+  if (remaining > 2 * 60 * 1000) return mailbox.oauth_access_token;
+
+  return refreshOffice365Token(mailbox);
+}
+
+async function sendEmailMessageViaOffice365(options: {
+  mailboxId: number;
+  to: string;
+  subject: string;
+  body: string;
+  isHtml: boolean;
+  conversationId?: string;
+  cc?: Array<{ email: string; name?: string | null }>;
+  bcc?: Array<{ email: string; name?: string | null }>;
+}): Promise<{
+  success: boolean;
+  external_id?: string;
+  error?: string;
+  provider_response?: any;
+}> {
+  try {
+    const [rows] = await pool.query<ConversationMailboxRow[]>(
+      `SELECT * FROM conversation_email_mailboxes
+       WHERE id = ? AND tenant_id = ? AND provider = 'office365' AND status = 'active'
+       LIMIT 1`,
+      [options.mailboxId, MORTGAGE_TENANT_ID],
+    );
+
+    if (rows.length === 0) {
+      return {
+        success: false,
+        error: "Office365 mailbox not found or inactive",
+      };
+    }
+
+    const mailbox = rows[0];
+    const accessToken = await getOffice365AccessToken(mailbox);
+
+    const internetMessageHeaders: Array<{ name: string; value: string }> = [];
+    if (options.conversationId) {
+      // Graph API only allows custom headers starting with 'X-'.
+      // 'Message-ID' is a reserved header and must not be set here.
+      internetMessageHeaders.push({
+        name: "X-Conversation-Id",
+        value: options.conversationId,
+      });
+    }
+
+    const ccRecipients = (options.cc ?? []).map((r) => ({
+      emailAddress: { address: r.email, ...(r.name ? { name: r.name } : {}) },
+    }));
+    const bccRecipients = (options.bcc ?? []).map((r) => ({
+      emailAddress: { address: r.email, ...(r.name ? { name: r.name } : {}) },
+    }));
+
+    await axios.post(
+      `https://graph.microsoft.com/v1.0/me/sendMail`,
+      {
+        message: {
+          subject: options.subject,
+          body: {
+            contentType: options.isHtml ? "HTML" : "Text",
+            content: options.body,
+          },
+          toRecipients: [{ emailAddress: { address: options.to } }],
+          ...(ccRecipients.length > 0 ? { ccRecipients } : {}),
+          ...(bccRecipients.length > 0 ? { bccRecipients } : {}),
+          replyTo: [{ emailAddress: { address: mailbox.mailbox_email } }],
+          internetMessageHeaders,
+        },
+        saveToSentItems: true,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+
+    return {
+      success: true,
+      provider_response: {
+        provider: "office365",
+        mailbox_id: mailbox.id,
+        mailbox_email: mailbox.mailbox_email,
+      },
+    };
+  } catch (error: any) {
+    const detail =
+      error?.response?.data?.error?.message ||
+      error?.message ||
+      "Office365 send failed";
+    return {
+      success: false,
+      error: detail,
+      provider_response: error?.response?.data,
+    };
+  }
+}
+
+async function syncOffice365Mailbox(mailbox: ConversationMailboxRow): Promise<{
+  processed: number;
+  errors: number;
+}> {
+  let processed = 0;
+  let errors = 0;
+
+  const accessToken = await getOffice365AccessToken(mailbox);
+  let data: any;
+  try {
+    const response = await axios.get(
+      `https://graph.microsoft.com/v1.0/me/mailFolders/Inbox/messages`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params: {
+          $top: 50,
+          $orderby: "receivedDateTime desc",
+          $select:
+            "id,subject,from,toRecipients,ccRecipients,internetMessageId,conversationId,receivedDateTime,bodyPreview,body",
+        },
+      },
+    );
+    data = response.data;
+  } catch (graphError: any) {
+    const graphErrBody = graphError?.response?.data;
+    console.error(
+      "Graph API error fetching inbox:",
+      JSON.stringify(graphErrBody, null, 2),
+    );
+    throw graphError;
+  }
+
+  const messages: any[] = Array.isArray(data?.value) ? data.value : [];
+  messages.reverse();
+
+  for (const msg of messages) {
+    try {
+      const graphId = String(msg?.id || "");
+      if (!graphId) continue;
+
+      const [existing] = await pool.query<RowDataPacket[]>(
+        `SELECT id FROM communications WHERE tenant_id = ? AND external_id = ? LIMIT 1`,
+        [MORTGAGE_TENANT_ID, graphId],
+      );
+      if (existing.length > 0) continue;
+
+      const fromEmail =
+        msg?.from?.emailAddress?.address?.toLowerCase?.() ||
+        msg?.from?.emailAddress?.address ||
+        "";
+      const subject = String(msg?.subject || "(no subject)");
+
+      const headerMap: Record<string, string> = {};
+      const rawHeaders = Array.isArray(msg?.internetMessageHeaders)
+        ? msg.internetMessageHeaders
+        : [];
+      for (const h of rawHeaders) {
+        const key = String(h?.name || "").toLowerCase();
+        const value = String(h?.value || "");
+        if (key) headerMap[key] = value;
+      }
+
+      let conversationId: string | null =
+        headerMap["x-conversation-id"]?.trim() || null;
+      if (!conversationId) {
+        const combined = [
+          msg?.inReplyTo,
+          headerMap["references"],
+          msg?.internetMessageId,
+        ]
+          .filter(Boolean)
+          .join(" ");
+        const match = combined.match(/<enc-([^-]+(?:-[^-]+)*)-\d+@/);
+        if (match) conversationId = match[1];
+      }
+      if (!conversationId) {
+        const fallbackKey =
+          msg?.conversationId ||
+          crypto
+            .createHash("md5")
+            .update(`${fromEmail}:${subject}`)
+            .digest("hex")
+            .slice(0, 20);
+        conversationId = `conv_o365_${mailbox.id}_${fallbackKey}`;
+      }
+
+      const bodyPreview = String(msg?.bodyPreview || "").trim();
+      const bodyContent = String(msg?.body?.content || "").trim();
+      // Store the full HTML (or plain text) body so it renders correctly in the UI.
+      // bodyPreview is only a truncated plain-text snippet — use it as last resort.
+      const cleanBody = bodyContent || bodyPreview || "(empty reply)";
+
+      const [threadRows] = await pool.query<RowDataPacket[]>(
+        `SELECT broker_id, client_id, application_id, lead_id
+         FROM conversation_threads
+         WHERE conversation_id = ? AND tenant_id = ?
+         LIMIT 1`,
+        [conversationId, MORTGAGE_TENANT_ID],
+      );
+
+      let brokerId: number | null = null;
+      let clientId: number | null = null;
+      let applicationId: number | null = null;
+      let leadId: number | null = null;
+
+      if (threadRows.length > 0) {
+        brokerId = threadRows[0].broker_id ?? null;
+        clientId = threadRows[0].client_id ?? null;
+        applicationId = threadRows[0].application_id ?? null;
+        leadId = threadRows[0].lead_id ?? null;
+      } else if (fromEmail) {
+        const [clientRows] = await pool.query<RowDataPacket[]>(
+          `SELECT id, assigned_broker_id FROM clients
+           WHERE tenant_id = ? AND LOWER(email) = ?
+           LIMIT 1`,
+          [MORTGAGE_TENANT_ID, String(fromEmail).toLowerCase()],
+        );
+        if (clientRows.length > 0) {
+          clientId = clientRows[0].id ?? null;
+          brokerId = clientRows[0].assigned_broker_id ?? null;
+        } else {
+          // Also check leads table
+          const [leadRows] = await pool.query<RowDataPacket[]>(
+            `SELECT id, assigned_broker_id FROM leads
+             WHERE tenant_id = ? AND LOWER(email) = ?
+             LIMIT 1`,
+            [MORTGAGE_TENANT_ID, String(fromEmail).toLowerCase()],
+          );
+          if (leadRows.length > 0) {
+            leadId = leadRows[0].id ?? null;
+            brokerId = leadRows[0].assigned_broker_id ?? null;
+          }
+        }
+      }
+
+      // Always fall back to the mailbox owner so emails are always visible
+      if (brokerId === null) {
+        brokerId = mailbox.assigned_broker_id ?? null;
+      }
+
+      const [insertResult] = (await pool.query(
+        `INSERT INTO communications (
+          tenant_id, application_id, lead_id,
+          from_user_id, to_broker_id,
+          communication_type, direction,
+          subject, body, status,
+          conversation_id, message_type,
+          delivery_status, external_id,
+          metadata,
+          sent_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, 'email', 'inbound', ?, ?, 'delivered', ?, 'text', 'delivered', ?, ?, NOW(), NOW())`,
+        [
+          MORTGAGE_TENANT_ID,
+          applicationId,
+          leadId,
+          clientId,
+          brokerId,
+          subject,
+          cleanBody,
+          conversationId,
+          graphId,
+          JSON.stringify({
+            mailbox_id: mailbox.id,
+            mailbox_email: mailbox.mailbox_email,
+            provider: "office365",
+            internet_message_id: msg?.internetMessageId || null,
+            graph_conversation_id: msg?.conversationId || null,
+            from_email: fromEmail || null,
+            from_name: msg?.from?.emailAddress?.name || null,
+            to_recipients: Array.isArray(msg?.toRecipients)
+              ? msg.toRecipients.map((r: any) => ({
+                  email: r?.emailAddress?.address || "",
+                  name: r?.emailAddress?.name || null,
+                }))
+              : [],
+            cc_recipients: Array.isArray(msg?.ccRecipients)
+              ? msg.ccRecipients.map((r: any) => ({
+                  email: r?.emailAddress?.address || "",
+                  name: r?.emailAddress?.name || null,
+                }))
+              : [],
+          }),
+        ],
+      )) as [ResultSetHeader, any];
+
+      await upsertConversationThread({
+        tenantId: MORTGAGE_TENANT_ID,
+        commId: insertResult.insertId,
+        conversationId,
+        applicationId,
+        leadId,
+        fromUserId: clientId,
+        fromBrokerId: null,
+        toUserId: null,
+        toBrokerId: brokerId,
+        communicationType: "email",
+        direction: "inbound",
+        body: cleanBody,
+        recipientEmail: fromEmail || null,
+        senderDisplayName: msg?.from?.emailAddress?.name || null,
+      });
+
+      await markExecutionsRespondedForConversation(
+        conversationId,
+        MORTGAGE_TENANT_ID,
+      );
+
+      processed++;
+    } catch (err) {
+      errors++;
+      console.error("Office365 sync message error:", err);
+    }
+  }
+
+  return { processed, errors };
 }
 
 // Base URL helper — prefers explicit BASE_URL, falls back to Vercel's auto-injected
@@ -239,6 +725,8 @@ async function upsertConversationThread(params: {
   inboxNumber?: string | null;
   recipientPhone?: string | null;
   recipientEmail?: string | null;
+  /** Display name from the sending party (e.g. Graph API from.emailAddress.name) */
+  senderDisplayName?: string | null;
 }): Promise<void> {
   try {
     const {
@@ -257,11 +745,36 @@ async function upsertConversationThread(params: {
       inboxNumber,
       recipientPhone,
       recipientEmail,
+      senderDisplayName,
     } = params;
     const resolvedClientId = toUserId ?? fromUserId ?? null;
-    const resolvedBrokerId = fromBrokerId ?? toBrokerId ?? null;
+    let resolvedBrokerId: number | null = fromBrokerId ?? toBrokerId ?? null;
     const convId = conversationId ?? `conv_auto_${commId}`;
-    const preview = body ? body.slice(0, 200) : null;
+    // Build a sidebar preview. For MMS / media-only messages with no text body,
+    // fall back to a typed placeholder so the thread list isn't blank.
+    let preview: string | null = body ? body.slice(0, 200) : null;
+    if (
+      !preview &&
+      (communicationType === "sms" || communicationType === "whatsapp")
+    ) {
+      // Look up media on the just-inserted communication row to pick an emoji label.
+      try {
+        const [mrows] = await pool.query<RowDataPacket[]>(
+          `SELECT media_url, media_content_type FROM communications WHERE id = ? LIMIT 1`,
+          [commId],
+        );
+        const ct: string = (mrows[0]?.media_content_type as string) || "";
+        const hasMedia = !!mrows[0]?.media_url;
+        if (hasMedia) {
+          if (ct.startsWith("image/")) preview = "\uD83D\uDCF7 Photo";
+          else if (ct.startsWith("video/")) preview = "\uD83C\uDFA5 Video";
+          else if (ct.startsWith("audio/")) preview = "\uD83C\uDFA7 Audio";
+          else preview = "\uD83D\uDCCE Attachment";
+        }
+      } catch {
+        /* non-fatal */
+      }
+    }
     const unreadDelta = direction === "inbound" ? 1 : 0;
 
     let clientName: string | null = null;
@@ -271,13 +784,16 @@ async function upsertConversationThread(params: {
 
     if (resolvedClientId !== null) {
       const [rows] = await pool.query<RowDataPacket[]>(
-        "SELECT CONCAT(first_name, ' ', last_name) AS name, phone, email FROM clients WHERE id = ? LIMIT 1",
+        "SELECT CONCAT(first_name, ' ', last_name) AS name, phone, email, assigned_broker_id FROM clients WHERE id = ? LIMIT 1",
         [resolvedClientId],
       );
       if (rows.length > 0) {
         clientName = rows[0].name;
         clientPhone = rows[0].phone ?? clientPhone;
         clientEmail = rows[0].email ?? clientEmail;
+        if (resolvedBrokerId == null && rows[0].assigned_broker_id != null) {
+          resolvedBrokerId = rows[0].assigned_broker_id as number;
+        }
       }
     } else if (clientPhone) {
       // No client ID yet — try to resolve name from phone so threads never
@@ -285,7 +801,7 @@ async function upsertConversationThread(params: {
       const lastTen = clientPhone.replace(/\D/g, "").slice(-10);
       if (lastTen.length === 10) {
         const [cRows] = await pool.query<RowDataPacket[]>(
-          `SELECT id, CONCAT(first_name, ' ', last_name) AS name, phone, email
+          `SELECT id, CONCAT(first_name, ' ', last_name) AS name, phone, email, assigned_broker_id
            FROM clients
            WHERE tenant_id = ?
              AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', ''), 10) = ?
@@ -296,10 +812,13 @@ async function upsertConversationThread(params: {
           (params as any).resolvedClientIdFromPhone = cRows[0].id;
           clientName = cRows[0].name?.trim() || null;
           clientEmail = cRows[0].email ?? clientEmail;
+          if (resolvedBrokerId == null && cRows[0].assigned_broker_id != null) {
+            resolvedBrokerId = cRows[0].assigned_broker_id as number;
+          }
         } else {
           // Fallback: leads table
           const [lRows] = await pool.query<RowDataPacket[]>(
-            `SELECT id, CONCAT(first_name, ' ', last_name) AS name, phone
+            `SELECT id, CONCAT(first_name, ' ', last_name) AS name, phone, assigned_broker_id
              FROM leads
              WHERE tenant_id = ?
                AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', ''), 10) = ?
@@ -309,6 +828,27 @@ async function upsertConversationThread(params: {
           if (lRows.length > 0) {
             resolvedLeadId = lRows[0].id;
             clientName = lRows[0].name?.trim() || null;
+            if (
+              resolvedBrokerId == null &&
+              lRows[0].assigned_broker_id != null
+            ) {
+              resolvedBrokerId = lRows[0].assigned_broker_id as number;
+            }
+          } else {
+            // Fallback: brokers/realtors table — so threads from partner
+            // realtors never show "Unknown Client".
+            const [brRows] = await pool.query<RowDataPacket[]>(
+              `SELECT id, CONCAT(first_name, ' ', last_name) AS name
+               FROM brokers
+               WHERE tenant_id = ?
+                 AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', ''), 10) = ?
+               LIMIT 1`,
+              [tenantId, lastTen],
+            );
+            if (brRows.length > 0) {
+              clientName = brRows[0].name?.trim() || null;
+              (params as any).resolvedContactBrokerId = brRows[0].id as number;
+            }
           }
         }
       }
@@ -316,28 +856,92 @@ async function upsertConversationThread(params: {
     // Use the client ID resolved from phone if we found one
     const finalClientId =
       resolvedClientId ?? (params as any).resolvedClientIdFromPhone ?? null;
+    const finalContactBrokerId: number | null =
+      (params as any).resolvedContactBrokerId ?? null;
+
+    // If we still have no name but have an email address, look it up across
+    // clients → leads → brokers so email threads always show a real name.
+    if (!clientName && clientEmail) {
+      const emailLower = clientEmail.toLowerCase();
+      const [cEmailRows] = await pool.query<RowDataPacket[]>(
+        `SELECT CONCAT(first_name, ' ', last_name) AS name, phone, assigned_broker_id
+         FROM clients WHERE tenant_id = ? AND LOWER(email) = ? LIMIT 1`,
+        [tenantId, emailLower],
+      );
+      if (cEmailRows.length > 0) {
+        clientName = cEmailRows[0].name?.trim() || null;
+        clientPhone = clientPhone ?? cEmailRows[0].phone ?? null;
+        if (
+          resolvedBrokerId == null &&
+          cEmailRows[0].assigned_broker_id != null
+        ) {
+          resolvedBrokerId = cEmailRows[0].assigned_broker_id as number;
+        }
+      } else {
+        const [lEmailRows] = await pool.query<RowDataPacket[]>(
+          `SELECT CONCAT(first_name, ' ', last_name) AS name, phone, assigned_broker_id
+           FROM leads WHERE tenant_id = ? AND LOWER(email) = ? LIMIT 1`,
+          [tenantId, emailLower],
+        );
+        if (lEmailRows.length > 0) {
+          clientName = lEmailRows[0].name?.trim() || null;
+          clientPhone = clientPhone ?? lEmailRows[0].phone ?? null;
+          if (
+            resolvedBrokerId == null &&
+            lEmailRows[0].assigned_broker_id != null
+          ) {
+            resolvedBrokerId = lEmailRows[0].assigned_broker_id as number;
+          }
+        } else {
+          // Check brokers table — mortgage bankers emailing each other
+          const [brEmailRows] = await pool.query<RowDataPacket[]>(
+            `SELECT CONCAT(first_name, ' ', last_name) AS name
+             FROM brokers WHERE tenant_id = ? AND LOWER(email) = ? LIMIT 1`,
+            [tenantId, emailLower],
+          );
+          if (brEmailRows.length > 0) {
+            clientName = brEmailRows[0].name?.trim() || null;
+          }
+        }
+      }
+    }
+
+    // Final fallback: use the sender's display name from the email provider
+    // (e.g. Graph API from.emailAddress.name) for contacts not in the system
+    if (!clientName && senderDisplayName) {
+      clientName = senderDisplayName.trim() || null;
+    }
 
     // Always INSERT — broker_id is now nullable so shared-inbox threads (broker_id=NULL)
     // are also persisted and visible to all brokers.
     await pool.query(
       `INSERT INTO conversation_threads
          (tenant_id, conversation_id, application_id, lead_id, client_id, broker_id,
+          contact_broker_id,
           client_name, client_phone, client_email, inbox_number,
           last_message_at, last_message_preview, last_message_type,
           message_count, unread_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, 1, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, 1, ?)
        ON DUPLICATE KEY UPDATE
-         last_message_at      = IF(NOW() > last_message_at, NOW(), last_message_at),
-         last_message_preview = IF(NOW() > last_message_at, ?, last_message_preview),
-         last_message_type    = IF(NOW() > last_message_at, ?, last_message_type),
+         -- Always update preview/type/timestamp for the new message.
+         -- (Out-of-order delivery is rare; the previous IF(NOW()>last_message_at)
+         -- guard was buggy because MySQL evaluates SET clauses left-to-right with
+         -- already-updated values, so the preview/type were never updated.)
+         last_message_preview = ?,
+         last_message_type    = ?,
+         last_message_at      = NOW(),
          message_count        = message_count + 1,
          unread_count         = unread_count + ?,
          client_id            = COALESCE(client_id, ?),
          broker_id            = COALESCE(broker_id, ?),
+         contact_broker_id    = COALESCE(contact_broker_id, ?),
          client_name          = COALESCE(client_name, ?),
          client_phone         = COALESCE(client_phone, ?),
          client_email         = COALESCE(client_email, ?),
          inbox_number         = COALESCE(inbox_number, ?),
+         -- Auto-reopen closed threads when a client sends a new inbound message.
+         -- This ensures the conversation reappears in the active list immediately.
+         status               = IF(? = 'inbound', 'active', status),
          updated_at           = NOW()`,
       [
         tenantId,
@@ -346,6 +950,7 @@ async function upsertConversationThread(params: {
         resolvedLeadId,
         finalClientId,
         resolvedBrokerId, // may be null for shared-inbox threads
+        finalContactBrokerId,
         clientName,
         clientPhone,
         clientEmail,
@@ -359,12 +964,97 @@ async function upsertConversationThread(params: {
         unreadDelta,
         finalClientId,
         resolvedBrokerId,
+        finalContactBrokerId,
         clientName,
         clientPhone,
         clientEmail,
         inboxNumber ?? null,
+        direction,
       ],
     );
+
+    // Notify broker(s) of inbound activity so the bell lights up in real time.
+    if (direction === "inbound") {
+      try {
+        const channelLabel =
+          communicationType === "sms"
+            ? "SMS"
+            : communicationType === "email"
+              ? "email"
+              : communicationType === "whatsapp"
+                ? "WhatsApp"
+                : communicationType === "voice"
+                  ? "voice"
+                  : "message";
+        const who = clientName || clientPhone || clientEmail || "a contact";
+        const snippet = (body || "").trim().slice(0, 120);
+        const category = communicationType === "voice" ? "call" : "message";
+        // Strict ownership rules for who gets the bell notification:
+        //   A. If the inbound activity arrived on a broker's PERSONAL Twilio
+        //      number (twilio_caller_id), notify ONLY that broker. Personal
+        //      lines are private — owners shouldn't see other brokers' calls.
+        //   B. Otherwise (shared inbox), notify the relationship owners:
+        //      loan primary broker + partner broker + client/lead assigned
+        //      broker. Falls back to all admins only when truly unknown.
+        let inboxOwnerId: number | null = null;
+        if (
+          inboxNumber &&
+          (communicationType === "sms" ||
+            communicationType === "voice" ||
+            communicationType === "whatsapp")
+        ) {
+          try {
+            const [inboxRows] = await pool.query<RowDataPacket[]>(
+              `SELECT id FROM brokers
+                WHERE tenant_id = ? AND status = 'active' AND twilio_caller_id = ?
+                LIMIT 1`,
+              [tenantId, inboxNumber],
+            );
+            const candidate = inboxRows[0]?.id;
+            if (typeof candidate === "number") {
+              inboxOwnerId = candidate;
+            }
+          } catch (inboxErr) {
+            console.error(
+              "Inbox-number owner lookup failed (non-fatal):",
+              inboxErr,
+            );
+          }
+        }
+
+        let ownerIds: number[];
+        if (inboxOwnerId != null) {
+          // Personal line — only the inbox owner is notified.
+          ownerIds = [inboxOwnerId];
+        } else {
+          // Shared inbox — notify all relationship owners.
+          ownerIds = await getApplicationOwnerBrokerIds(applicationId);
+          if (
+            resolvedBrokerId != null &&
+            !ownerIds.includes(resolvedBrokerId)
+          ) {
+            ownerIds.push(resolvedBrokerId);
+          }
+        }
+        await createBrokerNotification({
+          brokerIds: ownerIds.length ? ownerIds : null,
+          notifyAllAdminsOnEmpty: ownerIds.length === 0,
+          title: `New ${channelLabel} from ${who}`,
+          message: snippet || `New inbound ${channelLabel}`,
+          category: category as any,
+          type: "info",
+          actionUrl:
+            communicationType === "email"
+              ? `/admin/email?conversation=${encodeURIComponent(convId)}`
+              : `/admin/conversations?conversation=${encodeURIComponent(convId)}`,
+        });
+      } catch (notifyErr) {
+        console.error(
+          "Broker notification (inbound thread) failed:",
+          notifyErr,
+        );
+      }
+    }
   } catch (err) {
     // Re-throw so callers know the upsert failed and can surface the error
     // rather than silently returning a success response with no thread.
@@ -501,6 +1191,57 @@ async function getSharedVoiceNumber(): Promise<string | null> {
   }
 }
 
+/**
+ * Dynamically picks the first SMS-capable "All Mortgage Bankers" number —
+ * a Twilio number that is NOT exclusively assigned to any individual broker.
+ * Used for outbound SMS/MMS/WhatsApp from brokers who have no personal line
+ * and when no shared number can be derived from existing thread history.
+ * Results are cached for 60s to avoid hitting the Twilio API on every send.
+ */
+let _sharedSmsNumberCache: { value: string | null; at: number } | null = null;
+async function getSharedSmsNumber(): Promise<string | null> {
+  if (!twilioClient) return null;
+  const now = Date.now();
+  if (_sharedSmsNumberCache && now - _sharedSmsNumberCache.at < 60_000) {
+    return _sharedSmsNumberCache.value;
+  }
+  try {
+    const [assignedRows] = await pool.query<RowDataPacket[]>(
+      `SELECT twilio_phone_sid, twilio_caller_id FROM brokers
+       WHERE tenant_id = ?
+         AND ((twilio_phone_sid IS NOT NULL AND twilio_phone_sid <> '')
+              OR (twilio_caller_id IS NOT NULL AND twilio_caller_id <> ''))`,
+      [MORTGAGE_TENANT_ID],
+    );
+    const assignedSids = new Set(
+      (assignedRows as RowDataPacket[])
+        .map((r) => r.twilio_phone_sid as string)
+        .filter(Boolean),
+    );
+    const assignedNumbers = new Set(
+      (assignedRows as RowDataPacket[])
+        .map((r) => r.twilio_caller_id as string)
+        .filter(Boolean),
+    );
+
+    const numbers = await twilioClient.incomingPhoneNumbers.list({ limit: 50 });
+    const shared = numbers
+      .filter(
+        (n: any) =>
+          n.capabilities?.sms &&
+          !assignedSids.has(n.sid) &&
+          !assignedNumbers.has(n.phoneNumber),
+      )
+      .sort((a: any, b: any) => a.phoneNumber.localeCompare(b.phoneNumber))[0];
+    const value = shared?.phoneNumber ?? null;
+    _sharedSmsNumberCache = { value, at: now };
+    return value;
+  } catch (err) {
+    console.error("❌ getSharedSmsNumber failed:", err);
+    return null;
+  }
+}
+
 async function sendVoiceOTP(
   to: string,
   code: number,
@@ -580,10 +1321,20 @@ async function sendWhatsAppMessage(
     const whatsappNumber = `whatsapp:${normalizedPhone}`;
     const whatsappFrom = `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER || process.env.TWILIO_PHONE_NUMBER}`;
 
+    // Attach delivery status callback so the WhatsApp message can progress from
+    // ✓ (sent) → ✓✓ (delivered) → ✓✓ blue (read), matching SMS behavior.
+    // Twilio cannot reach localhost, so only attach for public URLs.
+    const baseUrl = getBaseUrl();
+    const isPublicUrl =
+      !baseUrl.includes("localhost") && !baseUrl.includes("127.0.0.1");
+
     const message = await twilioClient.messages.create({
       body,
       to: whatsappNumber,
       from: whatsappFrom,
+      ...(isPublicUrl
+        ? { statusCallback: `${baseUrl}/api/webhooks/sms-status` }
+        : {}),
       ...metadata,
     });
 
@@ -1245,10 +1996,10 @@ async function sendPublicApplicationWelcomeEmail(
 
                 <!-- HERO BAND -->
                 <tr>
-                  <td style="background:linear-gradient(135deg,#0A2F52 0%,#0F4B7F 100%);padding:32px;text-align:center;">
-                    <p style="margin:0 0 6px 0;color:#FDE7BD;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">Application Received</p>
+                  <td style="background:linear-gradient(135deg,#F9A826 0%,#0F4B7F 100%);padding:32px;text-align:center;">
+                    <p style="margin:0 0 6px 0;color:#F6D28B;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">Application Received</p>
                     <h1 style="margin:0 0 4px 0;color:#ffffff;font-size:28px;font-weight:800;letter-spacing:0.5px;">You're on your way home!</h1>
-                    <p style="margin:0;color:#FDE7BD;font-size:15px;">Hi <strong style="color:#ffffff;">${firstName} ${lastName}</strong>, we've got everything we need.</p>
+                    <p style="margin:0;color:#F6D28B;font-size:15px;">Hi <strong style="color:#ffffff;">${firstName} ${lastName}</strong>, we've got everything we need.</p>
                   </td>
                 </tr>
 
@@ -1286,7 +2037,7 @@ async function sendPublicApplicationWelcomeEmail(
                       </tr>
                       <tr style="background-color:#f8fafc;">
                         <td style="padding:12px 16px;color:#64748b;font-size:13px;font-weight:600;border-bottom:1px solid #e2e8f0;">Estimated Loan Amount</td>
-                        <td style="padding:12px 16px;color:#0A2F52;font-size:13px;font-weight:800;border-bottom:1px solid #e2e8f0;">${estimatedLoan}</td>
+                        <td style="padding:12px 16px;color:#F9A826;font-size:13px;font-weight:800;border-bottom:1px solid #e2e8f0;">${estimatedLoan}</td>
                       </tr>
                       <tr>
                         <td style="padding:12px 16px;color:#64748b;font-size:13px;font-weight:600;">Property Address</td>
@@ -1353,7 +2104,7 @@ async function sendPublicApplicationWelcomeEmail(
                     </table>
 
                     <p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;line-height:1.6;">
-                      Questions? Call us at <a href="tel:(562)337-0000" style="color:#0A2F52;text-decoration:none;font-weight:600;">(562) 337-0000</a>
+                      Questions? Call us at <a href="tel:(562)337-0000" style="color:#F9A826;text-decoration:none;font-weight:600;">(562) 337-0000</a>
                     </p>
                   </td>
                 </tr>
@@ -1665,6 +2416,44 @@ async function sendNewTaskAssignedEmail(
 }
 
 /**
+ * P1-3: JWT revocation helpers.
+ * Logout inserts the token's jti into `revoked_tokens`; auth middleware
+ * rejects any token whose jti is present until natural expiry.
+ */
+const isJtiRevoked = async (jti: string | undefined): Promise<boolean> => {
+  if (!jti || typeof jti !== "string") return false;
+  try {
+    const [rows] = await pool.query<any[]>(
+      "SELECT 1 FROM revoked_tokens WHERE jti = ? LIMIT 1",
+      [jti],
+    );
+    return rows.length > 0;
+  } catch (err) {
+    // Fail-open on infra errors so a transient DB issue doesn't lock everyone out.
+    console.error("isJtiRevoked query failed:", err);
+    return false;
+  }
+};
+
+const revokeJti = async (
+  jti: string | undefined,
+  userType: "client" | "broker",
+  userId: number | undefined,
+  exp: number | undefined,
+): Promise<void> => {
+  if (!jti || !userId || !exp) return;
+  try {
+    await pool.query(
+      `INSERT IGNORE INTO revoked_tokens (jti, user_type, user_id, expires_at)
+       VALUES (?, ?, ?, FROM_UNIXTIME(?))`,
+      [jti, userType, userId, exp],
+    );
+  } catch (err) {
+    console.error("revokeJti insert failed:", err);
+  }
+};
+
+/**
  * Middleware to verify client session
  */
 const verifyClientSession = async (
@@ -1685,12 +2474,22 @@ const verifyClientSession = async (
     const sessionToken = authHeader.substring(7);
 
     try {
-      const decoded = jwt.verify(sessionToken, JWT_SECRET) as any;
+      const decoded = jwt.verify(sessionToken, JWT_SECRET, {
+        algorithms: ["HS256"],
+      }) as any;
 
       if (decoded.userType !== "client") {
         return res.status(403).json({
           success: false,
           message: "Access denied",
+        });
+      }
+
+      // P1-3: reject revoked tokens
+      if (await isJtiRevoked(decoded.jti)) {
+        return res.status(401).json({
+          success: false,
+          message: "Session has been revoked",
         });
       }
 
@@ -1748,7 +2547,9 @@ const verifyBrokerSession = async (
     const sessionToken = authHeader.substring(7);
 
     try {
-      const decoded = jwt.verify(sessionToken, JWT_SECRET) as any;
+      const decoded = jwt.verify(sessionToken, JWT_SECRET, {
+        algorithms: ["HS256"],
+      }) as any;
 
       if (decoded.userType !== "broker") {
         return res.status(403).json({
@@ -1757,9 +2558,20 @@ const verifyBrokerSession = async (
         });
       }
 
-      // Get broker details
+      // P1-3: reject revoked tokens
+      if (await isJtiRevoked(decoded.jti)) {
+        return res.status(401).json({
+          success: false,
+          message: "Session has been revoked",
+        });
+      }
+
+      // Get broker details with profile avatar so header avatar does not flicker/reset.
       const [brokers] = await pool.query<any[]>(
-        "SELECT * FROM brokers WHERE id = ? AND status = 'active' AND tenant_id = ?",
+        `SELECT b.*, bp.avatar_url
+         FROM brokers b
+         LEFT JOIN broker_profiles bp ON bp.broker_id = b.id
+         WHERE b.id = ? AND b.status = 'active' AND b.tenant_id = ?`,
         [decoded.brokerId, MORTGAGE_TENANT_ID],
       );
 
@@ -1790,6 +2602,128 @@ const verifyBrokerSession = async (
     });
   }
 };
+
+// =====================================================
+// BROKER NOTIFICATION HELPER
+// =====================================================
+
+type BrokerNotificationCategory =
+  | "message"
+  | "call"
+  | "loan"
+  | "client"
+  | "task"
+  | "flow"
+  | "lead"
+  | "system";
+
+/**
+ * Resolve every broker who "owns" a loan application:
+ *   - broker_user_id        (primary loan officer / mortgage banker)
+ *   - partner_broker_id     (assigned realtor partner)
+ *   - clients.assigned_broker_id (fallback if loan has no broker yet)
+ * Returns a deduped array of broker IDs. Empty array if nothing resolved.
+ */
+async function getApplicationOwnerBrokerIds(
+  applicationId: number | null | undefined,
+): Promise<number[]> {
+  if (!applicationId) return [];
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT a.broker_user_id, a.partner_broker_id, c.assigned_broker_id
+         FROM loan_applications a
+         LEFT JOIN clients c ON a.client_user_id = c.id
+        WHERE a.id = ? AND a.tenant_id = ?
+        LIMIT 1`,
+      [applicationId, MORTGAGE_TENANT_ID],
+    );
+    if (rows.length === 0) return [];
+    const ids = [
+      rows[0].broker_user_id,
+      rows[0].partner_broker_id,
+      rows[0].assigned_broker_id,
+    ]
+      .map((v) => (typeof v === "number" ? v : v != null ? Number(v) : null))
+      .filter((v): v is number => Number.isFinite(v as number));
+    return Array.from(new Set(ids));
+  } catch (err) {
+    console.error("getApplicationOwnerBrokerIds failed:", err);
+    return [];
+  }
+}
+
+/**
+ * Create an in-app notification for one or more brokers (admin bell feed).
+ * Non-fatal: errors are logged and swallowed so callers never break the
+ * primary action because of a notification failure.
+ */
+async function createBrokerNotification(params: {
+  brokerIds: number | number[] | null | undefined;
+  title: string;
+  message: string;
+  category: BrokerNotificationCategory;
+  type?: "info" | "success" | "warning" | "error";
+  actionUrl?: string | null;
+  /** When brokerIds is null/empty, notify ALL active brokers (admins). */
+  notifyAllAdminsOnEmpty?: boolean;
+}): Promise<void> {
+  try {
+    let ids: number[] = [];
+    if (Array.isArray(params.brokerIds)) {
+      ids = params.brokerIds.filter((n) => Number.isFinite(n)) as number[];
+    } else if (typeof params.brokerIds === "number") {
+      ids = [params.brokerIds];
+    }
+    if (ids.length === 0 && params.notifyAllAdminsOnEmpty) {
+      const [admins] = await pool.query<any[]>(
+        "SELECT id FROM brokers WHERE tenant_id = ? AND status = 'active' AND role IN ('admin', 'superadmin')",
+        [MORTGAGE_TENANT_ID],
+      );
+      ids = admins.map((a: any) => a.id);
+    }
+    if (ids.length === 0) return;
+    const type = params.type ?? "info";
+    const values: any[] = [];
+    const placeholders: string[] = [];
+    for (const brokerId of ids) {
+      placeholders.push("(?, ?, 'broker', ?, ?, ?, ?, ?)");
+      values.push(
+        MORTGAGE_TENANT_ID,
+        brokerId,
+        params.title,
+        params.message,
+        type,
+        params.category,
+        params.actionUrl ?? null,
+      );
+    }
+    await pool.query(
+      `INSERT INTO notifications
+         (tenant_id, user_id, recipient_type, title, message, notification_type, category, action_url)
+       VALUES ${placeholders.join(", ")}`,
+      values,
+    );
+
+    // Real-time fanout via Ably so brokers see the bell update instantly
+    // without polling. One message per recipient on a per-broker channel.
+    // Non-fatal: publishToAbly already swallows errors internally.
+    const arrivedAt = new Date().toISOString();
+    await Promise.all(
+      ids.map((brokerId) =>
+        publishToAbly(`broker-notifications:${brokerId}`, "new", {
+          title: params.title,
+          message: params.message,
+          notification_type: type,
+          category: params.category,
+          action_url: params.actionUrl ?? null,
+          created_at: arrivedAt,
+        }),
+      ),
+    );
+  } catch (err) {
+    console.error("createBrokerNotification failed (non-fatal):", err);
+  }
+}
 
 // =====================================================
 // AUDIT LOG HELPER
@@ -2042,7 +2976,15 @@ const handleAdminVerifyCode: RequestHandler = async (req, res) => {
     // Normalize email to match send-code endpoint
     const normalizedEmail = email.trim().toLowerCase();
 
-    console.log("🔍 Verifying broker code:", { email: normalizedEmail, code });
+    // Strictly parse a 4–8 digit numeric OTP
+    const codeStr = String(code).trim();
+    if (!/^\d{4,8}$/.test(codeStr)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid code format",
+      });
+    }
+    const codeNum = parseInt(codeStr, 10);
 
     // Check if broker exists
     const [brokers] = await pool.query<any[]>(
@@ -2064,37 +3006,11 @@ const handleAdminVerifyCode: RequestHandler = async (req, res) => {
 
     // Check if code is valid
     const [sessions] = await pool.query<any[]>(
-      `SELECT *, expires_at, NOW() as server_time FROM broker_sessions 
+      `SELECT id, expires_at, NOW() as server_time FROM broker_sessions 
        WHERE broker_id = ? AND session_code = ? AND is_active = TRUE 
        AND expires_at > NOW()`,
-      [broker.id, parseInt(code)],
+      [broker.id, codeNum],
     );
-
-    console.log("📊 Sessions found:", sessions.length);
-    if (sessions.length > 0) {
-      console.log("⏰ Session expires at:", sessions[0].expires_at);
-      console.log("🕐 Server time:", sessions[0].server_time);
-      console.log("✅ Code is valid!");
-    } else {
-      // Check if session exists without time constraint
-      const [allSessions] = await pool.query<any[]>(
-        `SELECT *, expires_at, NOW() as server_time, 
-         TIMESTAMPDIFF(SECOND, NOW(), expires_at) as seconds_until_expiry 
-         FROM broker_sessions 
-         WHERE broker_id = ? AND session_code = ?`,
-        [broker.id, parseInt(code)],
-      );
-      console.log("❌ No valid sessions. Debug info:");
-      console.log("   Total sessions found:", allSessions.length);
-      if (allSessions.length > 0) {
-        console.log("   Session details:", {
-          expires_at: allSessions[0].expires_at,
-          server_time: allSessions[0].server_time,
-          is_active: allSessions[0].is_active,
-          seconds_until_expiry: allSessions[0].seconds_until_expiry,
-        });
-      }
-    }
 
     if (sessions.length === 0) {
       return res.status(401).json({
@@ -2103,6 +3019,12 @@ const handleAdminVerifyCode: RequestHandler = async (req, res) => {
       });
     }
 
+    // P0: invalidate this session row immediately so the code is single-use
+    await pool.query(
+      "UPDATE broker_sessions SET is_active = FALSE WHERE id = ?",
+      [sessions[0].id],
+    );
+
     // Generate session token (JWT)
     const sessionToken = jwt.sign(
       {
@@ -2110,6 +3032,7 @@ const handleAdminVerifyCode: RequestHandler = async (req, res) => {
         email: broker.email,
         role: broker.role,
         userType: "broker",
+        jti: crypto.randomUUID(),
       },
       JWT_SECRET,
       { expiresIn: "7d" },
@@ -2189,12 +3112,22 @@ const handleAdminValidateSession: RequestHandler = async (req, res) => {
     const sessionToken = authHeader.substring(7);
 
     try {
-      const decoded = jwt.verify(sessionToken, JWT_SECRET) as any;
+      const decoded = jwt.verify(sessionToken, JWT_SECRET, {
+        algorithms: ["HS256"],
+      }) as any;
 
       if (decoded.userType !== "broker") {
         return res.status(401).json({
           success: false,
           message: "Invalid session type",
+        });
+      }
+
+      // P1-3: reject revoked tokens
+      if (await isJtiRevoked(decoded.jti)) {
+        return res.status(401).json({
+          success: false,
+          message: "Session has been revoked",
         });
       }
 
@@ -2399,7 +3332,15 @@ const handleClientVerifyCode: RequestHandler = async (req, res) => {
     // Normalize email to match send-code endpoint
     const normalizedEmail = email.trim().toLowerCase();
 
-    console.log("🔍 Verifying client code:", { email: normalizedEmail, code });
+    // Strictly parse a 4–8 digit numeric OTP
+    const codeStr = String(code).trim();
+    if (!/^\d{4,8}$/.test(codeStr)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid code format",
+      });
+    }
+    const codeNum = parseInt(codeStr, 10);
 
     // Check if client exists
     const [clients] = await pool.query<any[]>(
@@ -2418,37 +3359,11 @@ const handleClientVerifyCode: RequestHandler = async (req, res) => {
 
     // Check if code is valid
     const [sessions] = await pool.query<any[]>(
-      `SELECT *, expires_at, NOW() as server_time FROM user_sessions 
+      `SELECT id, expires_at, NOW() as server_time FROM user_sessions 
        WHERE user_id = ? AND session_code = ? AND is_active = TRUE 
        AND expires_at > NOW()`,
-      [client.id, parseInt(code)],
+      [client.id, codeNum],
     );
-
-    console.log("📊 Sessions found:", sessions.length);
-    if (sessions.length > 0) {
-      console.log("⏰ Session expires at:", sessions[0].expires_at);
-      console.log("🕐 Server time:", sessions[0].server_time);
-      console.log("✅ Code is valid!");
-    } else {
-      // Check if session exists without time constraint
-      const [allSessions] = await pool.query<any[]>(
-        `SELECT *, expires_at, NOW() as server_time, 
-         TIMESTAMPDIFF(SECOND, NOW(), expires_at) as seconds_until_expiry 
-         FROM user_sessions 
-         WHERE user_id = ? AND session_code = ?`,
-        [client.id, parseInt(code)],
-      );
-      console.log("❌ No valid sessions. Debug info:");
-      console.log("   Total sessions found:", allSessions.length);
-      if (allSessions.length > 0) {
-        console.log("   Session details:", {
-          expires_at: allSessions[0].expires_at,
-          server_time: allSessions[0].server_time,
-          is_active: allSessions[0].is_active,
-          seconds_until_expiry: allSessions[0].seconds_until_expiry,
-        });
-      }
-    }
 
     if (sessions.length === 0) {
       return res.status(401).json({
@@ -2457,12 +3372,19 @@ const handleClientVerifyCode: RequestHandler = async (req, res) => {
       });
     }
 
+    // P0: invalidate this session row immediately so the code is single-use
+    await pool.query(
+      "UPDATE user_sessions SET is_active = FALSE WHERE id = ?",
+      [sessions[0].id],
+    );
+
     // Generate session token (JWT)
     const sessionToken = jwt.sign(
       {
         clientId: client.id,
         email: client.email,
         userType: "client",
+        jti: crypto.randomUUID(),
       },
       JWT_SECRET,
       { expiresIn: "30d" },
@@ -2514,12 +3436,22 @@ const handleClientValidateSession: RequestHandler = async (req, res) => {
     const sessionToken = authHeader.substring(7);
 
     try {
-      const decoded = jwt.verify(sessionToken, JWT_SECRET) as any;
+      const decoded = jwt.verify(sessionToken, JWT_SECRET, {
+        algorithms: ["HS256"],
+      }) as any;
 
       if (decoded.userType !== "client") {
         return res.status(401).json({
           success: false,
           message: "Invalid session type",
+        });
+      }
+
+      // P1-3: reject revoked tokens
+      if (await isJtiRevoked(decoded.jti)) {
+        return res.status(401).json({
+          success: false,
+          message: "Session has been revoked",
         });
       }
 
@@ -2580,9 +3512,13 @@ const handleClientLogout: RequestHandler = async (req, res) => {
     const sessionToken = authHeader.substring(7);
 
     try {
-      const decoded = jwt.verify(sessionToken, JWT_SECRET) as any;
+      const decoded = jwt.verify(sessionToken, JWT_SECRET, {
+        algorithms: ["HS256"],
+      }) as any;
 
       if (decoded.clientId) {
+        // P1-3: revoke this token's jti so it cannot be reused
+        await revokeJti(decoded.jti, "client", decoded.clientId, decoded.exp);
         // Delete all sessions for this client
         await pool.query("DELETE FROM user_sessions WHERE user_id = ?", [
           decoded.clientId,
@@ -2618,9 +3554,13 @@ const handleAdminLogout: RequestHandler = async (req, res) => {
     const sessionToken = authHeader.substring(7);
 
     try {
-      const decoded = jwt.verify(sessionToken, JWT_SECRET) as any;
+      const decoded = jwt.verify(sessionToken, JWT_SECRET, {
+        algorithms: ["HS256"],
+      }) as any;
 
       if (decoded.brokerId) {
+        // P1-3: revoke this token's jti so it cannot be reused
+        await revokeJti(decoded.jti, "broker", decoded.brokerId, decoded.exp);
         // Delete all sessions for this broker
         await pool.query("DELETE FROM broker_sessions WHERE broker_id = ?", [
           decoded.brokerId,
@@ -2677,6 +3617,14 @@ const handleGetBrokerProfile: RequestHandler = async (req, res) => {
         profile.specializations = [];
       }
     }
+
+    // Expose whether Office365 OAuth is configured so the UI can hide the
+    // connect form until the env vars are set.
+    profile.office365_enabled = !!(
+      process.env.OFFICE365_CLIENT_ID &&
+      process.env.OFFICE365_CLIENT_SECRET &&
+      process.env.OFFICE365_TENANT_ID
+    );
 
     res.json({ success: true, profile });
   } catch (error) {
@@ -2929,13 +3877,23 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
       down_payment,
       loan_purpose,
       property_address,
+      property_unit,
       property_city,
       property_state,
       property_zip,
       property_type,
+      marital_status,
+      dependent_count,
+      years_at_address,
       estimated_close_date,
       notes,
       tasks,
+      client_middle_name,
+      client_address_street,
+      client_address_unit,
+      client_address_city,
+      client_address_state,
+      client_address_zip,
     } = req.body;
 
     // Get broker ID from authenticated session
@@ -2953,11 +3911,19 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
       clientId = existingClients[0].id;
       // Update client info
       await connection.query(
-        "UPDATE clients SET first_name = ?, last_name = ?, phone = ?, assigned_broker_id = ? WHERE id = ? AND tenant_id = ?",
+        `UPDATE clients SET first_name=?, middle_name=?, last_name=?, phone=?,
+          address_street=?, address_unit=?, address_city=?, address_state=?, address_zip=?,
+          assigned_broker_id=? WHERE id=? AND tenant_id=?`,
         [
           client_first_name,
+          client_middle_name || null,
           client_last_name,
           client_phone,
+          client_address_street || null,
+          client_address_unit || null,
+          client_address_city || null,
+          client_address_state || null,
+          client_address_zip || null,
           brokerId,
           clientId,
           MORTGAGE_TENANT_ID,
@@ -2966,14 +3932,23 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
     } else {
       // Create new client
       const [clientResult] = await connection.query<any>(
-        `INSERT INTO clients (tenant_id, email, first_name, last_name, phone, status, email_verified, assigned_broker_id, source) 
-         VALUES (?, ?, ?, ?, ?, 'active', 0, ?, 'broker_created')`,
+        `INSERT INTO clients
+          (tenant_id, email, first_name, middle_name, last_name, phone,
+           address_street, address_unit, address_city, address_state, address_zip,
+           status, email_verified, assigned_broker_id, source)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,'active',0,?,'broker_created')`,
         [
           MORTGAGE_TENANT_ID,
           client_email,
           client_first_name,
+          client_middle_name || null,
           client_last_name,
           client_phone,
+          client_address_street || null,
+          client_address_unit || null,
+          client_address_city || null,
+          client_address_state || null,
+          client_address_zip || null,
           brokerId,
         ],
       );
@@ -2987,11 +3962,10 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
     const [loanResult] = await connection.query<any>(
       `INSERT INTO loan_applications (
         tenant_id, application_number, client_user_id, broker_user_id, loan_type, loan_amount,
-        property_value, property_address, property_city, property_state, property_zip,
-        property_type, down_payment, loan_purpose, status, current_step, total_steps,
-        estimated_close_date, notes, submitted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'app_sent', 1, 8, ?, ?, NOW())`,
-
+        property_value, property_address, property_unit, property_city, property_state, property_zip,
+        property_type, down_payment, loan_purpose, marital_status, dependent_count, years_at_address,
+        status, current_step, total_steps, estimated_close_date, notes, submitted_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'app_sent',1,8,?,?,NOW())`,
       [
         MORTGAGE_TENANT_ID,
         applicationNumber,
@@ -3001,12 +3975,16 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
         loan_amount,
         property_value,
         property_address,
+        property_unit || null,
         property_city,
         property_state,
         property_zip,
         property_type,
         down_payment,
         loan_purpose || null,
+        marital_status || null,
+        dependent_count != null ? parseInt(String(dependent_count)) : null,
+        years_at_address != null ? parseFloat(String(years_at_address)) : null,
         estimated_close_date || null,
         notes || null,
       ],
@@ -3111,10 +4089,12 @@ const handlePublicApply: RequestHandler = async (req, res) => {
     const {
       // Identity (Step 1)
       first_name,
+      middle_name,
       last_name,
       email,
       phone,
       address_street,
+      address_unit,
       address_city,
       address_state,
       address_zip,
@@ -3125,6 +4105,7 @@ const handlePublicApply: RequestHandler = async (req, res) => {
       down_payment,
       property_type,
       property_address,
+      property_unit,
       property_city,
       property_state,
       property_zip,
@@ -3133,10 +4114,13 @@ const handlePublicApply: RequestHandler = async (req, res) => {
       annual_income,
       credit_score_range,
       income_type,
-      // Employment (Step 4)
+      // Employment + Personal (Step 4)
       employment_status,
       employer_name,
       years_employed,
+      marital_status,
+      dependent_count,
+      years_at_address,
       // Citizenship / immigration (Step 1)
       citizenship_status,
       // Optional broker association
@@ -3183,8 +4167,8 @@ const handlePublicApply: RequestHandler = async (req, res) => {
     if (existingClients.length > 0) {
       clientId = existingClients[0].id;
       await connection.query(
-        `UPDATE clients SET first_name=?, last_name=?, phone=?,
-          address_street=?, address_city=?, address_state=?, address_zip=?,
+        `UPDATE clients SET first_name=?, middle_name=?, last_name=?, phone=?,
+          address_street=?, address_unit=?, address_city=?, address_state=?, address_zip=?,
           employment_status=?, income_type=?, annual_income=?, credit_score=?,
           citizenship_status=?,
           assigned_broker_id = COALESCE(assigned_broker_id, ?),
@@ -3192,9 +4176,11 @@ const handlePublicApply: RequestHandler = async (req, res) => {
          WHERE id=? AND tenant_id=?`,
         [
           first_name,
+          middle_name || null,
           last_name,
           phone || null,
           address_street || null,
+          address_unit || null,
           address_city || null,
           address_state || null,
           address_zip || null,
@@ -3211,18 +4197,20 @@ const handlePublicApply: RequestHandler = async (req, res) => {
     } else {
       const [clientResult] = await connection.query<any>(
         `INSERT INTO clients
-          (tenant_id, email, first_name, last_name, phone,
-           address_street, address_city, address_state, address_zip,
+          (tenant_id, email, first_name, middle_name, last_name, phone,
+           address_street, address_unit, address_city, address_state, address_zip,
            employment_status, income_type, annual_income, credit_score,
            citizenship_status, assigned_broker_id, status, email_verified, source)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',0,'public_wizard')`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',0,'public_wizard')`,
         [
           MORTGAGE_TENANT_ID,
           email.toLowerCase().trim(),
           first_name,
+          middle_name || null,
           last_name,
           phone || null,
           address_street || null,
+          address_unit || null,
           address_city || null,
           address_state || null,
           address_zip || null,
@@ -3373,12 +4361,13 @@ const handlePublicApply: RequestHandler = async (req, res) => {
         `INSERT INTO loan_applications
           (tenant_id, application_number, client_user_id, broker_user_id,
            partner_broker_id,
-           loan_type, loan_amount, property_value, property_address,
+           loan_type, loan_amount, property_value, property_address, property_unit,
            property_city, property_state, property_zip, property_type,
            down_payment, loan_purpose, employment_status, employer_name,
-           years_employed, status, current_step, total_steps,
+           years_employed, marital_status, dependent_count, years_at_address,
+           status, current_step, total_steps,
            priority, broker_token, citizenship_status, submitted_at)
-         VALUES (?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,'application_received',1,8,'medium',?,?,NOW())`,
+         VALUES (?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'application_received',1,8,'medium',?,?,NOW())`,
         [
           MORTGAGE_TENANT_ID,
           applicationNumber,
@@ -3389,6 +4378,7 @@ const handlePublicApply: RequestHandler = async (req, res) => {
           loan_amount,
           propVal || null,
           property_address || null,
+          property_unit || null,
           property_city || null,
           property_state || null,
           property_zip || null,
@@ -3398,6 +4388,11 @@ const handlePublicApply: RequestHandler = async (req, res) => {
           resolvedEmploymentStatus,
           employer_name || null,
           years_employed || null,
+          marital_status || null,
+          dependent_count != null ? parseInt(String(dependent_count)) : null,
+          years_at_address != null
+            ? parseFloat(String(years_at_address))
+            : null,
           broker_token || null,
           resolvedCitizenshipStatus,
         ],
@@ -3567,6 +4562,23 @@ const handlePublicApply: RequestHandler = async (req, res) => {
     );
 
     await connection.commit();
+
+    // Notify the assigned broker(s) about the new self-service application.
+    // Falls back to all admins only when no broker can be resolved (e.g., no
+    // share-link token).
+    const targetBrokerIds = [
+      resolvedBrokerUserId,
+      resolvedPartnerBrokerId,
+    ].filter((id): id is number => typeof id === "number");
+    await createBrokerNotification({
+      brokerIds: targetBrokerIds.length ? targetBrokerIds : null,
+      notifyAllAdminsOnEmpty: targetBrokerIds.length === 0,
+      title: "New Loan Application",
+      message: `${first_name} ${last_name} submitted application ${applicationNumber}`,
+      category: "loan",
+      type: "success",
+      actionUrl: `/admin/clients/${clientId}`,
+    });
 
     // Trigger reminder flows for application_received event (non-fatal)
     triggerReminderFlows(
@@ -4649,6 +5661,10 @@ const handleUpdateLoanDetails: RequestHandler = async (req, res) => {
       employment_status,
       employer_name,
       years_employed,
+      property_unit,
+      marital_status,
+      dependent_count,
+      years_at_address,
     } = req.body;
 
     // Verify the loan exists and broker has access
@@ -4778,6 +5794,31 @@ const handleUpdateLoanDetails: RequestHandler = async (req, res) => {
     maybeSet("employment_status", employment_status);
     maybeSet("employer_name", employer_name);
     maybeSet("years_employed", years_employed);
+    maybeSet("property_unit", property_unit);
+    const VALID_MARITAL = [
+      "single",
+      "married",
+      "separated",
+      "divorced",
+      "widowed",
+    ];
+    if (marital_status !== undefined) {
+      if (marital_status === null || marital_status === "") {
+        maybeSet("marital_status", null);
+      } else if (VALID_MARITAL.includes(marital_status)) {
+        maybeSet("marital_status", marital_status);
+      }
+    }
+    maybeSet(
+      "dependent_count",
+      dependent_count != null ? parseInt(dependent_count) : dependent_count,
+    );
+    maybeSet(
+      "years_at_address",
+      years_at_address != null
+        ? parseFloat(years_at_address)
+        : years_at_address,
+    );
 
     if (fields.length === 0) {
       return res
@@ -5068,6 +6109,21 @@ const handleUpdateLoanStatus: RequestHandler = async (req, res) => {
     triggerReminderFlows(loanId, newStatus, MORTGAGE_TENANT_ID).catch((err) =>
       console.error("Reminder flow trigger error:", err),
     );
+
+    // R4 fix: cancel any in-flight reminder flow executions for this loan when
+    // it reaches a terminal status (denied, cancelled, closed, funded). Prevents
+    // "we're working on your loan" drips from continuing after the loan is dead.
+    if (
+      ["denied", "rejected", "cancelled", "closed", "loan_funded"].includes(
+        newStatus,
+      )
+    ) {
+      cancelActiveExecutionsForLoan(
+        loanId,
+        MORTGAGE_TENANT_ID,
+        newStatus,
+      ).catch((err) => console.error("Cancel active executions error:", err));
+    }
 
     res.json({
       success: true,
@@ -5827,12 +6883,14 @@ const handleGetClientDetailProfile: RequestHandler = async (req, res) => {
       client: {
         id: client.id,
         first_name: client.first_name,
+        middle_name: client.middle_name ?? null,
         last_name: client.last_name,
         email: client.email,
         phone: client.phone,
         alternate_phone: client.alternate_phone,
         date_of_birth: client.date_of_birth,
         address_street: client.address_street,
+        address_unit: client.address_unit ?? null,
         address_city: client.address_city,
         address_state: client.address_state,
         address_zip: client.address_zip,
@@ -5940,9 +6998,15 @@ const handleGetClients: RequestHandler = async (req, res) => {
         c.id,
         c.email,
         c.first_name,
+        c.middle_name,
         c.last_name,
         c.phone,
         c.date_of_birth,
+        c.address_street,
+        c.address_unit,
+        c.address_city,
+        c.address_state,
+        c.address_zip,
         c.status,
         c.created_at,
         COUNT(DISTINCT la.id) as total_applications,
@@ -5978,41 +7042,83 @@ const handleGetClients: RequestHandler = async (req, res) => {
 const handleCreateClient: RequestHandler = async (req, res) => {
   try {
     const brokerId = (req as any).brokerId;
-    const { first_name, last_name, email, phone } = req.body as {
+    const {
+      first_name,
+      last_name,
+      email,
+      phone,
+      middle_name,
+      address_street,
+      address_unit,
+      address_city,
+      address_state,
+      address_zip,
+    } = req.body as {
       first_name?: string;
+      middle_name?: string;
       last_name?: string;
       email?: string;
       phone?: string;
+      address_street?: string;
+      address_unit?: string;
+      address_city?: string;
+      address_state?: string;
+      address_zip?: string;
     };
 
-    if (!first_name?.trim() || !last_name?.trim() || !email?.trim()) {
+    if (!first_name?.trim() || !last_name?.trim()) {
       return res.status(400).json({
         success: false,
-        error: "first_name, last_name and email are required",
+        error: "first_name and last_name are required",
       });
     }
 
-    // Check for duplicate email under this tenant
-    const [[existing]] = await pool.query<any[]>(
-      "SELECT id FROM clients WHERE tenant_id = ? AND email = ? LIMIT 1",
-      [MORTGAGE_TENANT_ID, email.trim().toLowerCase()],
-    );
-    if (existing) {
-      return res.status(409).json({
+    const trimmedEmail = email?.trim().toLowerCase() || null;
+
+    // Validate email format when provided
+    if (trimmedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      return res.status(400).json({
         success: false,
-        error: "A client with this email already exists",
+        error: "Invalid email format",
       });
     }
+
+    // Check for duplicate real email under this tenant (skip placeholder emails)
+    if (trimmedEmail) {
+      const [[existing]] = await pool.query<any[]>(
+        "SELECT id FROM clients WHERE tenant_id = ? AND email = ? LIMIT 1",
+        [MORTGAGE_TENANT_ID, trimmedEmail],
+      );
+      if (existing) {
+        return res.status(409).json({
+          success: false,
+          error: "A client with this email already exists",
+        });
+      }
+    }
+
+    // When no real email is provided, generate a unique placeholder so that
+    // downstream code (reminder flows, email guards) can detect the absence.
+    const trimmedPhone = phone?.trim() || null;
+    const finalEmail =
+      trimmedEmail ??
+      `noemail_${Date.now()}${trimmedPhone ? trimmedPhone.replace(/\D/g, "") : Math.random().toString(36).slice(2)}@noemail.placeholder`;
 
     const [result] = await pool.query<any>(
-      `INSERT INTO clients (tenant_id, first_name, last_name, email, phone, status, assigned_broker_id, income_type)
-       VALUES (?, ?, ?, ?, ?, 'active', ?, 'W-2')`,
+      `INSERT INTO clients (tenant_id, first_name, middle_name, last_name, email, phone, address_street, address_unit, address_city, address_state, address_zip, status, assigned_broker_id, income_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 'W-2')`,
       [
         MORTGAGE_TENANT_ID,
         first_name.trim(),
+        middle_name?.trim() || null,
         last_name.trim(),
-        email.trim().toLowerCase(),
-        phone?.trim() || null,
+        finalEmail,
+        trimmedPhone,
+        address_street?.trim() || null,
+        address_unit?.trim() || null,
+        address_city?.trim() || null,
+        address_state?.trim()?.toUpperCase() || null,
+        address_zip?.trim() || null,
         brokerId,
       ],
     );
@@ -6020,7 +7126,9 @@ const handleCreateClient: RequestHandler = async (req, res) => {
     const newClientId: number = result.insertId;
 
     const [[client]] = await pool.query<any[]>(
-      `SELECT id, email, first_name, last_name, phone, date_of_birth, status, created_at,
+      `SELECT id, email, first_name, middle_name, last_name, phone, date_of_birth,
+              address_street, address_unit, address_city, address_state, address_zip,
+              status, created_at,
               0 as total_applications, 0 as active_applications, 0 as total_conversations
        FROM clients WHERE id = ?`,
       [newClientId],
@@ -6035,13 +7143,15 @@ const handleCreateClient: RequestHandler = async (req, res) => {
       ? `${creatingBroker.first_name} ${creatingBroker.last_name}`.trim()
       : "Your Loan Officer";
 
-    // Send welcome email (non-blocking — failure won't abort the response)
-    sendClientManualWelcomeEmail(
-      client.email,
-      client.first_name,
-      client.last_name,
-      brokerFullName,
-    ).catch(() => {});
+    // Send welcome email only when the client has a real email address
+    if (client.email && !client.email.startsWith("noemail_")) {
+      sendClientManualWelcomeEmail(
+        client.email,
+        client.first_name,
+        client.last_name,
+        brokerFullName,
+      ).catch(() => {});
+    }
 
     return res.status(201).json({ success: true, client });
   } catch (error) {
@@ -6064,11 +7174,14 @@ const handleUpdateClient: RequestHandler = async (req, res) => {
     const hasGlobalClientAccess = brokerRole === "superadmin";
     const {
       first_name,
+      middle_name,
       last_name,
+      email,
       phone,
       alternate_phone,
       date_of_birth,
       address_street,
+      address_unit,
       address_city,
       address_state,
       address_zip,
@@ -6080,11 +7193,14 @@ const handleUpdateClient: RequestHandler = async (req, res) => {
       source,
     } = req.body as {
       first_name?: string;
+      middle_name?: string;
       last_name?: string;
+      email?: string;
       phone?: string;
       alternate_phone?: string;
       date_of_birth?: string;
       address_street?: string;
+      address_unit?: string;
       address_city?: string;
       address_state?: string;
       address_zip?: string;
@@ -6123,9 +7239,35 @@ const handleUpdateClient: RequestHandler = async (req, res) => {
     const updates: string[] = [];
     const values: any[] = [];
 
+    if (email !== undefined) {
+      const trimmedEmail = email?.trim().toLowerCase();
+      if (trimmedEmail) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid email format" });
+        }
+        const [[emailExists]] = await pool.query<any[]>(
+          "SELECT id FROM clients WHERE email = ? AND tenant_id = ? AND id != ? LIMIT 1",
+          [trimmedEmail, MORTGAGE_TENANT_ID, clientId],
+        );
+        if (emailExists) {
+          return res.status(409).json({
+            success: false,
+            error: "A client with this email already exists",
+          });
+        }
+      }
+      updates.push("email = ?");
+      values.push(trimmedEmail || null);
+    }
     if (first_name !== undefined) {
       updates.push("first_name = ?");
       values.push(first_name.trim());
+    }
+    if (middle_name !== undefined) {
+      updates.push("middle_name = ?");
+      values.push(middle_name?.trim() || null);
     }
     if (last_name !== undefined) {
       updates.push("last_name = ?");
@@ -6157,6 +7299,10 @@ const handleUpdateClient: RequestHandler = async (req, res) => {
     if (address_street !== undefined) {
       updates.push("address_street = ?");
       values.push(address_street?.trim() || null);
+    }
+    if (address_unit !== undefined) {
+      updates.push("address_unit = ?");
+      values.push(address_unit?.trim() || null);
     }
     if (address_city !== undefined) {
       updates.push("address_city = ?");
@@ -6220,8 +7366,8 @@ const handleUpdateClient: RequestHandler = async (req, res) => {
     }
 
     const [[client]] = await pool.query<any[]>(
-      `SELECT c.id, c.email, c.first_name, c.last_name, c.phone, c.date_of_birth,
-              c.address_street, c.address_city, c.address_state, c.address_zip,
+      `SELECT c.id, c.email, c.first_name, c.middle_name, c.last_name, c.phone, c.date_of_birth,
+              c.address_street, c.address_unit, c.address_city, c.address_state, c.address_zip,
               c.status, c.created_at,
               COALESCE(apps.total,0) AS total_applications,
               COALESCE(apps.active,0) AS active_applications,
@@ -6761,6 +7907,7 @@ const handleUpdateBroker: RequestHandler = async (req, res) => {
     const {
       first_name,
       last_name,
+      email,
       phone,
       role,
       status,
@@ -6827,6 +7974,30 @@ const handleUpdateBroker: RequestHandler = async (req, res) => {
     if (last_name !== undefined) {
       updates.push("last_name = ?");
       values.push(last_name);
+    }
+    if (email !== undefined) {
+      const trimmedEmail = email?.trim().toLowerCase();
+      if (trimmedEmail) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid email format" });
+        }
+        const [[emailExists]] = await pool.query<any[]>(
+          "SELECT id FROM brokers WHERE email = ? AND tenant_id = ? AND id != ? LIMIT 1",
+          [trimmedEmail, MORTGAGE_TENANT_ID, targetBrokerId],
+        );
+        if (emailExists) {
+          return res.status(409).json({
+            success: false,
+            error: "A broker with this email already exists",
+          });
+        }
+      }
+      if (trimmedEmail) {
+        updates.push("email = ?");
+        values.push(trimmedEmail);
+      }
     }
     if (phone !== undefined) {
       updates.push("phone = ?");
@@ -7332,28 +8503,31 @@ const handleGetTaskTemplates: RequestHandler = async (req, res) => {
     const safeSortBy = TASK_SORT[sortBy] ?? "order_index";
 
     const searchWhere = search
-      ? " AND (title LIKE ? OR description LIKE ? OR task_type LIKE ?)"
+      ? " AND (tt.title LIKE ? OR tt.description LIKE ? OR tt.task_type LIKE ?)"
       : "";
     const searchParams: any[] = search
       ? [`%${search}%`, `%${search}%`, `%${search}%`]
       : [];
 
     const [[countRow]] = await pool.query<any[]>(
-      `SELECT COUNT(*) as total FROM task_templates WHERE created_by_broker_id = ? AND tenant_id = ?${searchWhere}`,
-      [brokerId, MORTGAGE_TENANT_ID, ...searchParams],
+      `SELECT COUNT(*) as total FROM task_templates tt WHERE tt.tenant_id = ?${searchWhere}`,
+      [MORTGAGE_TENANT_ID, ...searchParams],
     );
     const total = Number(countRow?.total || 0);
 
     const [templates] = await pool.query<any[]>(
       `SELECT
-        id, title, description, task_type, priority, default_due_days,
-        order_index, is_active, requires_documents, document_instructions,
-        has_custom_form, has_signing, created_at, updated_at
-      FROM task_templates
-      WHERE created_by_broker_id = ? AND tenant_id = ?${searchWhere}
-      ORDER BY ${safeSortBy} ${sortOrder}
+        tt.id, tt.title, tt.description, tt.task_type, tt.priority, tt.default_due_days,
+        tt.order_index, tt.is_active, tt.requires_documents, tt.document_instructions,
+        tt.has_custom_form, tt.has_signing, tt.created_at, tt.updated_at,
+        tt.created_by_broker_id,
+        CONCAT(b.first_name, ' ', b.last_name) AS created_by_broker_name
+      FROM task_templates tt
+      LEFT JOIN brokers b ON b.id = tt.created_by_broker_id
+      WHERE tt.tenant_id = ?${searchWhere}
+      ORDER BY tt.${safeSortBy} ${sortOrder}
       LIMIT ${limit} OFFSET ${offset}`,
-      [brokerId, MORTGAGE_TENANT_ID, ...searchParams],
+      [MORTGAGE_TENANT_ID, ...searchParams],
     );
 
     res.json({
@@ -8952,6 +10126,46 @@ const handleSubmitTaskSignatures: RequestHandler = async (req, res) => {
       [taskId],
     );
 
+    // Notify brokers that a task is awaiting their review
+    try {
+      const [taskRows] = await pool.query<RowDataPacket[]>(
+        `SELECT t.title, t.created_by_broker_id, t.application_id,
+                CONCAT(c.first_name, ' ', c.last_name) AS client_name
+           FROM tasks t
+           LEFT JOIN clients c ON t.assigned_to_user_id = c.id
+          WHERE t.id = ? AND t.tenant_id = ?
+          LIMIT 1`,
+        [taskId, MORTGAGE_TENANT_ID],
+      );
+      const tr = taskRows[0];
+      if (tr) {
+        // Owners = creator + loan's primary broker + partner broker (deduped)
+        const ownerIds = await getApplicationOwnerBrokerIds(tr.application_id);
+        if (
+          tr.created_by_broker_id &&
+          !ownerIds.includes(tr.created_by_broker_id)
+        ) {
+          ownerIds.push(tr.created_by_broker_id);
+        }
+        await createBrokerNotification({
+          brokerIds: ownerIds.length ? ownerIds : null,
+          notifyAllAdminsOnEmpty: ownerIds.length === 0,
+          title: "Task Submitted for Review",
+          message: `${tr.client_name || "A client"} submitted \"${tr.title}\" for approval`,
+          category: "task",
+          type: "info",
+          actionUrl: tr.application_id
+            ? `/admin/loans/${tr.application_id}`
+            : `/admin/tasks`,
+        });
+      }
+    } catch (notifyErr) {
+      console.error(
+        "Broker notification (task signatures submitted) failed:",
+        notifyErr,
+      );
+    }
+
     res.json({
       success: true,
       message: "Signatures submitted successfully",
@@ -9267,11 +10481,13 @@ const handleGenerateMISMO: RequestHandler = async (req, res) => {
         a.*,
         c.first_name as client_first_name,
         c.last_name as client_last_name,
+        c.middle_name as client_middle_name,
         c.email as client_email,
         c.phone as client_phone,
         c.date_of_birth,
         c.ssn_encrypted,
         c.address_street,
+        c.address_unit,
         c.address_city,
         c.address_state,
         c.address_zip,
@@ -9319,7 +10535,7 @@ const handleGenerateMISMO: RequestHandler = async (req, res) => {
     }
 
     // Generate MISMO 3.4 XML
-    const xml = generateMISMO34XML(loan);
+    const xml = generateMISMO34XML(loan as unknown as MismoLoanRow);
 
     // Set headers for XML download
     const filename = `MISMO_${loan.application_number}_${new Date().toISOString().split("T")[0]}.xml`;
@@ -9348,249 +10564,811 @@ const handleGenerateMISMO: RequestHandler = async (req, res) => {
   }
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MISMO 3.4 / ULAD XML generation helpers
+// Each function builds one named section of the DU_Wrapper_3.4.0_B324.xsd schema.
+// Keeping them separate ensures element ordering is always correct and makes
+// future schema updates trivial to locate and apply.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Typed view of the SQL row returned by handleGenerateMISMO query */
+interface MismoLoanRow {
+  loan_amount: string | number;
+  property_value: string | number | null;
+  loan_type: "purchase" | "refinance" | string;
+  loan_term_months: number | null;
+  interest_rate: string | number | null;
+  property_address: string | null;
+  property_unit: string | null;
+  property_city: string | null;
+  property_state: string | null;
+  property_zip: string | null;
+  employer_name: string | null;
+  years_employed: string | number | null;
+  employment_status: string | null;
+  marital_status: string | null;
+  citizenship_status: string | null;
+  annual_income: string | number | null;
+  date_of_birth: string | null;
+  ssn_encrypted: string | null;
+  dependent_count: number | null;
+  dependent_ages: string | number[] | null; // JSON array of ages stored as string or parsed
+  years_at_address: string | number | null;
+  client_first_name: string;
+  client_last_name: string;
+  client_middle_name: string | null;
+  client_email: string | null;
+  client_phone: string | null;
+  address_street: string | null;
+  address_unit: string | null;
+  address_city: string | null;
+  address_state: string | null;
+  address_zip: string | null;
+  broker_first_name: string | null;
+  broker_last_name: string | null;
+  broker_email: string | null;
+  broker_phone: string | null;
+  license_number: string | null;
+  application_number: string;
+  [k: string]: unknown;
+}
+
+/** Coerce any value to a trimmed string; null/undefined → "" */
+const mismoStr = (v: unknown): string => (v != null ? String(v).trim() : "");
+
+/** Format a DB date to YYYY-MM-DD, returns "" on bad input */
+const mismoDate = (d: string | null | undefined): string => {
+  if (!d) return "";
+  try {
+    return new Date(d).toISOString().split("T")[0];
+  } catch {
+    return String(d);
+  }
+};
+
+/** Normalize US state: "California" | "CALIFORNIA" → "CA"; "CA" → "CA" */
+const MISMO_STATE_ABBR: Readonly<Record<string, string>> = {
+  alabama: "AL",
+  alaska: "AK",
+  arizona: "AZ",
+  arkansas: "AR",
+  california: "CA",
+  colorado: "CO",
+  connecticut: "CT",
+  delaware: "DE",
+  florida: "FL",
+  georgia: "GA",
+  hawaii: "HI",
+  idaho: "ID",
+  illinois: "IL",
+  indiana: "IN",
+  iowa: "IA",
+  kansas: "KS",
+  kentucky: "KY",
+  louisiana: "LA",
+  maine: "ME",
+  maryland: "MD",
+  massachusetts: "MA",
+  michigan: "MI",
+  minnesota: "MN",
+  mississippi: "MS",
+  missouri: "MO",
+  montana: "MT",
+  nebraska: "NE",
+  nevada: "NV",
+  "new hampshire": "NH",
+  "new jersey": "NJ",
+  "new mexico": "NM",
+  "new york": "NY",
+  "north carolina": "NC",
+  "north dakota": "ND",
+  ohio: "OH",
+  oklahoma: "OK",
+  oregon: "OR",
+  pennsylvania: "PA",
+  "rhode island": "RI",
+  "south carolina": "SC",
+  "south dakota": "SD",
+  tennessee: "TN",
+  texas: "TX",
+  utah: "UT",
+  vermont: "VT",
+  virginia: "VA",
+  washington: "WA",
+  "west virginia": "WV",
+  wisconsin: "WI",
+  wyoming: "WY",
+};
+const mismoState = (s: string | null | undefined): string => {
+  if (!s) return "";
+  const t = s.trim();
+  if (t.length <= 2) return t.toUpperCase();
+  return MISMO_STATE_ABBR[t.toLowerCase()] ?? t.toUpperCase();
+};
+
+/** Map DB citizenship_status enum → MISMO CitizenshipResidencyType */
+const mismoCitizenship = (status: string | null | undefined): string => {
+  if (status === "us_citizen") return "USCitizen";
+  if (status === "permanent_resident") return "PermanentResidentAlien";
+  return "NonPermanentResidentAlien";
+};
+
+/** Map DB marital_status → MISMO MaritalStatusType */
+const mismoMarital = (status: string | null | undefined): string => {
+  if (status === "married") return "Married";
+  if (status === "separated") return "Separated";
+  return "Unmarried";
+};
+
+/** Map DB loan_type → MISMO LoanPurposeType */
+const mismoLoanPurpose = (loanType: string | null | undefined): string => {
+  if (loanType === "purchase") return "Purchase";
+  if (loanType === "refinance") return "Refinance";
+  return "Other";
+};
+
 /**
- * Helper function to generate MISMO 3.4 XML
+ * Append a standard US address block to a parent xmlbuilder2 node.
+ * Uses the DU_Wrapper xs:sequence order:
+ *   AddressLineText → AddressUnitIdentifier? → AddressType? → CityName →
+ *   CountryCode → CountryName → PostalCode → StateCode
  */
-function generateMISMO34XML(loan: any): string {
-  const now = new Date().toISOString();
-  const loanAmount = parseFloat(loan.loan_amount || 0);
-  const propertyValue = parseFloat(loan.property_value || 0);
-  const downPayment = parseFloat(loan.down_payment || 0);
-  const loanToValue =
-    propertyValue > 0 ? ((loanAmount / propertyValue) * 100).toFixed(2) : "0";
+function mismoAppendAddress(
+  parent: ReturnType<typeof create>,
+  opts: {
+    street: string;
+    unit?: string;
+    addressType?: string; // "Primary" | "Mailing" | omit
+    city: string;
+    zip: string;
+    stateCode: string;
+  },
+): void {
+  const addr = (parent as any).ele("ADDRESS");
+  if (opts.street) addr.ele("AddressLineText").txt(opts.street);
+  if (opts.unit) addr.ele("AddressUnitIdentifier").txt(opts.unit);
+  if (opts.addressType) addr.ele("AddressType").txt(opts.addressType);
+  addr.ele("CityName").txt(opts.city);
+  addr.ele("CountryCode").txt("US");
+  addr.ele("CountryName").txt("United States");
+  if (opts.zip) addr.ele("PostalCode").txt(opts.zip);
+  if (opts.stateCode) addr.ele("StateCode").txt(opts.stateCode);
+}
 
-  // Format loan type for MISMO
-  const loanPurposeType =
-    loan.loan_type === "purchase"
-      ? "Purchase"
-      : loan.loan_type === "refinance"
-        ? "Refinance"
-        : "Other";
+/** Build the DEAL > ASSETS section (RealEstateOwned asset for existing property) */
+function mismoAppendAssets(
+  deal: ReturnType<typeof create>,
+  propertyValue: number,
+): void {
+  const ownedPropDetail = (deal as any)
+    .ele("ASSETS")
+    .ele("ASSET", { "xlink:label": "ASSET_1" })
+    .ele("ASSET_DETAIL")
+    .ele("AssetType")
+    .txt("RealEstateOwned")
+    .up()
+    .up()
+    .ele("OWNED_PROPERTY")
+    .ele("OWNED_PROPERTY_DETAIL");
+  if (propertyValue > 0) {
+    ownedPropDetail
+      .ele("OwnedPropertyLienUPBAmount")
+      .txt(propertyValue.toFixed(2));
+  }
+  ownedPropDetail
+    .ele("OwnedPropertySubjectIndicator")
+    .txt("false")
+    .up()
+    .up()
+    .ele("PROPERTY")
+    .ele("ADDRESS")
+    .ele("CountryCode")
+    .txt("US")
+    .up()
+    .ele("CountryName")
+    .txt("United States")
+    .up()
+    .up()
+    .ele("PROPERTY_DETAIL")
+    .ele("PropertyCurrentUsageType")
+    .txt("PrimaryResidence");
+}
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<MESSAGE xmlns="http://www.mismo.org/residential/2009/schemas" 
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://www.mismo.org/residential/2009/schemas">
-  
-  <ABOUT_VERSIONS>
-    <ABOUT_VERSION>
-      <CreatedDatetime>${now}</CreatedDatetime>
-      <DataVersionIdentifier>MISMO 3.4</DataVersionIdentifier>
-    </ABOUT_VERSION>
-  </ABOUT_VERSIONS>
+/** Build the DEAL > COLLATERALS section */
+function mismoAppendCollaterals(
+  deal: ReturnType<typeof create>,
+  loan: MismoLoanRow,
+  propStateCode: string,
+  propertyValue: number,
+): void {
+  const subjectProperty = (deal as any)
+    .ele("COLLATERALS")
+    .ele("COLLATERAL")
+    .ele("SUBJECT_PROPERTY", { ValuationUseType: "SubjectProperty" });
 
-  <DEAL_SETS>
-    <DEAL_SET>
-      <DEALS>
-        <DEAL>
-          <LOANS>
-            <LOAN>
-              <LOAN_IDENTIFIERS>
-                <LOAN_IDENTIFIER>
-                  <LoanIdentifier>${loan.application_number}</LoanIdentifier>
-                  <LoanIdentifierType>LenderLoan</LoanIdentifierType>
-                </LOAN_IDENTIFIER>
-              </LOAN_IDENTIFIERS>
+  mismoAppendAddress(subjectProperty, {
+    street: mismoStr(loan.property_address),
+    unit: mismoStr(loan.property_unit) || undefined,
+    city: mismoStr(loan.property_city),
+    zip: mismoStr(loan.property_zip),
+    stateCode: propStateCode,
+  });
 
-              <LOAN_DETAIL>
-                <LoanAmountRequested>${loanAmount.toFixed(2)}</LoanAmountRequested>
-                <LoanPurposeType>${loanPurposeType}</LoanPurposeType>
-                <LoanStatusType>${loan.status === "approved" ? "Approved" : "Submitted"}</LoanStatusType>
-                <ApplicationReceivedDate>${loan.submitted_at || loan.created_at}</ApplicationReceivedDate>
-              </LOAN_DETAIL>
+  // PROJECT (alphabetically before PROPERTY_DETAIL)
+  subjectProperty
+    .ele("PROJECT")
+    .ele("PROJECT_DETAIL")
+    .ele("ProjectAttachmentType")
+    .txt("Detached")
+    .up()
+    .ele("ProjectLegalStructureType")
+    .txt("Unknown");
 
-              <TERMS_OF_LOAN>
-                <LoanAmortizationType>AdjustableRate</LoanAmortizationType>
-                <LoanAmortizationPeriodCount>${loan.loan_term_months || 360}</LoanAmortizationPeriodCount>
-                <LoanAmortizationPeriodType>Month</LoanAmortizationPeriodType>
-                ${loan.interest_rate ? `<NoteRatePercent>${loan.interest_rate}</NoteRatePercent>` : ""}
-              </TERMS_OF_LOAN>
+  const propDetail = subjectProperty.ele("PROPERTY_DETAIL");
+  propDetail.ele("AttachmentType").txt("Detached");
+  propDetail.ele("ConstructionMethodType").txt("SiteBuilt");
+  propDetail.ele("FinancedUnitCount").txt("1");
+  propDetail.ele("PropertyEstateType").txt("FeeSimple");
+  propDetail.ele("PropertyUsageType").txt("PrimaryResidence");
+  propDetail.ele("PUDIndicator").txt("false");
+}
 
-              <QUALIFICATION>
-                <ApplicationTakenMethodType>Internet</ApplicationTakenMethodType>
-              </QUALIFICATION>
+/** Build the DEAL > LIABILITIES section */
+function mismoAppendLiabilities(
+  deal: ReturnType<typeof create>,
+  propertyValue: number,
+): void {
+  (deal as any)
+    .ele("LIABILITIES")
+    .ele("LIABILITY", { SequenceNumber: "1", "xlink:label": "LIABILITY_1" })
+    .ele("LIABILITY_DETAIL")
+    .ele("LiabilityType")
+    .txt("MortgageLoan")
+    .up()
+    .ele("LiabilityUnpaidBalanceAmount")
+    .txt(propertyValue > 0 ? propertyValue.toFixed(2) : "0.0");
+}
 
-              <LOAN_PROGRAMS>
-                <LOAN_PROGRAM>
-                  <LoanProgramName>Conventional</LoanProgramName>
-                </LOAN_PROGRAM>
-              </LOAN_PROGRAMS>
+/** Build the DEAL > LOANS section */
+function mismoAppendLoans(
+  deal: ReturnType<typeof create>,
+  loan: MismoLoanRow,
+  loanAmount: number,
+  loanTermMonths: number,
+  isRefinance: boolean,
+): void {
+  const loanEl = (deal as any)
+    .ele("LOANS")
+    .ele("LOAN", { LoanRoleType: "SubjectLoan", "xlink:label": "LOAN_1" });
 
-              <PARTIES>
-                <PARTY>
-                  <INDIVIDUAL>
-                    <NAME>
-                      <FirstName>${loan.client_first_name || ""}</FirstName>
-                      <LastName>${loan.client_last_name || ""}</LastName>
-                    </NAME>
-                    ${loan.date_of_birth ? `<BirthDate>${loan.date_of_birth}</BirthDate>` : ""}
-                    ${loan.ssn_encrypted ? `<TaxIdentificationIdentifier>${loan.ssn_encrypted}</TaxIdentificationIdentifier>` : ""}
-                  </INDIVIDUAL>
+  loanEl
+    .ele("AMORTIZATION")
+    .ele("AMORTIZATION_RULE")
+    .ele("LoanAmortizationPeriodCount")
+    .txt(String(loanTermMonths))
+    .up()
+    .ele("LoanAmortizationPeriodType")
+    .txt("Month");
 
-                  <ROLES>
-                    <ROLE>
-                      <ROLE_DETAIL>
-                        <PartyRoleType>Borrower</PartyRoleType>
-                      </ROLE_DETAIL>
+  loanEl
+    .ele("LOAN_DETAIL")
+    .ele("BorrowerCount")
+    .txt("1")
+    .up()
+    .ele("ConstructionLoanIndicator")
+    .txt("false");
 
-                      <BORROWER>
-                        ${
-                          loan.credit_score
-                            ? `<CREDIT_SCORES>
-                          <CREDIT_SCORE>
-                            <CreditScoreValue>${loan.credit_score}</CreditScoreValue>
-                            <CreditScoreModelType>FICO</CreditScoreModelType>
-                          </CREDIT_SCORE>
-                        </CREDIT_SCORES>`
-                            : ""
-                        }
+  loanEl
+    .ele("MATURITY")
+    .ele("MATURITY_RULE")
+    .ele("LoanMaturityPeriodCount")
+    .txt(String(loanTermMonths))
+    .up()
+    .ele("LoanMaturityPeriodType")
+    .txt("Month");
 
-                        <EMPLOYERS>
-                          <EMPLOYER>
-                            <EMPLOYMENT>
-                              <EmploymentStatusType>${loan.employment_status || "Current"}</EmploymentStatusType>
-                              <EmploymentMonthlyIncomeAmount>${loan.annual_income ? (loan.annual_income / 12).toFixed(2) : "0"}</EmploymentMonthlyIncomeAmount>
-                            </EMPLOYMENT>
-                          </EMPLOYER>
-                        </EMPLOYERS>
+  if (isRefinance) {
+    loanEl
+      .ele("REFINANCE")
+      .ele("RefinanceCashOutDeterminationType")
+      .txt("CashOut");
+  }
 
-                        <RESIDENCES>
-                          <RESIDENCE>
-                            <ADDRESS>
-                              <AddressLineText>${loan.address_street || ""}</AddressLineText>
-                              <CityName>${loan.address_city || ""}</CityName>
-                              <StateCode>${loan.address_state || ""}</StateCode>
-                              <PostalCode>${loan.address_zip || ""}</PostalCode>
-                            </ADDRESS>
-                          </RESIDENCE>
-                        </RESIDENCES>
-                      </BORROWER>
-                    </ROLE>
-                  </ROLES>
+  const termsEl = loanEl.ele("TERMS_OF_LOAN");
+  termsEl.ele("BaseLoanAmount").txt(loanAmount.toFixed(2));
+  termsEl.ele("LienPriorityType").txt("FirstLien");
+  termsEl.ele("LoanPurposeType").txt(mismoLoanPurpose(loan.loan_type));
+  if (loan.interest_rate) {
+    termsEl.ele("NoteRatePercent").txt(mismoStr(loan.interest_rate));
+  }
+}
 
-                  <TAXPAYER_IDENTIFIERS>
-                    <TAXPAYER_IDENTIFIER>
-                      ${loan.ssn_encrypted ? `<TaxpayerIdentifierValue>${loan.ssn_encrypted}</TaxpayerIdentifierValue>` : ""}
-                      <TaxpayerIdentifierType>SocialSecurityNumber</TaxpayerIdentifierType>
-                    </TAXPAYER_IDENTIFIER>
-                  </TAXPAYER_IDENTIFIERS>
+/** Build the BORROWER_DETAIL element inside a BORROWER node */
+function mismoAppendBorrowerDetail(
+  borrowerEl: ReturnType<typeof create>,
+  loan: MismoLoanRow,
+): void {
+  const detail = (borrowerEl as any).ele("BORROWER_DETAIL");
+  detail.ele("BorrowerBankruptcyIndicator").txt("false");
+  const dob = mismoDate(loan.date_of_birth);
+  if (dob) detail.ele("BorrowerBirthDate").txt(dob);
+  detail.ele("BorrowerClassificationType").txt("Primary");
+  detail.ele("BorrowerMailToAddressSameAsPropertyIndicator").txt("true");
+  detail.ele("CreditReportAuthorizationIndicator").txt("true");
+  // DependentCount: 0 when explicitly set to 0, omit only when null/undefined
+  const depCount = loan.dependent_count;
+  if (depCount != null) {
+    detail.ele("DependentCount").txt(String(depCount));
+  }
+  detail.ele("DomesticRelationshipIndicator").txt("false");
+  detail.ele("MaritalStatusType").txt(mismoMarital(loan.marital_status));
+  detail.ele("SelfDeclaredMilitaryServiceIndicator").txt("false");
+  detail.ele("SpousalVABenefitsEligibilityIndicator").txt("false");
+}
 
-                  <CONTACTS>
-                    <CONTACT>
-                      <CONTACT_POINTS>
-                        ${
-                          loan.client_email
-                            ? `<CONTACT_POINT>
-                          <ContactPointValue>${loan.client_email}</ContactPointValue>
-                          <ContactPointType>Email</ContactPointType>
-                        </CONTACT_POINT>`
-                            : ""
-                        }
-                        ${
-                          loan.client_phone
-                            ? `<CONTACT_POINT>
-                          <ContactPointValue>${loan.client_phone}</ContactPointValue>
-                          <ContactPointType>Phone</ContactPointType>
-                        </CONTACT_POINT>`
-                            : ""
-                        }
-                      </CONTACT_POINTS>
-                    </CONTACT>
-                  </CONTACTS>
-                </PARTY>
+/** Build the DEPENDENTS element inside a BORROWER node (alphabetically between DECLARATION and EMPLOYERS) */
+function mismoAppendDependents(
+  borrowerEl: ReturnType<typeof create>,
+  loan: MismoLoanRow,
+): void {
+  // Parse dependent_ages — DB stores as JSON string or already-parsed array
+  let ages: number[] = [];
+  if (loan.dependent_ages) {
+    try {
+      const parsed =
+        typeof loan.dependent_ages === "string"
+          ? JSON.parse(loan.dependent_ages)
+          : loan.dependent_ages;
+      if (Array.isArray(parsed)) ages = parsed.map(Number).filter(isFinite);
+    } catch {
+      /* ignore parse errors */
+    }
+  }
+  if (ages.length === 0) return;
+  const dependentsEl = (borrowerEl as any).ele("DEPENDENTS");
+  for (const age of ages) {
+    dependentsEl
+      .ele("DEPENDENT")
+      .ele("DependentAgeYearsCount")
+      .txt(String(age));
+  }
+}
 
-                ${
-                  loan.broker_first_name
-                    ? `<PARTY>
-                  <INDIVIDUAL>
-                    <NAME>
-                      <FirstName>${loan.broker_first_name}</FirstName>
-                      <LastName>${loan.broker_last_name}</LastName>
-                    </NAME>
-                  </INDIVIDUAL>
+/** Build the CURRENT_INCOME element inside a BORROWER node */
+function mismoAppendCurrentIncome(
+  borrowerEl: ReturnType<typeof create>,
+  monthlyIncome: string,
+): void {
+  (borrowerEl as any)
+    .ele("CURRENT_INCOME")
+    .ele("CURRENT_INCOME_ITEMS")
+    .ele("CURRENT_INCOME_ITEM", { "xlink:label": "CURRENT_INCOME_ITEM_1" })
+    .ele("CURRENT_INCOME_ITEM_DETAIL")
+    .ele("CurrentIncomeMonthlyTotalAmount")
+    .txt(monthlyIncome)
+    .up()
+    .ele("EmploymentIncomeIndicator")
+    .txt("true")
+    .up()
+    .ele("IncomeType")
+    .txt("Base");
+}
 
-                  <ROLES>
-                    <ROLE>
-                      <ROLE_DETAIL>
-                        <PartyRoleType>LoanOriginationCompany</PartyRoleType>
-                      </ROLE_DETAIL>
-                      <LOAN_ORIGINATOR>
-                        ${loan.license_number ? `<LicenseIdentifier>${loan.license_number}</LicenseIdentifier>` : ""}
-                      </LOAN_ORIGINATOR>
-                    </ROLE>
-                  </ROLES>
+/** Build the DECLARATION element inside a BORROWER node */
+function mismoAppendDeclaration(
+  borrowerEl: ReturnType<typeof create>,
+  loan: MismoLoanRow,
+  isRefinance: boolean,
+): void {
+  const detail = (borrowerEl as any)
+    .ele("DECLARATION")
+    .ele("DECLARATION_DETAIL");
+  detail.ele("BankruptcyIndicator").txt("false");
+  detail
+    .ele("CitizenshipResidencyType")
+    .txt(mismoCitizenship(loan.citizenship_status));
+  detail.ele("HomeownerPastThreeYearsType").txt(isRefinance ? "Yes" : "No");
+  detail.ele("IntentToOccupyType").txt("Yes");
+  detail.ele("OutstandingJudgmentsIndicator").txt("false");
+  detail.ele("PartyToLawsuitIndicator").txt("false");
+  detail.ele("PresentlyDelinquentIndicator").txt("false");
+  detail.ele("PriorPropertyDeedInLieuConveyedIndicator").txt("false");
+  detail.ele("PriorPropertyForeclosureCompletedIndicator").txt("false");
+  detail.ele("PriorPropertyShortSaleCompletedIndicator").txt("false");
+  detail.ele("PropertyProposedCleanEnergyLienIndicator").txt("false");
+  detail.ele("UndisclosedBorrowedFundsIndicator").txt("false");
+  detail.ele("UndisclosedComakerOfNoteIndicator").txt("false");
+  detail.ele("UndisclosedCreditApplicationIndicator").txt("false");
+  detail.ele("UndisclosedMortgageApplicationIndicator").txt("false");
+  // ULAD extension required by Desktop Underwriter
+  detail
+    .ele("EXTENSION")
+    .ele("OTHER")
+    .ele("ULAD:DECLARATION_DETAIL_EXTENSION")
+    .ele("ULAD:SpecialBorrowerSellerRelationshipIndicator")
+    .txt("false");
+}
 
-                  <CONTACTS>
-                    <CONTACT>
-                      <CONTACT_POINTS>
-                        ${
-                          loan.broker_email
-                            ? `<CONTACT_POINT>
-                          <ContactPointValue>${loan.broker_email}</ContactPointValue>
-                          <ContactPointType>Email</ContactPointType>
-                        </CONTACT_POINT>`
-                            : ""
-                        }
-                        ${
-                          loan.broker_phone
-                            ? `<CONTACT_POINT>
-                          <ContactPointValue>${loan.broker_phone}</ContactPointValue>
-                          <ContactPointType>Phone</ContactPointType>
-                        </CONTACT_POINT>`
-                            : ""
-                        }
-                      </CONTACT_POINTS>
-                    </CONTACT>
-                  </CONTACTS>
-                </PARTY>`
-                    : ""
-                }
-              </PARTIES>
+/** Build the EMPLOYERS element inside a BORROWER node */
+function mismoAppendEmployers(
+  borrowerEl: ReturnType<typeof create>,
+  loan: MismoLoanRow,
+  monthlyIncome: string,
+  clientStateCode: string,
+  isSelfEmployed: boolean,
+  monthsEmployed: number,
+): void {
+  const employerEl = (borrowerEl as any)
+    .ele("EMPLOYERS")
+    .ele("EMPLOYER", { SequenceNumber: "1", "xlink:label": "EMPLOYER_1" });
 
-              <COLLATERALS>
-                <COLLATERAL>
-                  <SUBJECT_PROPERTY>
-                    <ADDRESS>
-                      <AddressLineText>${loan.property_address || ""}</AddressLineText>
-                      <CityName>${loan.property_city || ""}</CityName>
-                      <StateCode>${loan.property_state || ""}</StateCode>
-                      <PostalCode>${loan.property_zip || ""}</PostalCode>
-                    </ADDRESS>
+  // LEGAL_ENTITY: contacts + name
+  const legalEntityEl = employerEl.ele("LEGAL_ENTITY");
+  if (loan.client_phone) {
+    legalEntityEl
+      .ele("CONTACTS")
+      .ele("CONTACT")
+      .ele("CONTACT_POINTS")
+      .ele("CONTACT_POINT")
+      .ele("CONTACT_POINT_TELEPHONE")
+      .ele("ContactPointTelephoneValue")
+      .txt(mismoStr(loan.client_phone));
+  }
+  if (loan.employer_name) {
+    legalEntityEl
+      .ele("LEGAL_ENTITY_DETAIL")
+      .ele("FullName")
+      .txt(mismoStr(loan.employer_name));
+  }
 
-                    <PROPERTY_DETAIL>
-                      <PropertyCurrentUsageType>PrimaryResidence</PropertyCurrentUsageType>
-                      <PropertyEstimatedValueAmount>${propertyValue.toFixed(2)}</PropertyEstimatedValueAmount>
-                    </PROPERTY_DETAIL>
+  // EMPLOYER ADDRESS
+  if (loan.address_street) {
+    mismoAppendAddress(employerEl, {
+      street: mismoStr(loan.address_street),
+      city: mismoStr(loan.address_city),
+      zip: mismoStr(loan.address_zip),
+      stateCode: clientStateCode,
+    });
+  }
 
-                    <PROPERTY_VALUATIONS>
-                      <PROPERTY_VALUATION>
-                        <PropertyValuationAmount>${propertyValue.toFixed(2)}</PropertyValuationAmount>
-                        <PropertyValuationMethodType>Purchase</PropertyValuationMethodType>
-                      </PROPERTY_VALUATION>
-                    </PROPERTY_VALUATIONS>
-                  </SUBJECT_PROPERTY>
-                </COLLATERAL>
-              </COLLATERALS>
+  // EMPLOYMENT
+  const empEl = employerEl.ele("EMPLOYMENT");
+  if (isSelfEmployed)
+    empEl.ele("EmploymentBorrowerSelfEmployedIndicator").txt("true");
+  empEl.ele("EmploymentClassificationType").txt("Primary");
+  empEl.ele("EmploymentMonthlyIncomeAmount").txt(monthlyIncome);
+  empEl.ele("EmploymentStatusType").txt("Current");
+  if (monthsEmployed > 0) {
+    empEl
+      .ele("EmploymentTimeInLineOfWorkMonthsCount")
+      .txt(String(monthsEmployed));
+  }
+  if (isSelfEmployed) {
+    empEl.ele("OwnershipInterestType").txt("GreaterThanOrEqualTo25Percent");
+  }
+}
 
-              <GOVERNMENT_LOAN>
-                <GOVERNMENT_LOAN_DETAIL>
-                  <LoanToValuePercent>${loanToValue}</LoanToValuePercent>
-                </GOVERNMENT_LOAN_DETAIL>
-              </GOVERNMENT_LOAN>
+/** Build the GOVERNMENT_MONITORING element inside a BORROWER node */
+function mismoAppendGovernmentMonitoring(
+  borrowerEl: ReturnType<typeof create>,
+): void {
+  const detailEl = (borrowerEl as any)
+    .ele("GOVERNMENT_MONITORING")
+    .ele("GOVERNMENT_MONITORING_DETAIL");
+  detailEl.ele("HMDAEthnicityRefusalIndicator").txt("true");
+  detailEl.ele("HMDAGenderRefusalIndicator").txt("true");
+  detailEl.ele("HMDARaceRefusalIndicator").txt("true");
+  detailEl
+    .ele("EXTENSION")
+    .ele("OTHER")
+    .ele("ULAD:GOVERNMENT_MONITORING_DETAIL_EXTENSION")
+    .ele("ULAD:ApplicationTakenMethodType")
+    .txt("Internet");
+}
 
-              <DOWN_PAYMENTS>
-                <DOWN_PAYMENT>
-                  <DownPaymentAmount>${downPayment.toFixed(2)}</DownPaymentAmount>
-                  <DownPaymentType>Cash</DownPaymentType>
-                </DOWN_PAYMENT>
-              </DOWN_PAYMENTS>
-            </LOAN>
-          </LOANS>
-        </DEAL>
-      </DEALS>
-    </DEAL_SET>
-  </DEAL_SETS>
-</MESSAGE>`;
+/** Build the RESIDENCES element (Primary + Mailing) inside a BORROWER node */
+function mismoAppendResidences(
+  borrowerEl: ReturnType<typeof create>,
+  loan: MismoLoanRow,
+  clientStateCode: string,
+): void {
+  const residencesEl = (borrowerEl as any).ele("RESIDENCES");
+
+  // Compute duration fields from years_at_address
+  const yearsAtAddr = loan.years_at_address
+    ? parseFloat(String(loan.years_at_address))
+    : null;
+  const durationMonths =
+    yearsAtAddr != null ? Math.round(yearsAtAddr * 12) : null;
+  const durationYears = yearsAtAddr != null ? Math.floor(yearsAtAddr) : null;
+
+  // Primary
+  const primaryRes = residencesEl.ele("RESIDENCE");
+  mismoAppendAddress(primaryRes, {
+    street: mismoStr(loan.address_street),
+    unit: mismoStr(loan.address_unit) || undefined,
+    addressType: "Primary",
+    city: mismoStr(loan.address_city),
+    zip: mismoStr(loan.address_zip),
+    stateCode: clientStateCode,
+  });
+  const primaryDetail = primaryRes.ele("RESIDENCE_DETAIL");
+  primaryDetail.ele("BorrowerResidencyBasisType").txt("Own");
+  if (durationMonths != null) {
+    primaryDetail
+      .ele("BorrowerResidencyDurationMonthsCount")
+      .txt(String(durationMonths));
+  }
+  if (durationYears != null) {
+    primaryDetail
+      .ele("BorrowerResidencyDurationYearsCount")
+      .txt(String(durationYears));
+  }
+  primaryDetail.ele("BorrowerResidencyType").txt("Current");
+
+  // Mailing (same address)
+  const mailingRes = residencesEl.ele("RESIDENCE");
+  mismoAppendAddress(mailingRes, {
+    street: mismoStr(loan.address_street),
+    unit: mismoStr(loan.address_unit) || undefined,
+    addressType: "Mailing",
+    city: mismoStr(loan.address_city),
+    zip: mismoStr(loan.address_zip),
+    stateCode: clientStateCode,
+  });
+}
+
+/** Build the borrower PARTY element and append it to the PARTIES node */
+function mismoAppendBorrowerParty(
+  partiesEl: ReturnType<typeof create>,
+  loan: MismoLoanRow,
+  monthlyIncome: string,
+  clientStateCode: string,
+  isSelfEmployed: boolean,
+  isRefinance: boolean,
+  monthsEmployed: number,
+): void {
+  const borrowerParty = (partiesEl as any).ele("PARTY");
+
+  // INDIVIDUAL: contact points + name
+  const individual = borrowerParty.ele("INDIVIDUAL");
+  const cp = individual.ele("CONTACT_POINTS");
+  if (loan.client_phone) {
+    cp.ele("CONTACT_POINT")
+      .ele("CONTACT_POINT_TELEPHONE")
+      .ele("ContactPointTelephoneValue")
+      .txt(mismoStr(loan.client_phone))
+      .up()
+      .up()
+      .ele("CONTACT_POINT_DETAIL")
+      .ele("ContactPointRoleType")
+      .txt("Mobile");
+  }
+  if (loan.client_email) {
+    cp.ele("CONTACT_POINT")
+      .ele("CONTACT_POINT_EMAIL")
+      .ele("ContactPointEmailValue")
+      .txt(mismoStr(loan.client_email));
+  }
+  const nameEl = individual.ele("NAME");
+  nameEl.ele("FirstName").txt(mismoStr(loan.client_first_name));
+  nameEl.ele("LastName").txt(mismoStr(loan.client_last_name));
+  if (loan.client_middle_name) {
+    nameEl.ele("MiddleName").txt(mismoStr(loan.client_middle_name));
+  }
+
+  // ADDRESSES: Primary + Mailing (alphabetically before LANGUAGES, ROLES)
+  if (loan.address_street) {
+    const addrsEl = borrowerParty.ele("ADDRESSES");
+    mismoAppendAddress(addrsEl, {
+      street: mismoStr(loan.address_street),
+      unit: mismoStr(loan.address_unit) || undefined,
+      addressType: "Primary",
+      city: mismoStr(loan.address_city),
+      zip: mismoStr(loan.address_zip),
+      stateCode: clientStateCode,
+    });
+    mismoAppendAddress(addrsEl, {
+      street: mismoStr(loan.address_street),
+      unit: mismoStr(loan.address_unit) || undefined,
+      addressType: "Mailing",
+      city: mismoStr(loan.address_city),
+      zip: mismoStr(loan.address_zip),
+      stateCode: clientStateCode,
+    });
+  }
+
+  // LANGUAGES (alphabetically: ADDRESSES < LANGUAGES < ROLES)
+  borrowerParty
+    .ele("LANGUAGES")
+    .ele("LANGUAGE")
+    .ele("LanguageCode")
+    .txt("eng")
+    .up()
+    .ele("EXTENSION")
+    .ele("OTHER")
+    .ele("ULAD:LANGUAGE_EXTENSION")
+    .ele("ULAD:LanguageRefusalIndicator")
+    .txt("false");
+
+  // ROLES
+  const borrowerRole = borrowerParty
+    .ele("ROLES")
+    .ele("ROLE", { SequenceNumber: "1", "xlink:label": "BORROWER_1" });
+  const borrowerEl = borrowerRole.ele("BORROWER");
+
+  mismoAppendBorrowerDetail(borrowerEl, loan);
+  mismoAppendCurrentIncome(borrowerEl, monthlyIncome);
+  mismoAppendDeclaration(borrowerEl, loan, isRefinance);
+  mismoAppendDependents(borrowerEl, loan); // DEPENDENTS alphabetically after DECLARATION, before EMPLOYERS
+  mismoAppendEmployers(
+    borrowerEl,
+    loan,
+    monthlyIncome,
+    clientStateCode,
+    isSelfEmployed,
+    monthsEmployed,
+  );
+  mismoAppendGovernmentMonitoring(borrowerEl);
+  mismoAppendResidences(borrowerEl, loan, clientStateCode);
+
+  borrowerRole
+    .ele("ROLE_DETAIL")
+    .ele("ConsentToReceiveDocumentsElectronicallyIndicator")
+    .txt("true")
+    .up()
+    .ele("PartyRoleType")
+    .txt("Borrower");
+
+  // TAXPAYER_IDENTIFIERS (alphabetically after ROLES)
+  const taxId = borrowerParty
+    .ele("TAXPAYER_IDENTIFIERS")
+    .ele("TAXPAYER_IDENTIFIER");
+  taxId.ele("TaxpayerIdentifierType").txt("SocialSecurityNumber");
+  if (loan.ssn_encrypted) {
+    taxId.ele("TaxpayerIdentifierValue").txt(mismoStr(loan.ssn_encrypted));
+  }
+}
+
+/** Build the loan originator PARTY element and append it to the PARTIES node */
+function mismoAppendOriginatorParty(
+  partiesEl: ReturnType<typeof create>,
+  loan: MismoLoanRow,
+): void {
+  if (!loan.broker_first_name) return;
+
+  const brokerParty = (partiesEl as any).ele("PARTY");
+  const individual = brokerParty.ele("INDIVIDUAL");
+  const cp = individual.ele("CONTACT_POINTS");
+
+  if (loan.broker_phone) {
+    cp.ele("CONTACT_POINT")
+      .ele("CONTACT_POINT_TELEPHONE")
+      .ele("ContactPointTelephoneValue")
+      .txt(mismoStr(loan.broker_phone))
+      .up()
+      .up()
+      .ele("CONTACT_POINT_DETAIL")
+      .ele("ContactPointRoleType")
+      .txt("Work");
+  }
+  if (loan.broker_email) {
+    cp.ele("CONTACT_POINT")
+      .ele("CONTACT_POINT_EMAIL")
+      .ele("ContactPointEmailValue")
+      .txt(mismoStr(loan.broker_email))
+      .up()
+      .up()
+      .ele("CONTACT_POINT_DETAIL")
+      .ele("ContactPointRoleType")
+      .txt("Work");
+  }
+  individual
+    .ele("NAME")
+    .ele("FirstName")
+    .txt(mismoStr(loan.broker_first_name))
+    .up()
+    .ele("LastName")
+    .txt(mismoStr(loan.broker_last_name));
+
+  const brokerRole = brokerParty
+    .ele("ROLES")
+    .ele("ROLE", { SequenceNumber: "1", "xlink:label": "LOAN_ORIGINATOR_1" });
+  brokerRole.ele("ROLE_DETAIL").ele("PartyRoleType").txt("LoanOriginator");
+  if (loan.license_number) {
+    brokerRole
+      .ele("LOAN_ORIGINATOR")
+      .ele("LoanOriginatorIdentifier")
+      .txt(mismoStr(loan.license_number));
+  }
+}
+
+/** Build the DEAL > RELATIONSHIPS section */
+function mismoAppendRelationships(
+  deal: ReturnType<typeof create>,
+  hasProperty: boolean,
+): void {
+  const relEl = (deal as any).ele("RELATIONSHIPS");
+  if (hasProperty) {
+    relEl.ele("RELATIONSHIP", {
+      "xlink:from": "ASSET_1",
+      "xlink:to": "BORROWER_1",
+      "xlink:arcrole":
+        "urn:fdc:mismo.org:2009:residential/ASSET_IsAssociatedWith_ROLE",
+    });
+    relEl.ele("RELATIONSHIP", {
+      "xlink:from": "LIABILITY_1",
+      "xlink:to": "BORROWER_1",
+      "xlink:arcrole":
+        "urn:fdc:mismo.org:2009:residential/LIABILITY_IsAssociatedWith_ROLE",
+    });
+  }
+  relEl.ele("RELATIONSHIP", {
+    "xlink:from": "CURRENT_INCOME_ITEM_1",
+    "xlink:to": "EMPLOYER_1",
+    "xlink:arcrole":
+      "urn:fdc:mismo.org:2009:residential/CURRENT_INCOME_ITEM_IsAssociatedWith_EMPLOYER",
+  });
+}
+
+/**
+ * Generate a MISMO 3.4 / ULAD XML document from a loan row.
+ * Orchestrates the section helpers in the xs:sequence order mandated by
+ * DU_Wrapper_3.4.0_B324.xsd: ASSETS → COLLATERALS → LIABILITIES → LOANS →
+ * PARTIES → RELATIONSHIPS.
+ */
+function generateMISMO34XML(loan: MismoLoanRow): string {
+  const loanAmount = parseFloat(String(loan.loan_amount || 0));
+  const propertyValue = parseFloat(String(loan.property_value || 0));
+  const monthlyIncome = loan.annual_income
+    ? (parseFloat(String(loan.annual_income)) / 12).toFixed(2)
+    : "0.0";
+  const loanTermMonths = loan.loan_term_months || 360;
+  const yearsEmployed = parseInt(String(loan.years_employed || "0")) || 0;
+  const monthsEmployed = yearsEmployed > 0 ? yearsEmployed * 12 : 0;
+
+  const isSelfEmployed = loan.employment_status === "self_employed";
+  const isRefinance = loan.loan_type === "refinance";
+  const hasProperty = isRefinance || propertyValue > 0;
+
+  const propStateCode = mismoState(loan.property_state);
+  const clientStateCode = mismoState(loan.address_state);
+
+  const deal = create({ version: "1.0", encoding: "UTF-8" })
+    .ele("MESSAGE", {
+      "xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
+      "xmlns:ULAD": "http://www.datamodelextension.org/Schema/ULAD",
+      "xmlns:xlink": "http://www.w3.org/1999/xlink",
+      xmlns: "http://www.mismo.org/residential/2009/schemas",
+      MISMOReferenceModelIdentifier: "3.4.032420160128",
+      "xsi:schemaLocation":
+        "http://www.mismo.org/residential/2009/schemas DU_Wrapper_3.4.0_B324.xsd",
+    })
+    .ele("DEAL_SETS")
+    .ele("DEAL_SET")
+    .ele("DEALS")
+    .ele("DEAL");
+
+  if (hasProperty) mismoAppendAssets(deal, propertyValue);
+  mismoAppendCollaterals(deal, loan, propStateCode, propertyValue);
+  if (hasProperty) mismoAppendLiabilities(deal, propertyValue);
+  mismoAppendLoans(deal, loan, loanAmount, loanTermMonths, isRefinance);
+
+  const partiesEl = (deal as any).ele("PARTIES");
+  mismoAppendBorrowerParty(
+    partiesEl,
+    loan,
+    monthlyIncome,
+    clientStateCode,
+    isSelfEmployed,
+    isRefinance,
+    monthsEmployed,
+  );
+  mismoAppendOriginatorParty(partiesEl, loan);
+
+  mismoAppendRelationships(deal, hasProperty);
+
+  return deal.end({ prettyPrint: true });
 }
 
 /**
@@ -10077,11 +11855,59 @@ const handleUpdateClientTask: RequestHandler = async (req, res) => {
     // Map 'completed' from client to 'pending_approval' so broker must approve
     const actualStatus = status === "completed" ? "pending_approval" : status;
     const completedAt = actualStatus === "pending_approval" ? new Date() : null;
+    const previousStatus = tasks[0].status;
 
     await pool.query(
       "UPDATE tasks SET status = ?, completed_at = ?, updated_at = NOW() WHERE id = ?",
       [actualStatus, completedAt, taskId],
     );
+
+    // Notify brokers when a client submits a task for approval, OR
+    // when a client first marks a task as in_progress (so the assigned
+    // broker knows the client has started working on it).
+    // Only notify on actual status transitions to avoid duplicate spam.
+    if (
+      actualStatus !== previousStatus &&
+      (actualStatus === "pending_approval" || actualStatus === "in_progress")
+    ) {
+      try {
+        const task = tasks[0];
+        const [clientRows] = await pool.query<any[]>(
+          "SELECT CONCAT(first_name, ' ', last_name) AS name FROM clients WHERE id = ? LIMIT 1",
+          [clientId],
+        );
+        const clientName = clientRows[0]?.name || "A client";
+        const isCompleted = actualStatus === "pending_approval";
+        // Owners = creator + loan's primary broker + partner broker (deduped)
+        const ownerIds = await getApplicationOwnerBrokerIds(
+          task.application_id,
+        );
+        if (
+          task.created_by_broker_id &&
+          !ownerIds.includes(task.created_by_broker_id)
+        ) {
+          ownerIds.push(task.created_by_broker_id);
+        }
+        await createBrokerNotification({
+          brokerIds: ownerIds.length ? ownerIds : null,
+          notifyAllAdminsOnEmpty: ownerIds.length === 0,
+          title: isCompleted ? "Task Submitted for Review" : "Task In Progress",
+          message: isCompleted
+            ? `${clientName} submitted "${task.title}" for approval`
+            : `${clientName} started working on "${task.title}"`,
+          category: "task",
+          type: isCompleted ? "info" : "info",
+          actionUrl: task.application_id
+            ? `/admin/loans/${task.application_id}`
+            : `/admin/tasks`,
+        });
+      } catch (notifyErr) {
+        console.error(
+          "Broker notification (client task status change) failed:",
+          notifyErr,
+        );
+      }
+    }
 
     res.json({
       success: true,
@@ -10248,11 +12074,13 @@ const handleGetClientProfile: RequestHandler = async (req, res) => {
         id,
         email,
         first_name,
+        middle_name,
         last_name,
         phone,
         alternate_phone,
         date_of_birth,
         address_street,
+        address_unit,
         address_city,
         address_state,
         address_zip,
@@ -10297,10 +12125,12 @@ const handleUpdateClientProfile: RequestHandler = async (req, res) => {
     const clientId = (req as any).clientId;
     const {
       first_name,
+      middle_name,
       last_name,
       phone,
       alternate_phone,
       address_street,
+      address_unit,
       address_city,
       address_state,
       address_zip,
@@ -10312,6 +12142,10 @@ const handleUpdateClientProfile: RequestHandler = async (req, res) => {
     if (first_name !== undefined) {
       updates.push("first_name = ?");
       values.push(first_name);
+    }
+    if (middle_name !== undefined) {
+      updates.push("middle_name = ?");
+      values.push(middle_name?.trim() || null);
     }
     if (last_name !== undefined) {
       updates.push("last_name = ?");
@@ -10328,6 +12162,10 @@ const handleUpdateClientProfile: RequestHandler = async (req, res) => {
     if (address_street !== undefined) {
       updates.push("address_street = ?");
       values.push(address_street);
+    }
+    if (address_unit !== undefined) {
+      updates.push("address_unit = ?");
+      values.push(address_unit?.trim() || null);
     }
     if (address_city !== undefined) {
       updates.push("address_city = ?");
@@ -10360,8 +12198,8 @@ const handleUpdateClientProfile: RequestHandler = async (req, res) => {
     // Fetch updated profile
     const [clients] = await pool.query<any[]>(
       `SELECT 
-        id, email, first_name, last_name, phone, alternate_phone,
-        address_street, address_city, address_state, address_zip,
+        id, email, first_name, middle_name, last_name, phone, alternate_phone,
+        address_street, address_unit, address_city, address_state, address_zip,
         employment_status, income_type, annual_income,
         status, email_verified, phone_verified, created_at
       FROM clients WHERE id = ? AND tenant_id = ?`,
@@ -11228,9 +13066,11 @@ async function triggerReminderFlows(
     const loan = loanRows[0];
     const loanType: string = loan.loan_type || "purchase";
 
-    // Find active flows matching this trigger_event and loan_type_filter
+    // Find active flows matching this trigger_event and loan_type_filter.
     // IMPORTANT: filter by flow_category = 'loan' so realtor prospecting flows
     // (which share no_activity/manual trigger names) are never fired here.
+    // Also enforce per-broker restriction: a flow with restricted_to_broker_id
+    // set will ONLY fire for loans whose loan officer matches that broker.
     const [flows] = await pool.query<RowDataPacket[]>(
       `SELECT rf.id, rf.trigger_delay_days, rf.loan_type_filter
        FROM reminder_flows rf
@@ -11238,8 +13078,9 @@ async function triggerReminderFlows(
          AND rf.trigger_event = ?
          AND rf.is_active = 1
          AND rf.flow_category = 'loan'
-         AND (rf.loan_type_filter = 'all' OR rf.loan_type_filter = ?)`,
-      [tenantId, newStatus, loanType],
+         AND (rf.loan_type_filter = 'all' OR rf.loan_type_filter = ?)
+         AND (rf.restricted_to_broker_id IS NULL OR rf.restricted_to_broker_id = ?)`,
+      [tenantId, newStatus, loanType, loan.broker_id ?? -1],
     );
 
     if (!flows.length) return;
@@ -11264,6 +13105,24 @@ async function triggerReminderFlows(
     });
 
     for (const flow of flows) {
+      // R2 fix: Skip if there is already an active execution for the same
+      // (flow, loan, client) tuple. Prevents duplicate drips when a loan's
+      // status flips back-and-forth or the same trigger fires twice.
+      const [existing] = await pool.query<RowDataPacket[]>(
+        `SELECT id FROM reminder_flow_executions
+         WHERE tenant_id = ? AND flow_id = ?
+           AND loan_application_id = ? AND client_id = ?
+           AND status = 'active'
+         LIMIT 1`,
+        [tenantId, flow.id, loanId, loan.client_id],
+      );
+      if (existing.length > 0) {
+        console.log(
+          `⏭️  Reminder flow #${flow.id} — skipping duplicate trigger for loan #${loanId} client #${loan.client_id} (exec #${existing[0].id} already active)`,
+        );
+        continue;
+      }
+
       // Find the trigger node for this flow to set current_step_key
       const [triggerSteps] = await pool.query<RowDataPacket[]>(
         `SELECT step_key FROM reminder_flow_steps
@@ -11304,6 +13163,40 @@ async function triggerReminderFlows(
     }
   } catch (err) {
     console.error("❌ Reminder flow trigger failed:", err);
+  }
+}
+
+/**
+ * Cancel all active reminder flow executions for a loan when the loan reaches
+ * a terminal status (denied, cancelled, closed, funded). Prevents drips from
+ * continuing after the loan is no longer viable. Non-throwing.
+ */
+async function cancelActiveExecutionsForLoan(
+  loanId: number,
+  tenantId: number,
+  reason: string,
+): Promise<void> {
+  try {
+    const [result] = await pool.query<ResultSetHeader>(
+      `UPDATE reminder_flow_executions
+       SET status = 'cancelled',
+           completed_at = NOW(),
+           updated_at = NOW(),
+           context_data = JSON_SET(
+             COALESCE(context_data, JSON_OBJECT()),
+             '$._cancelled_reason', ?,
+             '$._cancelled_at', NOW()
+           )
+       WHERE tenant_id = ? AND loan_application_id = ? AND status = 'active'`,
+      [`loan_status:${reason}`, tenantId, loanId],
+    );
+    if (result.affectedRows > 0) {
+      console.log(
+        `🛑 Cancelled ${result.affectedRows} active reminder flow execution(s) for loan #${loanId} (reason=${reason})`,
+      );
+    }
+  } catch (err) {
+    console.error("❌ cancelActiveExecutionsForLoan error:", err);
   }
 }
 
@@ -11450,6 +13343,84 @@ function wrapReminderEmailBody(plainText: string): string {
 }
 
 /**
+ * Insert a row into `reminder_flow_step_logs` if the parent flow has
+ * `enable_trace_logging = 1`. Always non-throwing: trace logging must never
+ * break flow execution.
+ *
+ * The execution row is expected to carry an `enable_trace_logging` field
+ * pulled from the JOIN in `handleProcessReminderFlows`. For trigger-time
+ * inserts (where the field isn't joined yet) we fall back to a small lookup.
+ */
+type FlowStepLogChannel =
+  | "sms"
+  | "email"
+  | "whatsapp"
+  | "notification"
+  | "none";
+type FlowStepLogEvent =
+  | "started"
+  | "succeeded"
+  | "failed"
+  | "skipped"
+  | "timeout"
+  | "cancelled";
+
+async function logFlowStepTrace(
+  execution:
+    | RowDataPacket
+    | {
+        id: number;
+        flow_id: number;
+        tenant_id?: number;
+        enable_trace_logging?: number | boolean;
+      },
+  step: { step_key: string; step_type: string },
+  event: FlowStepLogEvent,
+  opts: {
+    channel?: FlowStepLogChannel;
+    recipient?: string | null;
+    external_id?: string | null;
+    delivery_status?: string | null;
+    payload?: Record<string, any> | null;
+    error_message?: string | null;
+    duration_ms?: number | null;
+    completed_at?: Date | null;
+  } = {},
+): Promise<void> {
+  try {
+    const enabled = (execution as any).enable_trace_logging;
+    if (!enabled) return; // gated by flow flag
+    const tenantId = (execution as any).tenant_id ?? MORTGAGE_TENANT_ID;
+    await pool.query(
+      `INSERT INTO reminder_flow_step_logs
+         (tenant_id, flow_id, execution_id, step_key, step_type, event,
+          channel, recipient, external_id, delivery_status, payload,
+          error_message, duration_ms, started_at, completed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
+      [
+        tenantId,
+        execution.flow_id,
+        execution.id,
+        step.step_key,
+        step.step_type,
+        event,
+        opts.channel ?? "none",
+        opts.recipient ?? null,
+        opts.external_id ?? null,
+        opts.delivery_status ?? null,
+        opts.payload ? JSON.stringify(opts.payload) : null,
+        opts.error_message ?? null,
+        opts.duration_ms ?? null,
+        opts.completed_at ?? null,
+      ],
+    );
+  } catch (err) {
+    // Never let logging errors break the engine.
+    console.error("⚠️  logFlowStepTrace failed (non-fatal):", err);
+  }
+}
+
+/**
  * Send a message for a send_email / send_sms / send_notification step.
  * Never throws — all exceptions are caught and logged so the flow execution
  * is not marked failed due to a transient send or DB error.
@@ -11469,6 +13440,10 @@ async function executeFlowSendStep(
     console.warn(
       `⚠️  executeFlowSendStep: exec #${execution.id} step [${step.step_key}] — no message and no template_id; skipping send`,
     );
+    await logFlowStepTrace(execution, step, "skipped", {
+      error_message: "no message and no template_id",
+      completed_at: new Date(),
+    });
     return;
   }
 
@@ -11523,11 +13498,21 @@ async function executeFlowSendStep(
       cost?: number;
     } = { success: false, error: "Not configured" };
 
+    // R12: track which shared number was used for outbound SMS so we can
+    // stamp it as the inbox_number on the conversation thread (powers the
+    // "sent from" indicator in the conversations UI).
+    let sharedFromNumber: string | undefined;
+
     if (step.step_type === "send_email") {
       if (!clientEmail) {
         console.error(
           `❌ executeFlowSendStep: exec #${execution.id} step [${step.step_key}] — no client_email in contextData (client_id=${clientId}); skipping email send`,
         );
+        await logFlowStepTrace(execution, step, "skipped", {
+          channel: "email",
+          error_message: "no client_email in context",
+          completed_at: new Date(),
+        });
         return;
       }
       console.log(
@@ -11546,14 +13531,34 @@ async function executeFlowSendStep(
         console.error(
           `❌ executeFlowSendStep: exec #${execution.id} step [${step.step_key}] — no client_phone in contextData (client_id=${clientId}); skipping SMS send`,
         );
+        await logFlowStepTrace(execution, step, "skipped", {
+          channel: "sms",
+          error_message: "no client_phone in context",
+          completed_at: new Date(),
+        });
         return;
       }
-      sendResult = await sendSMSMessage(clientPhone, body);
+      // Reminder flows must always use a SHARED (non-assigned) number, never a
+      // broker's personal line. This keeps automated drips from appearing as
+      // direct outreach from a specific banker (which can confuse the client
+      // and bypass ownership rules).
+      sharedFromNumber = (await getSharedSmsNumber()) ?? undefined;
+      sendResult = await sendSMSMessage(
+        clientPhone,
+        body,
+        undefined,
+        sharedFromNumber,
+      );
     } else if (step.step_type === "send_whatsapp") {
       if (!clientPhone) {
         console.error(
           `❌ executeFlowSendStep: exec #${execution.id} step [${step.step_key}] — no client_phone in contextData (client_id=${clientId}); skipping WhatsApp send`,
         );
+        await logFlowStepTrace(execution, step, "skipped", {
+          channel: "whatsapp",
+          error_message: "no client_phone in context",
+          completed_at: new Date(),
+        });
         return;
       }
       sendResult = await sendWhatsAppMessage(clientPhone, body);
@@ -11614,6 +13619,9 @@ async function executeFlowSendStep(
         communicationType: commType,
         direction: "outbound",
         body,
+        // R12: stamp the shared number so the UI shows which line the drip
+        // was sent from (and so inbound replies can route back to it).
+        inboxNumber: sharedFromNumber ?? null,
       });
 
       // Ensure the execution record has its conversation_id set (idempotent upsert)
@@ -11630,10 +13638,46 @@ async function executeFlowSendStep(
       console.log(
         `✅ executeFlowSendStep: exec #${execution.id} step [${step.step_key}/${step.step_type}] sent | ext_id=${sendResult.external_id ?? "n/a"}`,
       );
+      await logFlowStepTrace(execution, step, "succeeded", {
+        channel:
+          step.step_type === "send_email"
+            ? "email"
+            : step.step_type === "send_sms"
+              ? "sms"
+              : step.step_type === "send_whatsapp"
+                ? "whatsapp"
+                : "notification",
+        recipient:
+          step.step_type === "send_email"
+            ? ((contextData.client_email as string) ?? null)
+            : ((contextData.client_phone as string) ?? null),
+        external_id: sendResult.external_id ?? null,
+        delivery_status: "sent",
+        payload: { subject, body, template_id: config.template_id ?? null },
+        completed_at: new Date(),
+      });
     } else {
       console.error(
         `❌ executeFlowSendStep: exec #${execution.id} step [${step.step_key}/${step.step_type}] FAILED | error="${sendResult.error}"`,
       );
+      await logFlowStepTrace(execution, step, "failed", {
+        channel:
+          step.step_type === "send_email"
+            ? "email"
+            : step.step_type === "send_sms"
+              ? "sms"
+              : step.step_type === "send_whatsapp"
+                ? "whatsapp"
+                : "notification",
+        recipient:
+          step.step_type === "send_email"
+            ? ((contextData.client_email as string) ?? null)
+            : ((contextData.client_phone as string) ?? null),
+        delivery_status: "failed",
+        error_message: sendResult.error ?? "unknown send failure",
+        payload: { subject, body, template_id: config.template_id ?? null },
+        completed_at: new Date(),
+      });
     }
   } catch (err: any) {
     // Catch all exceptions so a DB or send error never marks the whole execution as failed.
@@ -11643,6 +13687,10 @@ async function executeFlowSendStep(
       `❌ executeFlowSendStep: exec #${execution.id} step [${step.step_key}/${step.step_type}] — UNHANDLED EXCEPTION: ${msg}`,
       err,
     );
+    await logFlowStepTrace(execution, step, "failed", {
+      error_message: `Unhandled exception: ${msg}`,
+      completed_at: new Date(),
+    });
   }
 }
 
@@ -11694,16 +13742,28 @@ async function processFlowExecution(execution: RowDataPacket): Promise<void> {
     iterations++;
     const step = stepMap.get(currentKey);
     if (!step) {
-      // Invalid step key — fail this execution
+      // R10 fix: Step key not found — likely the flow definition was edited
+      // and a step was removed/renamed. Recover gracefully by completing the
+      // execution (rather than marking 'failed' which poisons retry metrics).
+      // Records the recovery reason in context_data for debuggability.
       console.error(
-        `\u274c processFlowExecution: exec #${execution.id} \u2014 step key [${currentKey}] not found in flow #${execution.flow_id}; marking failed`,
+        `\u274c processFlowExecution: exec #${execution.id} \u2014 step key [${currentKey}] not found in flow #${execution.flow_id}; completing gracefully (recovery)`,
       );
       await pool.query(
         `UPDATE reminder_flow_executions
-         SET status = 'failed', updated_at = NOW(),
-             completed_steps = ?, current_step_key = ?
+         SET status = 'completed', completed_at = NOW(), updated_at = NOW(),
+             completed_steps = ?, current_step_key = ?,
+             context_data = JSON_SET(
+               COALESCE(context_data, JSON_OBJECT()),
+               '$._recovery_reason', ?
+             )
          WHERE id = ?`,
-        [JSON.stringify(completedSteps), currentKey, execution.id],
+        [
+          JSON.stringify(completedSteps),
+          currentKey,
+          `step_not_found:${currentKey}`,
+          execution.id,
+        ],
       );
       return;
     }
@@ -11711,6 +13771,14 @@ async function processFlowExecution(execution: RowDataPacket): Promise<void> {
     console.log(
       `\u27a1\ufe0f  processFlowExecution: exec #${execution.id} \u2014 iteration ${iterations} processing step [${currentKey}/${step.step_type}]`,
     );
+
+    // Trace: emit a "started" event for this step (no-op if flow flag is off).
+    // We log started for ALL step types; send steps will additionally log
+    // succeeded/failed/skipped from inside executeFlowSendStep, while
+    // structural steps (trigger/wait/condition/branch/end) log their own
+    // succeeded event when they advance.
+    const _stepStartedAt = Date.now();
+    await logFlowStepTrace(execution, step, "started");
 
     completedSteps.push(currentKey);
 
@@ -11760,9 +13828,19 @@ async function processFlowExecution(execution: RowDataPacket): Promise<void> {
       let nextEdge: FlowConnection | undefined;
       if (execution.responded_at) {
         nextEdge = pickEdge(connections, currentKey, "responded", "default");
-        // Reset responded_at in-memory so any subsequent wait_for_response
-        // steps in this flow start waiting for a new reply.
+        // R7 fix: Reset responded_at in BOTH memory and DB so any subsequent
+        // wait_for_response steps in this flow start fresh waiting for a new
+        // reply. Without the DB reset, the inbound handler's
+        // markExecutionsRespondedForConversation UPDATE (which has
+        // `WHERE responded_at IS NULL`) would silently no-op for the next
+        // reply, breaking multi-stage response flows.
         execution.responded_at = null;
+        await pool
+          .query(
+            `UPDATE reminder_flow_executions SET responded_at = NULL, updated_at = NOW() WHERE id = ?`,
+            [execution.id],
+          )
+          .catch(() => {});
       } else {
         // Timeout elapsed without response — take no_response branch
         nextEdge = pickEdge(connections, currentKey, "no_response", "default");
@@ -11814,15 +13892,48 @@ async function processFlowExecution(execution: RowDataPacket): Promise<void> {
             nextExecAt.getMinutes() + (cfg.delay_minutes ?? 0),
           );
         } else if (nextStep.step_type === "wait_until_date") {
-          // Wait until the date stored in the specified contextData field.
-          // If the date is missing or already in the past, proceed immediately (1-minute buffer).
+          // R6 fix: Wait until the date stored in the specified contextData field.
+          // If the field is missing, the date is invalid, or already in the past,
+          // treat as "no scheduled date" — mark execution completed instead of
+          // firing immediately. A missing close-date for a not-yet-closed loan
+          // should NOT cause an immediate "post-close" message.
           const dateFieldName = cfg.date_field as string | undefined;
           const rawDate = dateFieldName ? contextData[dateFieldName] : null;
           const targetDate = rawDate ? new Date(rawDate) : null;
-          if (targetDate && targetDate > new Date()) {
-            nextExecAt = targetDate;
+          const validFutureDate =
+            targetDate &&
+            !isNaN(targetDate.getTime()) &&
+            targetDate > new Date();
+          if (validFutureDate) {
+            nextExecAt = targetDate!;
+          } else if (cfg.proceed_if_missing === true) {
+            // Explicit opt-in: caller wants to proceed when date is absent
+            nextExecAt = new Date(Date.now() + 60_000);
           } else {
-            nextExecAt = new Date(Date.now() + 60_000); // 1-minute buffer
+            // Default safe behavior: pause execution and mark completed.
+            // Avoids accidentally firing a 'post-close follow-up' on a loan
+            // that hasn't closed yet.
+            console.warn(
+              `⏸️  processFlowExecution: exec #${execution.id} step [${currentKey}/wait_until_date] — date_field="${dateFieldName}" missing/invalid; completing flow gracefully (no future date to wait for)`,
+            );
+            await pool.query(
+              `UPDATE reminder_flow_executions
+               SET status = 'completed', completed_at = NOW(), updated_at = NOW(),
+                   completed_steps = ?, current_step_key = ?,
+                   context_data = JSON_SET(
+                     COALESCE(context_data, JSON_OBJECT()),
+                     '$._completed_reason',
+                     ?
+                   )
+               WHERE id = ?`,
+              [
+                JSON.stringify(completedSteps),
+                currentKey,
+                `wait_until_date_missing:${dateFieldName}`,
+                execution.id,
+              ],
+            );
+            return;
           }
         } else {
           nextExecAt = new Date();
@@ -11877,10 +13988,72 @@ async function processFlowExecution(execution: RowDataPacket): Promise<void> {
             ? "condition_yes"
             : "condition_no";
       } else if (condType === "inactivity_days") {
-        // Default yes branch when we cannot evaluate dynamically at this time
-        edgeType = "condition_yes";
+        // R5 fix: actually evaluate inactivity. condition_yes = client has been
+        // inactive for >= cfg.days days (no inbound communication). Falls back
+        // to "yes" if we cannot resolve client_id.
+        const days = Number(cfg.days ?? cfg.threshold_days ?? 7);
+        const clientId = execution.client_id;
+        if (!clientId || !Number.isFinite(days) || days < 0) {
+          edgeType = "condition_yes";
+        } else {
+          try {
+            const [rows] = await pool.query<RowDataPacket[]>(
+              `SELECT MAX(created_at) AS last_at FROM communications
+               WHERE tenant_id = ? AND client_id = ? AND direction = 'inbound'`,
+              [execution.tenant_id, clientId],
+            );
+            const lastAt = rows[0]?.last_at
+              ? new Date(rows[0].last_at).getTime()
+              : 0;
+            const ageDays = lastAt
+              ? (Date.now() - lastAt) / 86_400_000
+              : Number.POSITIVE_INFINITY;
+            edgeType = ageDays >= days ? "condition_yes" : "condition_no";
+          } catch (e) {
+            console.warn(
+              `inactivity_days condition eval failed for exec #${execution.id}:`,
+              e,
+            );
+            edgeType = "condition_yes";
+          }
+        }
       } else if (condType === "task_completed") {
-        edgeType = "condition_yes";
+        // R5 fix: condition_yes when the named task (cfg.task_name or
+        // cfg.task_id) is completed for the loan. Falls back to "no" so the
+        // "not yet done" branch is taken (safer default than spamming).
+        const loanId = execution.loan_application_id;
+        const taskId = cfg.task_id ? Number(cfg.task_id) : null;
+        const taskName = cfg.task_name as string | undefined;
+        if (!loanId || (!taskId && !taskName)) {
+          edgeType = "condition_no";
+        } else {
+          try {
+            const params: any[] = [execution.tenant_id, loanId];
+            let where = `tenant_id = ? AND loan_application_id = ?`;
+            if (taskId) {
+              where += ` AND id = ?`;
+              params.push(taskId);
+            } else if (taskName) {
+              where += ` AND title = ?`;
+              params.push(taskName);
+            }
+            const [rows] = await pool.query<RowDataPacket[]>(
+              `SELECT status FROM tasks WHERE ${where} LIMIT 1`,
+              params,
+            );
+            const status = rows[0]?.status;
+            edgeType =
+              status === "completed" || status === "done"
+                ? "condition_yes"
+                : "condition_no";
+          } catch (e) {
+            console.warn(
+              `task_completed condition eval failed for exec #${execution.id}:`,
+              e,
+            );
+            edgeType = "condition_no";
+          }
+        }
       } else if (condType === "field_not_empty") {
         const fieldName = cfg.field_name as string | undefined;
         const fieldVal = fieldName ? contextData[fieldName] : undefined;
@@ -11924,12 +14097,20 @@ async function processFlowExecution(execution: RowDataPacket): Promise<void> {
     currentKey = fallback.target_step_key;
   }
 
-  // Max iterations guard — save whatever progress was made
+  // R9 fix: Max iterations guard — reschedule the execution to continue on
+  // the next cron tick instead of saving partial state with no
+  // next_execution_at (which would orphan it). 30 chained immediate steps
+  // is unusual; if a flow legitimately needs more, the cron will pick it up
+  // again in 5 minutes.
   console.warn(
-    `\u26a0\ufe0f  processFlowExecution: exec #${execution.id} flow #${execution.flow_id} \u2014 hit MAX_STEPS (${MAX_STEPS}) guard at step [${currentKey}]; saving partial progress`,
+    `\u26a0\ufe0f  processFlowExecution: exec #${execution.id} flow #${execution.flow_id} \u2014 hit MAX_STEPS (${MAX_STEPS}) guard at step [${currentKey}]; rescheduling for continuation`,
   );
   await pool.query(
-    `UPDATE reminder_flow_executions SET current_step_key = ?, completed_steps = ?, updated_at = NOW() WHERE id = ?`,
+    `UPDATE reminder_flow_executions
+     SET current_step_key = ?, completed_steps = ?,
+         next_execution_at = DATE_ADD(NOW(), INTERVAL 5 MINUTE),
+         updated_at = NOW()
+     WHERE id = ?`,
     [currentKey, JSON.stringify(completedSteps), execution.id],
   );
 }
@@ -11949,6 +14130,107 @@ async function processFlowExecution(execution: RowDataPacket): Promise<void> {
  *
  * Protected by CRON_SECRET (same env var used by the IMAP polling cron).
  */
+
+/**
+ * Backfill stale outbound delivery_status values from Twilio.
+ *
+ * Twilio's statusCallback occasionally fails (network blip, our endpoint
+ * temporarily unreachable, dev environment with no public URL, etc.) which
+ * leaves rows stuck at delivery_status='sent' even when they were actually
+ * delivered/read/failed. This cron picks up SMS/MMS/WhatsApp rows that have
+ * a Twilio SID, are still 'sent' or 'pending', and were sent more than
+ * 2 minutes ago, queries Twilio for the authoritative status, and updates
+ * the row. Limit 50 per run to stay within Twilio API quotas.
+ *
+ * Schedule: every 10 minutes
+ *   curl -s "https://yourdomain.com/api/cron/backfill-message-status?secret=CRON_SECRET"
+ */
+const handleBackfillMessageStatus: RequestHandler = async (req, res) => {
+  try {
+    const secret = process.env.CRON_SECRET;
+    if (secret) {
+      const authHeader = req.headers.authorization;
+      const provided =
+        (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null) ??
+        (req.query.secret as string | undefined);
+      if (provided !== secret) {
+        return res.status(401).json({ success: false, error: "Unauthorized" });
+      }
+    }
+
+    if (!twilioClient) {
+      return res
+        .status(503)
+        .json({ success: false, error: "Twilio not configured" });
+    }
+
+    const [stale] = await pool.query<RowDataPacket[]>(
+      `SELECT id, external_id, communication_type
+       FROM communications
+       WHERE tenant_id = ?
+         AND direction = 'outbound'
+         AND communication_type IN ('sms','whatsapp')
+         AND external_id IS NOT NULL
+         AND external_id != ''
+         AND (delivery_status IN ('sent','pending') OR delivery_status IS NULL)
+         AND sent_at < (NOW() - INTERVAL 2 MINUTE)
+         AND sent_at > (NOW() - INTERVAL 7 DAY)
+       ORDER BY sent_at DESC
+       LIMIT 50`,
+      [MORTGAGE_TENANT_ID],
+    );
+
+    const statusMap: Record<string, string> = {
+      sent: "sent",
+      delivered: "delivered",
+      read: "read",
+      failed: "failed",
+      undelivered: "failed",
+    };
+
+    let updated = 0;
+    let unchanged = 0;
+    let errors = 0;
+
+    for (const row of stale as RowDataPacket[]) {
+      try {
+        const msg = await twilioClient.messages(row.external_id).fetch();
+        const mapped = statusMap[msg.status] ?? null;
+        if (!mapped || mapped === "sent") {
+          unchanged++;
+          continue;
+        }
+        await pool.query(
+          `UPDATE communications
+           SET delivery_status = ?, status = ?
+           WHERE id = ? AND tenant_id = ?`,
+          [mapped, mapped, row.id, MORTGAGE_TENANT_ID],
+        );
+        updated++;
+      } catch (err: any) {
+        errors++;
+        console.warn(
+          `[backfill-status] failed for sid=${row.external_id}:`,
+          err?.message || err,
+        );
+      }
+    }
+
+    return res.json({
+      success: true,
+      checked: (stale as RowDataPacket[]).length,
+      updated,
+      unchanged,
+      errors,
+    });
+  } catch (err: any) {
+    console.error("[backfill-status] cron error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: err?.message || "Backfill failed" });
+  }
+};
+
 const handleProcessReminderFlows: RequestHandler = async (req, res) => {
   try {
     const secret = process.env.CRON_SECRET;
@@ -11968,8 +14250,11 @@ const handleProcessReminderFlows: RequestHandler = async (req, res) => {
     );
 
     // Load all due active executions (next_execution_at <= NOW())
+    // Pulls `enable_trace_logging` so the engine can decide per-execution
+    // whether to write rows to `reminder_flow_step_logs` without an extra
+    // round-trip per step.
     const [executions] = await pool.query<RowDataPacket[]>(
-      `SELECT rfe.*, rf.name AS flow_name
+      `SELECT rfe.*, rf.name AS flow_name, rf.enable_trace_logging
        FROM reminder_flow_executions rfe
        JOIN reminder_flows rf ON rf.id = rfe.flow_id AND rf.is_active = 1
        WHERE rfe.status = 'active'
@@ -12003,13 +14288,46 @@ const handleProcessReminderFlows: RequestHandler = async (req, res) => {
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(`exec#${execution.id}: ${msg}`);
         console.error(`❌ Flow execution #${execution.id} failed:`, err);
-        // Mark as failed so it won't be retried indefinitely
-        await pool
-          .query(
-            `UPDATE reminder_flow_executions SET status = 'failed', updated_at = NOW() WHERE id = ?`,
-            [execution.id],
-          )
-          .catch(() => {});
+        // R3 fix: do NOT mark as 'failed' on transient errors — reschedule
+        // for retry in 15 minutes. Permanent failure is reserved for cases
+        // where the flow definition is invalid (handled inside processFlowExecution).
+        // After 5 retries (tracked via context_data._retry_count), give up.
+        try {
+          let retryCount = 0;
+          try {
+            const ctx =
+              typeof execution.context_data === "string"
+                ? JSON.parse(execution.context_data || "{}")
+                : execution.context_data || {};
+            retryCount = (ctx._retry_count ?? 0) + 1;
+            ctx._retry_count = retryCount;
+            ctx._last_error = msg.slice(0, 500);
+            if (retryCount >= 5) {
+              await pool.query(
+                `UPDATE reminder_flow_executions
+                 SET status = 'failed', context_data = ?, updated_at = NOW()
+                 WHERE id = ?`,
+                [JSON.stringify(ctx), execution.id],
+              );
+            } else {
+              await pool.query(
+                `UPDATE reminder_flow_executions
+                 SET next_execution_at = DATE_ADD(NOW(), INTERVAL 15 MINUTE),
+                     context_data = ?, updated_at = NOW()
+                 WHERE id = ?`,
+                [JSON.stringify(ctx), execution.id],
+              );
+            }
+          } catch {
+            // If we can't even parse context, just mark failed
+            await pool.query(
+              `UPDATE reminder_flow_executions SET status = 'failed', updated_at = NOW() WHERE id = ?`,
+              [execution.id],
+            );
+          }
+        } catch {
+          /* swallow */
+        }
       }
     }
 
@@ -12093,6 +14411,681 @@ const handleMarkFlowExecutionResponded: RequestHandler = async (req, res) => {
     return res
       .status(500)
       .json({ success: false, error: "Failed to mark execution as responded" });
+  }
+};
+
+/**
+ * POST /api/conversations/mailboxes/office365/connect
+ *
+ * Creates/updates a mailbox record and returns a Microsoft OAuth consent URL.
+ */
+const handleConnectOffice365Mailbox: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId;
+    const brokerRole = (req as any).brokerRole;
+    const {
+      mailbox_email,
+      display_name,
+      is_shared = true,
+      target_broker_id,
+      return_path,
+    } = req.body || {};
+
+    // Admin can assign to another broker; otherwise use self
+    const assignedBrokerId =
+      !is_shared &&
+      target_broker_id &&
+      (brokerRole === "admin" || brokerRole === "mortgage_banker")
+        ? Number(target_broker_id)
+        : brokerId;
+
+    if (!mailbox_email || !String(mailbox_email).includes("@")) {
+      return res.status(400).json({
+        success: false,
+        message: "mailbox_email is required",
+      });
+    }
+
+    const { tenantId, clientId, clientSecret } = getOffice365OAuthConfig();
+    if (!tenantId || !clientId || !clientSecret) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Office365 OAuth env is missing. Set OFFICE365_TENANT_ID, OFFICE365_CLIENT_ID, OFFICE365_CLIENT_SECRET",
+      });
+    }
+
+    // Derive redirect URI from the incoming request host so it always matches
+    // the registered Azure redirect URI regardless of which domain is calling
+    const reqProto =
+      (req.headers["x-forwarded-proto"] as string) ||
+      (req.secure ? "https" : "http");
+    const reqHost = req.headers["host"] || "localhost:8080";
+    const redirectUri =
+      process.env.OFFICE365_REDIRECT_URI ||
+      `${reqProto}://${reqHost}/api/conversations/mailboxes/office365/callback`;
+
+    await pool.query(
+      `INSERT INTO conversation_email_mailboxes (
+         tenant_id, provider, mailbox_email, display_name, is_shared,
+         assigned_broker_id, status, office365_tenant_id, office365_client_id,
+         created_by_broker_id, created_at, updated_at
+       ) VALUES (?, 'office365', ?, ?, ?, ?, 'pending', ?, ?, ?, NOW(), NOW())
+       ON DUPLICATE KEY UPDATE
+         display_name = VALUES(display_name),
+         is_shared = VALUES(is_shared),
+         assigned_broker_id = VALUES(assigned_broker_id),
+         status = 'pending',
+         office365_tenant_id = VALUES(office365_tenant_id),
+         office365_client_id = VALUES(office365_client_id),
+         updated_at = NOW()`,
+      [
+        MORTGAGE_TENANT_ID,
+        String(mailbox_email).toLowerCase(),
+        display_name || null,
+        is_shared ? 1 : 0,
+        is_shared ? null : assignedBrokerId,
+        tenantId,
+        clientId,
+        brokerId,
+      ],
+    );
+
+    const [mailboxRows] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM conversation_email_mailboxes
+       WHERE tenant_id = ? AND provider = 'office365' AND mailbox_email = ?
+       LIMIT 1`,
+      [MORTGAGE_TENANT_ID, String(mailbox_email).toLowerCase()],
+    );
+
+    if (mailboxRows.length === 0) {
+      return res
+        .status(500)
+        .json({ success: false, message: "Failed to initialize mailbox" });
+    }
+
+    const mailboxId = Number(mailboxRows[0].id);
+    const sanitizedReturnPath =
+      return_path && /^\/[a-zA-Z0-9/_?=&-]*$/.test(String(return_path))
+        ? String(return_path)
+        : undefined;
+    const state = createOffice365State(
+      Number(brokerId),
+      mailboxId,
+      sanitizedReturnPath,
+    );
+
+    // Build the auth URL. `prompt=login` forces Microsoft to show the account
+    // picker/login screen every time — prevents a cached browser session from
+    // silently signing in the wrong person (e.g. a different broker's account).
+    const authUrlParams: Record<string, string> = {
+      client_id: clientId,
+      response_type: "code",
+      redirect_uri: redirectUri,
+      response_mode: "query",
+      scope: OFFICE365_SCOPES.join(" "),
+      state,
+      prompt: "login",
+    };
+    // Pre-fill the email field if we know the mailbox email (quality-of-life).
+    if (mailbox_email) {
+      authUrlParams.login_hint = String(mailbox_email).toLowerCase();
+    }
+    // Use 'common' instead of the specific tenant ID so personal Microsoft
+    // accounts (hotmail.com, live.com, outlook.com) can also authenticate.
+    // The Azure app must be configured to support multi-tenant + personal accounts.
+    const authUrl =
+      `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?` +
+      new URLSearchParams(authUrlParams).toString();
+
+    return res.json({
+      success: true,
+      mailbox_id: mailboxId,
+      auth_url: authUrl,
+    });
+  } catch (error) {
+    console.error("Office365 connect error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to start Office365 mailbox connection",
+    });
+  }
+};
+
+/**
+ * GET /api/conversations/mailboxes/office365/callback
+ *
+ * OAuth redirect handler from Microsoft; persists access/refresh tokens.
+ */
+const handleOffice365Callback: RequestHandler = async (req, res) => {
+  try {
+    const code = String(req.query.code || "");
+    const state = String(req.query.state || "");
+    const oauthError = String(req.query.error || "");
+
+    // Derive the admin base URL from the request host so redirects always go
+    // back to the correct domain (admin vs localhost) without needing env vars
+    const reqProto =
+      (req.headers["x-forwarded-proto"] as string) ||
+      (req.secure ? "https" : "http");
+    const reqHost = req.headers["host"] || "localhost:8080";
+    const adminUrl = process.env.ADMIN_URL || `${reqProto}://${reqHost}`;
+
+    // Derive redirect URI the same way the connect handler did
+    const oauthRedirectUri =
+      process.env.OFFICE365_REDIRECT_URI ||
+      `${reqProto}://${reqHost}/api/conversations/mailboxes/office365/callback`;
+
+    if (oauthError) {
+      // Clean up any pending mailbox record created during the connect step
+      // so it doesn't reappear as "Pending authorization" on refresh.
+      const verifiedErr = verifyOffice365State(state);
+      if (verifiedErr.valid && verifiedErr.mailboxId) {
+        await pool
+          .query(
+            `DELETE FROM conversation_email_mailboxes
+           WHERE id = ? AND tenant_id = ? AND status = 'pending'`,
+            [verifiedErr.mailboxId, MORTGAGE_TENANT_ID],
+          )
+          .catch(() => {}); // best-effort
+      }
+      return res.redirect(
+        `${adminUrl}/admin/profile?office365=error&reason=${encodeURIComponent(oauthError)}`,
+      );
+    }
+
+    const verified = verifyOffice365State(state);
+    if (!verified.valid || !verified.mailboxId) {
+      return res.redirect(
+        `${adminUrl}/conversations?office365=error&reason=invalid_state`,
+      );
+    }
+
+    if (!code) {
+      return res.redirect(
+        `${adminUrl}/conversations?office365=error&reason=missing_code`,
+      );
+    }
+
+    const { tenantId, clientId, clientSecret } = getOffice365OAuthConfig();
+    if (!tenantId || !clientId || !clientSecret) {
+      return res.redirect(
+        `${adminUrl}/conversations?office365=error&reason=missing_oauth_env`,
+      );
+    }
+
+    // Use 'common' to match the authorize endpoint — required for personal MSA accounts.
+    const tokenUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/token`;
+    const params = new URLSearchParams();
+    params.set("grant_type", "authorization_code");
+    params.set("client_id", clientId);
+    params.set("client_secret", clientSecret);
+    params.set("code", code);
+    params.set("redirect_uri", oauthRedirectUri);
+    params.set("scope", OFFICE365_SCOPES.join(" "));
+
+    const { data } = await axios.post(tokenUrl, params.toString(), {
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    });
+
+    const expiresIn = Number(data.expires_in || 3600);
+    const expiresAt = new Date(
+      Date.now() + Math.max(300, expiresIn - 120) * 1000,
+    )
+      .toISOString()
+      .slice(0, 19)
+      .replace("T", " ");
+
+    // Verify the actual authenticated user via /me — this ensures the stored
+    // mailbox_email always matches the real account that signed in, preventing
+    // one broker's token from being stored against another broker's mailbox.
+    let actualEmail: string | null = null;
+    try {
+      const meRes = await axios.get("https://graph.microsoft.com/v1.0/me", {
+        headers: { Authorization: `Bearer ${data.access_token}` },
+      });
+      actualEmail =
+        (meRes.data?.mail || meRes.data?.userPrincipalName || "")
+          .toLowerCase()
+          .trim() || null;
+    } catch (meErr) {
+      console.warn("Could not verify /me identity after OAuth:", meErr);
+    }
+
+    // Hard guard: fetch the expected mailbox email from the DB and reject if
+    // the authenticated account is a completely different person.
+    // This prevents a cached browser session (e.g. a different broker's MS
+    // account) from silently overwriting another broker's mailbox token.
+    const [expectedRows] = await pool.query<RowDataPacket[]>(
+      `SELECT mailbox_email FROM conversation_email_mailboxes
+       WHERE id = ? AND tenant_id = ? LIMIT 1`,
+      [verified.mailboxId, MORTGAGE_TENANT_ID],
+    );
+    const expectedEmail = (expectedRows[0]?.mailbox_email || "")
+      .toLowerCase()
+      .trim();
+
+    if (actualEmail && expectedEmail && actualEmail !== expectedEmail) {
+      console.error(
+        `Office365 OAuth identity mismatch: expected="${expectedEmail}" got="${actualEmail}" mailboxId=${verified.mailboxId}`,
+      );
+      return res.redirect(
+        `${adminUrl}/admin/profile?office365=error&reason=account_mismatch&expected=${encodeURIComponent(expectedEmail)}&got=${encodeURIComponent(actualEmail)}`,
+      );
+    }
+
+    // Identity verified — store the token. mailbox_email is NOT overwritten;
+    // it was already validated above and must not change after the guard passes.
+    await pool.query(
+      `UPDATE conversation_email_mailboxes
+       SET oauth_access_token = ?,
+           oauth_refresh_token = ?,
+           oauth_expires_at = ?,
+           office365_tenant_id = ?,
+           office365_client_id = ?,
+           status = 'active',
+           updated_at = NOW()
+       WHERE id = ? AND tenant_id = ?`,
+      [
+        String(data.access_token || ""),
+        String(data.refresh_token || ""),
+        expiresAt,
+        tenantId,
+        clientId,
+        verified.mailboxId,
+        MORTGAGE_TENANT_ID,
+      ],
+    );
+
+    // If no default mailbox exists, set this one as default.
+    const [defaults] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM conversation_email_mailboxes
+       WHERE tenant_id = ? AND status = 'active' AND is_default = 1
+       LIMIT 1`,
+      [MORTGAGE_TENANT_ID],
+    );
+    if (defaults.length === 0) {
+      await pool.query(
+        `UPDATE conversation_email_mailboxes
+         SET is_default = 1, updated_at = NOW()
+         WHERE id = ? AND tenant_id = ?`,
+        [verified.mailboxId, MORTGAGE_TENANT_ID],
+      );
+    }
+
+    const redirectPath = verified.returnPath || "/conversations";
+    return res.redirect(`${adminUrl}${redirectPath}?office365=connected`);
+  } catch (error) {
+    console.error("Office365 callback error:", error);
+    const reqProto2 =
+      (req.headers["x-forwarded-proto"] as string) ||
+      (req.secure ? "https" : "http");
+    const reqHost2 = req.headers["host"] || "localhost:8080";
+    const errAdminUrl = process.env.ADMIN_URL || `${reqProto2}://${reqHost2}`;
+    return res.redirect(
+      `${errAdminUrl}/conversations?office365=error&reason=callback_failed`,
+    );
+  }
+};
+
+/**
+ * PATCH /api/conversations/mailboxes/:mailboxId/assign
+ *
+ * Assign a mailbox to a specific broker, or mark it as shared (broker_id = null).
+ * Body: { assigned_broker_id: number | null, is_shared: boolean, is_default?: boolean }
+ */
+const handleAssignConversationMailbox: RequestHandler = async (req, res) => {
+  try {
+    const mailboxId = Number(req.params.mailboxId);
+    if (!Number.isFinite(mailboxId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid mailboxId" });
+    }
+
+    const { assigned_broker_id, is_shared, is_default } = req.body as {
+      assigned_broker_id: number | null;
+      is_shared: boolean;
+      is_default?: boolean;
+    };
+
+    // Validate broker exists if provided
+    if (assigned_broker_id !== null && assigned_broker_id !== undefined) {
+      const [brokerRows] = await pool.query<RowDataPacket[]>(
+        `SELECT id FROM brokers WHERE id = ? AND tenant_id = ? LIMIT 1`,
+        [assigned_broker_id, MORTGAGE_TENANT_ID],
+      );
+      if (brokerRows.length === 0) {
+        return res
+          .status(400)
+          .json({ success: false, message: "Broker not found" });
+      }
+    }
+
+    // If setting as default, unset current default first
+    if (is_default) {
+      await pool.query(
+        `UPDATE conversation_email_mailboxes SET is_default = 0 WHERE tenant_id = ? AND is_default = 1`,
+        [MORTGAGE_TENANT_ID],
+      );
+    }
+
+    await pool.query(
+      `UPDATE conversation_email_mailboxes
+       SET assigned_broker_id = ?,
+           is_shared = ?,
+           ${is_default !== undefined ? "is_default = ?," : ""}
+           updated_at = NOW()
+       WHERE id = ? AND tenant_id = ?`,
+      is_default !== undefined
+        ? [
+            assigned_broker_id ?? null,
+            is_shared ? 1 : 0,
+            is_default ? 1 : 0,
+            mailboxId,
+            MORTGAGE_TENANT_ID,
+          ]
+        : [
+            assigned_broker_id ?? null,
+            is_shared ? 1 : 0,
+            mailboxId,
+            MORTGAGE_TENANT_ID,
+          ],
+    );
+
+    return res.json({ success: true, mailbox_id: mailboxId });
+  } catch (error: any) {
+    console.error("Assign mailbox error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || "Failed to assign mailbox",
+    });
+  }
+};
+
+/**
+ * DELETE /api/conversations/mailboxes/:mailboxId
+ *
+ * Disconnects a mailbox by wiping OAuth tokens and setting status to 'disabled'.
+ * Admins can disconnect any mailbox; regular brokers can only disconnect their own.
+ */
+const handleDisconnectConversationMailbox: RequestHandler = async (
+  req,
+  res,
+) => {
+  try {
+    const brokerId = (req as any).brokerId;
+    const brokerRole = (req as any).brokerRole;
+    const mailboxId = Number(req.params.mailboxId);
+    if (!Number.isFinite(mailboxId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid mailboxId" });
+    }
+
+    // Fetch mailbox to check ownership
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, assigned_broker_id, is_shared FROM conversation_email_mailboxes
+       WHERE id = ? AND tenant_id = ? LIMIT 1`,
+      [mailboxId, MORTGAGE_TENANT_ID],
+    );
+    if (rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Mailbox not found" });
+    }
+
+    const mb = rows[0];
+    const isAdmin = brokerRole === "admin" || brokerRole === "mortgage_banker";
+    const isOwner = mb.assigned_broker_id === brokerId;
+
+    if (!isAdmin && !isOwner && !mb.is_shared) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to disconnect this mailbox",
+      });
+    }
+
+    // Hard-delete the record so it doesn't reappear on refresh.
+    // FK references (communications.mailbox_id, conversation_threads.mailbox_id)
+    // are ON DELETE SET NULL so this is safe.
+    await pool.query(
+      `DELETE FROM conversation_email_mailboxes
+       WHERE id = ? AND tenant_id = ?`,
+      [mailboxId, MORTGAGE_TENANT_ID],
+    );
+
+    return res.json({ success: true, mailbox_id: mailboxId });
+  } catch (error: any) {
+    console.error("Disconnect mailbox error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to disconnect mailbox" });
+  }
+};
+
+/**
+ * GET /api/conversations/mailboxes
+ */
+const handleGetConversationMailboxes: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId;
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT m.id, m.provider, m.mailbox_email, m.display_name, m.is_shared,
+              m.assigned_broker_id,
+              CONCAT(b.first_name, ' ', b.last_name) AS assigned_broker_name,
+              m.status, m.is_default,
+              m.last_sync_at, m.last_sync_status, m.last_sync_error,
+              m.created_at, m.updated_at
+       FROM conversation_email_mailboxes m
+       LEFT JOIN brokers b ON b.id = m.assigned_broker_id
+       WHERE m.tenant_id = ? AND m.status != 'pending'
+         AND (m.is_shared = 1 OR m.assigned_broker_id = ?)
+       ORDER BY m.is_default DESC, m.status = 'active' DESC, m.mailbox_email ASC`,
+      [MORTGAGE_TENANT_ID, brokerId],
+    );
+
+    return res.json({ success: true, mailboxes: rows });
+  } catch (error) {
+    console.error("Get mailboxes error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch mailboxes" });
+  }
+};
+
+/**
+ * POST /api/conversations/mailboxes/:mailboxId/sync
+ */
+const handleSyncConversationMailbox: RequestHandler = async (req, res) => {
+  try {
+    const mailboxId = Number(req.params.mailboxId);
+    if (!Number.isFinite(mailboxId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid mailboxId" });
+    }
+
+    const [rows] = await pool.query<ConversationMailboxRow[]>(
+      `SELECT * FROM conversation_email_mailboxes
+       WHERE id = ? AND tenant_id = ? AND provider = 'office365'
+       LIMIT 1`,
+      [mailboxId, MORTGAGE_TENANT_ID],
+    );
+
+    if (rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Mailbox not found" });
+    }
+
+    const mailbox = rows[0];
+    const result = await syncOffice365Mailbox(mailbox);
+
+    await pool.query(
+      `UPDATE conversation_email_mailboxes
+       SET last_sync_at = NOW(),
+           last_sync_status = ?,
+           last_sync_error = ?,
+           status = ?,
+           updated_at = NOW()
+       WHERE id = ? AND tenant_id = ?`,
+      [
+        result.errors > 0 ? "error" : "ok",
+        result.errors > 0
+          ? `Encountered ${result.errors} message errors`
+          : null,
+        "active",
+        mailbox.id,
+        MORTGAGE_TENANT_ID,
+      ],
+    );
+
+    return res.json({
+      success: true,
+      mailbox_id: mailbox.id,
+      processed: result.processed,
+      errors: result.errors,
+    });
+  } catch (error: any) {
+    console.error("Sync mailbox error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || "Failed to sync mailbox",
+    });
+  }
+};
+
+/**
+ * GET /api/cron/sync-office365-mailboxes
+ *
+ * Secret-protected cron endpoint that syncs all active Office365 mailboxes.
+ */
+const handleCronSyncOffice365Mailboxes: RequestHandler = async (req, res) => {
+  try {
+    const secret = process.env.CRON_SECRET;
+    if (secret) {
+      const authHeader = req.headers.authorization;
+      const provided =
+        (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null) ||
+        (req.query.secret as string);
+      if (provided !== secret) {
+        return res.status(401).json({ success: false, error: "Unauthorized" });
+      }
+    }
+
+    const [rows] = await pool.query<ConversationMailboxRow[]>(
+      `SELECT * FROM conversation_email_mailboxes
+       WHERE tenant_id = ? AND provider = 'office365' AND status IN ('active', 'error')`,
+      [MORTGAGE_TENANT_ID],
+    );
+
+    let totalProcessed = 0;
+    let totalErrors = 0;
+
+    for (const mailbox of rows) {
+      try {
+        const result = await syncOffice365Mailbox(mailbox);
+        totalProcessed += result.processed;
+        totalErrors += result.errors;
+
+        await pool.query(
+          `UPDATE conversation_email_mailboxes
+           SET last_sync_at = NOW(),
+               last_sync_status = ?,
+               last_sync_error = ?,
+               status = 'active',
+               updated_at = NOW()
+           WHERE id = ? AND tenant_id = ?`,
+          [
+            result.errors > 0 ? "error" : "ok",
+            result.errors > 0
+              ? `Encountered ${result.errors} message errors`
+              : null,
+            mailbox.id,
+            MORTGAGE_TENANT_ID,
+          ],
+        );
+      } catch (mailboxErr: any) {
+        totalErrors++;
+        await pool.query(
+          `UPDATE conversation_email_mailboxes
+           SET last_sync_at = NOW(),
+               last_sync_status = 'error',
+               last_sync_error = ?,
+               status = 'error',
+               updated_at = NOW()
+           WHERE id = ? AND tenant_id = ?`,
+          [
+            mailboxErr?.message || "Mailbox sync failed",
+            mailbox.id,
+            MORTGAGE_TENANT_ID,
+          ],
+        );
+      }
+    }
+
+    return res.json({
+      success: true,
+      mailboxes: rows.length,
+      processed: totalProcessed,
+      errors: totalErrors,
+    });
+  } catch (error) {
+    console.error("Office365 cron sync error:", error);
+    return res
+      .status(500)
+      .json({ success: false, error: "Office365 sync failed" });
+  }
+};
+
+/**
+ * GET /api/cron/sync-teams-policy
+ *
+ * Secret-protected cron endpoint that runs scripts/teams-policy-sync.sh.
+ * Intended for cPanel cron callers that prefer URL-based triggers.
+ */
+const handleCronSyncTeamsPolicy: RequestHandler = async (req, res) => {
+  try {
+    const secret = process.env.CRON_SECRET;
+    if (secret) {
+      const authHeader = req.headers.authorization;
+      const provided =
+        (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null) ||
+        (req.query.secret as string);
+      if (provided !== secret) {
+        return res.status(401).json({ success: false, error: "Unauthorized" });
+      }
+    }
+
+    const scriptPath = path.resolve(
+      process.cwd(),
+      "scripts/teams-policy-sync.sh",
+    );
+    const { stdout, stderr } = await execFileAsync("bash", [scriptPath], {
+      timeout: 10 * 60 * 1000,
+      maxBuffer: 1024 * 1024,
+    });
+
+    return res.json({
+      success: true,
+      message: "Teams policy sync completed",
+      output: stdout?.trim() || null,
+      warnings: stderr?.trim() || null,
+    });
+  } catch (error: any) {
+    const stderr =
+      typeof error?.stderr === "string" ? error.stderr.trim() : null;
+    const stdout =
+      typeof error?.stdout === "string" ? error.stdout.trim() : null;
+
+    console.error("Teams policy cron sync error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: stderr || error?.message || "Teams policy sync failed",
+      output: stdout,
+    });
   }
 };
 
@@ -12698,20 +15691,26 @@ const handleInboundSMS: RequestHandler = async (req, res) => {
       loanId = clientRows[0].loan_id ?? null;
     }
 
-    // If no client matched, route to the broker who owns the called Twilio number.
-    // This means the number assignment in the CRM also defines inbox ownership.
-    if (brokerId === null) {
-      if (toPhone) {
-        const [ownerRows] = await pool.query<RowDataPacket[]>(
-          `SELECT id FROM brokers
-           WHERE tenant_id = ? AND status = 'active'
-             AND twilio_caller_id = ?
-           LIMIT 1`,
-          [MORTGAGE_TENANT_ID, toPhone],
-        );
-        if (ownerRows.length > 0) brokerId = ownerRows[0].id;
+    // Ownership rule: if the client sent to a Twilio number that is currently a
+    // broker's personal line, the OWNER of that number always gets the message —
+    // even if the client has a different assigned_broker_id. This ensures
+    // reassignment takes effect immediately (previous owner stops receiving
+    // messages to numbers they no longer own) and personal-line promises are kept.
+    if (toPhone) {
+      const [ownerRows] = await pool.query<RowDataPacket[]>(
+        `SELECT id FROM brokers
+         WHERE tenant_id = ? AND status = 'active'
+           AND twilio_caller_id = ?
+         LIMIT 1`,
+        [MORTGAGE_TENANT_ID, toPhone],
+      );
+      if (ownerRows.length > 0) {
+        brokerId = ownerRows[0].id;
       }
     }
+    // If still no broker (shared line + unknown client), leave brokerId NULL —
+    // the thread becomes a shared-inbox thread visible to all brokers.
+    void 0;
 
     // ── Determine conversation_id ────────────────────────────────────────────
     // Priority order:
@@ -12803,6 +15802,23 @@ const handleInboundSMS: RequestHandler = async (req, res) => {
         inboxNumber: toPhone,
         recipientPhone: fromPhone || null,
       });
+
+      // Ownership enforcement: if the called number is currently owned by a
+      // broker (personal line), force the thread's broker_id AND inbox_number
+      // to reflect the CURRENT owner — overriding any stale values from when
+      // the thread was first created under a different (or no) owner. This
+      // ensures reassignments take effect immediately: the previous owner
+      // stops seeing the thread, the new owner sees it.
+      if (brokerId && toPhone) {
+        await pool.query(
+          `UPDATE conversation_threads
+           SET broker_id = ?,
+               inbox_number = ?,
+               updated_at = NOW()
+           WHERE conversation_id = ? AND tenant_id = ?`,
+          [brokerId, toPhone, conversationId, MORTGAGE_TENANT_ID],
+        );
+      }
     } catch (upsertErr) {
       // Non-fatal for the webhook — Twilio must always receive a 200.
       console.error(
@@ -12836,6 +15852,7 @@ const handleInboundSMS: RequestHandler = async (req, res) => {
       });
       await publishToAbly("conversations:all", "thread-updated", {
         conversationId,
+        thread: { status: "active" },
       });
     }
 
@@ -12879,6 +15896,7 @@ const handleAblyToken: RequestHandler = async (req, res) => {
         "conversation:*": ["subscribe"],
         "conversations:all": ["subscribe"],
         "voice:incoming": ["subscribe"],
+        [`broker-notifications:${brokerId}`]: ["subscribe"],
       },
       ttl: 3_600_000, // 1 hour in ms
     });
@@ -12904,6 +15922,7 @@ const handleGetConversationThreads: RequestHandler = async (req, res) => {
       status = "all",
       priority,
       search,
+      folder,
     } = req.query;
 
     const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
@@ -12963,8 +15982,9 @@ const handleGetConversationThreads: RequestHandler = async (req, res) => {
       whereConditions.push("ct.status = ?");
       queryParams.push(status);
     } else {
-      // Default view excludes archived — those are only shown when explicitly requested
-      whereConditions.push("ct.status != 'archived'");
+      // Default view shows only active threads (excludes 'closed' and any
+      // legacy 'archived' rows that may still exist in the data).
+      whereConditions.push("ct.status = 'active'");
     }
 
     if (priority) {
@@ -12972,12 +15992,69 @@ const handleGetConversationThreads: RequestHandler = async (req, res) => {
       queryParams.push(priority);
     }
 
-    if (search) {
+    // Folder filter: inbox = has inbound email, sent = broker sent outbound email
+    if (folder === "inbox") {
       whereConditions.push(
-        "(ct.client_name LIKE ? OR ct.client_email LIKE ? OR ct.client_phone LIKE ?)",
+        `EXISTS (
+           SELECT 1 FROM communications cf
+           WHERE cf.conversation_id = ct.conversation_id
+             AND cf.tenant_id = ct.tenant_id
+             AND cf.communication_type = 'email'
+             AND cf.direction = 'inbound'
+         )`,
+      );
+    } else if (folder === "sent") {
+      whereConditions.push(
+        `EXISTS (
+           SELECT 1 FROM communications cf
+           WHERE cf.conversation_id = ct.conversation_id
+             AND cf.tenant_id = ct.tenant_id
+             AND cf.communication_type = 'email'
+             AND cf.direction = 'outbound'
+             AND cf.from_broker_id = ?
+         )`,
+      );
+      queryParams.push(brokerId);
+    }
+
+    if (search) {
+      // Also search broker/realtor names for threads that resolve via contact_broker_id
+      // or a phone-matched broker row (so "Unknown Client" threads appear when
+      // searching by realtor name or partial phone).
+      whereConditions.push(
+        `(ct.client_name LIKE ?
+          OR ct.client_email LIKE ?
+          OR ct.client_phone LIKE ?
+          OR EXISTS (
+            SELECT 1 FROM brokers bsrch
+            WHERE bsrch.id = ct.contact_broker_id
+              AND CONCAT(bsrch.first_name, ' ', bsrch.last_name) LIKE ?
+          )
+          OR EXISTS (
+            SELECT 1 FROM brokers bsrch2
+            WHERE bsrch2.tenant_id = ct.tenant_id
+              AND ct.client_name IS NULL
+              AND ct.client_id IS NULL
+              AND ct.contact_broker_id IS NULL
+              AND RIGHT(REGEXP_REPLACE(bsrch2.phone, '[^0-9]', ''), 10)
+                  = RIGHT(REGEXP_REPLACE(ct.client_phone, '[^0-9]', ''), 10)
+              AND CONCAT(bsrch2.first_name, ' ', bsrch2.last_name) LIKE ?
+          )
+          OR EXISTS (
+            SELECT 1 FROM clients csrch
+            WHERE csrch.id = ct.client_id
+              AND CONCAT(csrch.first_name, ' ', csrch.last_name) LIKE ?
+          ))`,
       );
       const searchTerm = `%${search}%`;
-      queryParams.push(searchTerm, searchTerm, searchTerm);
+      queryParams.push(
+        searchTerm,
+        searchTerm,
+        searchTerm,
+        searchTerm,
+        searchTerm,
+        searchTerm,
+      );
     }
 
     const whereClause = whereConditions.join(" AND ");
@@ -12990,10 +16067,26 @@ const handleGetConversationThreads: RequestHandler = async (req, res) => {
         CONCAT(c.first_name, ' ', c.last_name) as client_full_name,
         c.email as client_email_current,
         c.phone as client_phone_current,
+        -- Resolve display name: stored value → linked client → linked contact broker → phone-matched broker
+        COALESCE(
+          ct.client_name,
+          CONCAT(c.first_name, ' ', c.last_name),
+          CONCAT(cb.first_name, ' ', cb.last_name),
+          CONCAT(pb.first_name, ' ', pb.last_name)
+        ) AS resolved_client_name,
         CASE WHEN ct.client_id IS NOT NULL THEN 1 ELSE 0 END AS can_view_client
       FROM conversation_threads ct
       LEFT JOIN loan_applications la ON ct.application_id = la.id
       LEFT JOIN clients c ON ct.client_id = c.id
+      LEFT JOIN brokers cb ON ct.contact_broker_id = cb.id
+      -- Phone-based broker match for threads with no stored name/client/contact_broker_id
+      LEFT JOIN brokers pb ON pb.tenant_id = ct.tenant_id
+        AND ct.client_name IS NULL
+        AND ct.client_id IS NULL
+        AND ct.contact_broker_id IS NULL
+        AND ct.client_phone IS NOT NULL
+        AND RIGHT(REGEXP_REPLACE(pb.phone, '[^0-9]', ''), 10)
+            = RIGHT(REGEXP_REPLACE(ct.client_phone, '[^0-9]', ''), 10)
       WHERE ${whereClause}
       ORDER BY ct.last_message_at DESC
       LIMIT ${parseInt(limit as string)} OFFSET ${offset}
@@ -13022,6 +16115,9 @@ const handleGetConversationThreads: RequestHandler = async (req, res) => {
       success: true,
       threads: threads.map((thread) => ({
         ...thread,
+        // Use the resolved name (covers broker/realtor contacts and backfills
+        // existing threads that were stored with client_name = NULL)
+        client_name: thread.resolved_client_name || thread.client_name,
         tags: thread.tags ? JSON.parse(thread.tags) : [],
         can_view_client: !!thread.can_view_client,
       })),
@@ -13047,7 +16143,7 @@ const handleGetConversationThreads: RequestHandler = async (req, res) => {
  */
 const handleGetConversationMessages: RequestHandler = async (req, res) => {
   try {
-    const conversationId = req.params.conversationId as string;
+    const { conversationId } = req.params;
     const { page = 1, limit = 50 } = req.query;
     const brokerId = (req as any).brokerId;
 
@@ -13100,23 +16196,63 @@ const handleGetConversationMessages: RequestHandler = async (req, res) => {
       [conversationId, MORTGAGE_TENANT_ID],
     );
 
-    // Get thread info
+    // Get thread info — apply the same broker/realtor name resolution as the
+    // threads list so "Unknown Client" is never shown when opening a thread
+    // whose contact is a broker/realtor (stored with client_name = NULL).
     const [threadInfo] = await pool.query<RowDataPacket[]>(
-      `SELECT ct.*, 
+      `SELECT ct.*,
               la.application_number,
-              CONCAT(cl.first_name, ' ', cl.last_name) as client_full_name
+              CONCAT(cl.first_name, ' ', cl.last_name) AS client_full_name,
+              COALESCE(
+                ct.client_name,
+                CONCAT(cl.first_name, ' ', cl.last_name),
+                CONCAT(cb.first_name, ' ', cb.last_name),
+                CONCAT(pb.first_name, ' ', pb.last_name)
+              ) AS resolved_client_name
        FROM conversation_threads ct
        LEFT JOIN loan_applications la ON ct.application_id = la.id
        LEFT JOIN clients cl ON ct.client_id = cl.id
-       WHERE ct.conversation_id = ?`,
-      [conversationId],
+       LEFT JOIN brokers cb ON ct.contact_broker_id = cb.id
+       LEFT JOIN brokers pb ON pb.tenant_id = ct.tenant_id
+         AND ct.client_name IS NULL
+         AND ct.client_id IS NULL
+         AND ct.contact_broker_id IS NULL
+         AND ct.client_phone IS NOT NULL
+         AND RIGHT(REGEXP_REPLACE(pb.phone, '[^0-9]', ''), 10)
+             = RIGHT(REGEXP_REPLACE(ct.client_phone, '[^0-9]', ''), 10)
+       WHERE ct.conversation_id = ? AND ct.tenant_id = ?`,
+      [conversationId, MORTGAGE_TENANT_ID],
     );
+    // Normalise: promote resolved_client_name → client_name so the frontend
+    // always receives a populated name without any special-case handling.
+    if (threadInfo[0] && threadInfo[0].resolved_client_name) {
+      threadInfo[0].client_name = threadInfo[0].resolved_client_name;
+    }
 
     // Get total message count
     const [countResult] = await pool.query<RowDataPacket[]>(
-      "SELECT COUNT(*) as total FROM communications WHERE conversation_id = ?",
-      [conversationId],
+      "SELECT COUNT(*) as total FROM communications WHERE conversation_id = ? AND tenant_id = ?",
+      [conversationId, MORTGAGE_TENANT_ID],
     );
+
+    // Server-side mark-as-read: opening a conversation clears its unread badge
+    // for everyone (no need for a separate endpoint or client retry).
+    if (threadInfo[0] && (threadInfo[0].unread_count ?? 0) > 0) {
+      pool
+        .query(
+          `UPDATE conversation_threads SET unread_count = 0, updated_at = NOW()
+           WHERE conversation_id = ? AND tenant_id = ?`,
+          [conversationId, MORTGAGE_TENANT_ID],
+        )
+        .then(() =>
+          publishToAbly("conversations:all", "thread-read", {
+            conversationId,
+          }).catch(() => undefined),
+        )
+        .catch((e) => console.warn("⚠️ Failed to reset unread_count:", e));
+      // Reflect the reset in the response so the client UI matches the DB.
+      threadInfo[0].unread_count = 0;
+    }
 
     const total = countResult[0]?.total || 0;
     const totalPages = Math.ceil(total / parseInt(limit as string));
@@ -13146,6 +16282,10 @@ const handleGetConversationMessages: RequestHandler = async (req, res) => {
       }),
       thread: {
         ...threadInfo[0],
+        client_name:
+          threadInfo[0]?.client_name ??
+          threadInfo[0]?.resolved_client_name ??
+          null,
         tags: (() => {
           try {
             return threadInfo[0]?.tags
@@ -13199,8 +16339,12 @@ const handleDeleteConversationMessage: RequestHandler = async (req, res) => {
     }
 
     const msg = rows[0];
+    const brokerRole = (req as any).brokerRole;
+    const isAdminRole = brokerRole === "admin" || brokerRole === "superadmin";
     const canDelete =
-      msg.from_broker_id === brokerId || msg.thread_owner === brokerId;
+      msg.from_broker_id === brokerId ||
+      msg.thread_owner === brokerId ||
+      isAdminRole;
     if (!canDelete) {
       return res.status(403).json({
         success: false,
@@ -13246,6 +16390,7 @@ const handleSendMessage: RequestHandler = async (req, res) => {
       application_id,
       lead_id,
       client_id,
+      mailbox_id,
       communication_type,
       recipient_phone,
       recipient_email,
@@ -13255,6 +16400,8 @@ const handleSendMessage: RequestHandler = async (req, res) => {
       message_type = "text",
       scheduled_at,
       media_url,
+      cc,
+      bcc,
     } = req.body;
 
     // Validation
@@ -13337,22 +16484,46 @@ const handleSendMessage: RequestHandler = async (req, res) => {
       }
     }
 
-    // Determine which Twilio number to send from:
-    // 1. Broker's own assigned number (twilio_caller_id)
-    // 2. Thread's inbox_number — ONLY if it is not another broker's personal line
-    // 3. First shared Twilio number (not assigned to any broker as personal line)
-    // 4. First available number in the account
+    // Determine which Twilio number to send from, honoring ownership rules:
+    //   Rule 1: Broker with a personal number must ALWAYS use it (absolute priority,
+    //           even for replies on old threads that used a shared number).
+    //   Rule 2: Broker with NO personal number uses the thread's existing inbox_number
+    //           if that number is NOT someone else's personal line. Otherwise falls
+    //           through to the first available shared number.
+    //   Rule 3: Never send from a number that is now assigned as another broker's
+    //           personal line (prevents ownership leakage after reassignment).
     let fromNumber: string = "";
 
-    // 1. Broker's own personal number
+    // Fetch broker's personal number AND the set of all personal lines in one shot
     const [brokerPhoneRows] = await pool.query<RowDataPacket[]>(
-      `SELECT twilio_caller_id FROM brokers WHERE id = ? AND tenant_id = ? AND twilio_caller_id IS NOT NULL LIMIT 1`,
+      `SELECT twilio_caller_id FROM brokers
+       WHERE id = ? AND tenant_id = ? AND twilio_caller_id IS NOT NULL LIMIT 1`,
       [brokerId, MORTGAGE_TENANT_ID],
     );
-    if (brokerPhoneRows.length > 0 && brokerPhoneRows[0].twilio_caller_id) {
-      fromNumber = brokerPhoneRows[0].twilio_caller_id;
+    const brokerPersonalNumber: string | null =
+      brokerPhoneRows[0]?.twilio_caller_id ?? null;
+
+    const [allPersonalRows] = await pool.query<RowDataPacket[]>(
+      `SELECT twilio_caller_id FROM brokers
+       WHERE tenant_id = ? AND twilio_caller_id IS NOT NULL AND twilio_caller_id <> ''`,
+      [MORTGAGE_TENANT_ID],
+    );
+    const personalLines = new Set(
+      (allPersonalRows as RowDataPacket[]).map(
+        (r) => r.twilio_caller_id as string,
+      ),
+    );
+    const otherBrokerPersonalLines = new Set(personalLines);
+    if (brokerPersonalNumber)
+      otherBrokerPersonalLines.delete(brokerPersonalNumber);
+
+    // Step 1: If broker has a personal number → use it unconditionally (Rule 1)
+    if (brokerPersonalNumber) {
+      fromNumber = brokerPersonalNumber;
     }
 
+    // Step 2: No personal number → try thread's inbox_number, but skip it if it's
+    // now another broker's personal line (Rule 3 — reassignment safety)
     if (!fromNumber && conversation_id) {
       const [threadRow] = await pool.query<RowDataPacket[]>(
         `SELECT inbox_number FROM conversation_threads
@@ -13360,50 +16531,74 @@ const handleSendMessage: RequestHandler = async (req, res) => {
         [conversation_id, MORTGAGE_TENANT_ID],
       );
       const inboxNum: string | null = threadRow[0]?.inbox_number ?? null;
-
-      if (inboxNum) {
-        // Check if inbox_number is another broker's personal line
-        const [ownerRows] = await pool.query<RowDataPacket[]>(
-          `SELECT id FROM brokers WHERE twilio_caller_id = ? AND id != ? AND tenant_id = ? LIMIT 1`,
-          [inboxNum, brokerId, MORTGAGE_TENANT_ID],
-        );
-
-        if (ownerRows.length === 0) {
-          // inbox_number is shared/unassigned — safe to use
-          fromNumber = inboxNum;
-        } else {
-          // inbox_number belongs to a different broker — find a shared number instead
-          if (twilioClient) {
-            const [allPersonalRows] = await pool.query<RowDataPacket[]>(
-              `SELECT twilio_caller_id FROM brokers WHERE tenant_id = ? AND twilio_caller_id IS NOT NULL`,
-              [MORTGAGE_TENANT_ID],
-            );
-            const personalNums = new Set(
-              allPersonalRows.map((r) => r.twilio_caller_id as string),
-            );
-            const twilioNums = await twilioClient.incomingPhoneNumbers.list({
-              limit: 50,
-            });
-            const shared = twilioNums.find(
-              (n) => !personalNums.has(n.phoneNumber),
-            );
-            if (shared) fromNumber = shared.phoneNumber;
-          }
-          // Still nothing — fall back to inbox_number (better than silence)
-          if (!fromNumber) fromNumber = inboxNum;
-        }
+      if (inboxNum && !otherBrokerPersonalLines.has(inboxNum)) {
+        fromNumber = inboxNum;
       }
     }
 
-    // Last resort: first broker number in DB
+    // Step 3: First shared number — derived from inbox_number values seen on
+    // existing threads, excluding any number that is now a broker's personal line.
+    // Sorted deterministically so the same broker always picks the same shared
+    // number until reassignment.
     if (!fromNumber) {
-      const [firstNumber] = await pool.query<RowDataPacket[]>(
-        `SELECT twilio_caller_id FROM brokers
-         WHERE tenant_id = ? AND twilio_caller_id IS NOT NULL
-         ORDER BY id ASC LIMIT 1`,
-        [MORTGAGE_TENANT_ID],
-      );
-      if (firstNumber.length > 0) fromNumber = firstNumber[0].twilio_caller_id;
+      try {
+        const [sharedRows] = await pool.query<RowDataPacket[]>(
+          `SELECT DISTINCT ct.inbox_number
+           FROM conversation_threads ct
+           WHERE ct.tenant_id = ?
+             AND ct.inbox_number IS NOT NULL
+             AND ct.inbox_number <> ''
+             AND ct.inbox_number NOT IN (
+               SELECT twilio_caller_id FROM brokers
+               WHERE tenant_id = ? AND twilio_caller_id IS NOT NULL
+             )
+           ORDER BY ct.inbox_number ASC
+           LIMIT 1`,
+          [MORTGAGE_TENANT_ID, MORTGAGE_TENANT_ID],
+        );
+        if (sharedRows.length > 0) fromNumber = sharedRows[0].inbox_number;
+      } catch (_e) {
+        // ignore — fall through to last resort
+      }
+    }
+
+    // Step 4: Query Twilio directly for the first SMS-capable shared line.
+    // This is the authoritative source: any Twilio number NOT assigned as a
+    // broker's personal line (by SID or caller_id) is considered shared.
+    // Replaces the previous `otp_from_number` lookup which could hold a
+    // number that has since been reassigned as a personal line.
+    if (!fromNumber) {
+      try {
+        const twilioShared = await getSharedSmsNumber();
+        if (twilioShared) {
+          fromNumber = twilioShared;
+        }
+      } catch (e) {
+        console.warn("⚠️ Step 4 (Twilio shared lookup) failed:", e);
+      }
+    }
+
+    // Step 5 (absolute last resort): otp_from_number from system_settings,
+    // only if it is NOT a broker's personal line. Prevents sending from
+    // another broker's exclusive number when all other steps fail.
+    if (!fromNumber) {
+      try {
+        const [settingRows] = await pool.query<RowDataPacket[]>(
+          `SELECT setting_value FROM system_settings
+           WHERE tenant_id = ? AND setting_key = 'otp_from_number' LIMIT 1`,
+          [MORTGAGE_TENANT_ID],
+        );
+        const candidate = settingRows[0]?.setting_value as string | undefined;
+        if (candidate && !personalLines.has(candidate)) {
+          fromNumber = candidate;
+        } else if (candidate && personalLines.has(candidate)) {
+          console.warn(
+            `⚠️ otp_from_number=${candidate} is now a broker's personal line — refusing to use.`,
+          );
+        }
+      } catch (e) {
+        console.warn("⚠️ Step 5 from-number fallback failed:", e);
+      }
     }
 
     if (
@@ -13610,8 +16805,8 @@ const handleSendMessage: RequestHandler = async (req, res) => {
       `INSERT INTO communications (
         tenant_id, application_id, lead_id, from_broker_id, to_user_id,
         communication_type, direction, subject, body, media_url, media_content_type, status,
-        conversation_id, message_type, template_id, scheduled_at, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+        conversation_id, message_type, template_id, metadata, scheduled_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         MORTGAGE_TENANT_ID,
         application_id || null,
@@ -13636,6 +16831,16 @@ const handleSendMessage: RequestHandler = async (req, res) => {
         finalConversationId,
         message_type,
         template_id || null,
+        mailbox_id
+          ? JSON.stringify({
+              mailbox_id,
+              provider: "office365",
+              to_recipients: finalRecipientEmail
+                ? [{ email: finalRecipientEmail }]
+                : [],
+              cc_recipients: Array.isArray(cc) ? cc : [],
+            })
+          : null,
         scheduled_at || null,
       ],
     )) as [ResultSetHeader, any];
@@ -13655,9 +16860,36 @@ const handleSendMessage: RequestHandler = async (req, res) => {
       communicationType: communication_type,
       direction: "outbound",
       body: processedBody,
+      inboxNumber: fromNumber || null,
       recipientPhone: finalRecipientPhone || null,
       recipientEmail: finalRecipientEmail || null,
     });
+
+    // Ownership-aware inbox_number refresh:
+    //   - If broker has a personal number, ALWAYS overwrite the thread's
+    //     inbox_number with it (Rule 1: absolute priority). This ensures
+    //     transitions from shared→personal take effect immediately and the
+    //     sidebar displays the current owner's line.
+    //   - Otherwise, only stamp inbox_number if it was NULL (don't overwrite
+    //     an existing shared-pool number).
+    if (fromNumber) {
+      if (brokerPersonalNumber && fromNumber === brokerPersonalNumber) {
+        await pool.query(
+          `UPDATE conversation_threads
+           SET inbox_number = ?, updated_at = NOW()
+           WHERE conversation_id = ? AND tenant_id = ?
+             AND (inbox_number IS NULL OR inbox_number <> ?)`,
+          [fromNumber, finalConversationId, MORTGAGE_TENANT_ID, fromNumber],
+        );
+      } else {
+        await pool.query(
+          `UPDATE conversation_threads
+           SET inbox_number = ?, updated_at = NOW()
+           WHERE conversation_id = ? AND tenant_id = ? AND inbox_number IS NULL`,
+          [fromNumber, finalConversationId, MORTGAGE_TENANT_ID],
+        );
+      }
+    }
 
     // Auto-claim: if this thread was previously unassigned (shared inbox),
     // assign it to the broker who just replied. This removes it from other
@@ -13714,13 +16946,74 @@ const handleSendMessage: RequestHandler = async (req, res) => {
           if (finalRecipientEmail) {
             // Auto-detect HTML content so template-based emails render correctly
             const isHtmlEmail = /<[a-z][\s\S]*>/i.test(processedBody);
-            sendResult = await sendEmailMessage(
-              finalRecipientEmail,
-              processedSubject || "Message from Mortgage Professional",
-              processedBody,
-              isHtmlEmail,
-              finalConversationId,
-            );
+
+            // Build a dynamic fallback subject when none was provided.
+            // Priority: 1) caller-supplied subject  2) "Re: <prior subject>" for replies
+            //           3) "<Broker Name>, from <Company>" personalised greeting
+            let emailSubject = processedSubject;
+            if (!emailSubject) {
+              // Check if there's a prior subject on this thread to use as "Re: …"
+              if (finalConversationId) {
+                const [priorSubjectRows] = await pool.query<RowDataPacket[]>(
+                  `SELECT subject FROM communications
+                   WHERE conversation_id = ? AND tenant_id = ? AND subject IS NOT NULL AND subject <> ''
+                   ORDER BY created_at ASC LIMIT 1`,
+                  [finalConversationId, MORTGAGE_TENANT_ID],
+                );
+                if (priorSubjectRows.length > 0) {
+                  const prior = priorSubjectRows[0].subject as string;
+                  emailSubject = prior.startsWith("Re:")
+                    ? prior
+                    : `Re: ${prior}`;
+                }
+              }
+
+              // Still no subject — build personalised greeting from broker + tenant
+              if (!emailSubject) {
+                const [[brokerRow], [tenantRow]] = await Promise.all([
+                  pool.query<RowDataPacket[]>(
+                    `SELECT first_name, last_name FROM brokers WHERE id = ? AND tenant_id = ? LIMIT 1`,
+                    [brokerId, MORTGAGE_TENANT_ID],
+                  ),
+                  pool.query<RowDataPacket[]>(
+                    `SELECT company_name, name FROM tenants WHERE id = ? LIMIT 1`,
+                    [MORTGAGE_TENANT_ID],
+                  ),
+                ]);
+                const brokerFirst =
+                  (brokerRow as RowDataPacket[])[0]?.first_name || "";
+                const brokerLast =
+                  (brokerRow as RowDataPacket[])[0]?.last_name || "";
+                const company =
+                  (tenantRow as RowDataPacket[])[0]?.company_name ||
+                  (tenantRow as RowDataPacket[])[0]?.name ||
+                  "The Mortgage Professionals";
+                const brokerName =
+                  `${brokerFirst} ${brokerLast}`.trim() || "Your Loan Officer";
+                emailSubject = `${brokerName}, from ${company}`;
+              }
+            }
+
+            if (mailbox_id) {
+              sendResult = await sendEmailMessageViaOffice365({
+                mailboxId: Number(mailbox_id),
+                to: finalRecipientEmail,
+                subject: emailSubject,
+                body: processedBody,
+                isHtml: isHtmlEmail,
+                conversationId: finalConversationId,
+                cc: Array.isArray(cc) ? cc : undefined,
+                bcc: Array.isArray(bcc) ? bcc : undefined,
+              });
+            } else {
+              sendResult = await sendEmailMessage(
+                finalRecipientEmail,
+                emailSubject,
+                processedBody,
+                isHtmlEmail,
+                finalConversationId,
+              );
+            }
           } else {
             sendResult = {
               success: false,
@@ -13824,8 +17117,40 @@ const handleSendMessage: RequestHandler = async (req, res) => {
           body: processedBody.slice(0, 200),
         },
       );
+      // Fetch the freshly-updated thread row so other clients can patch their
+      // sidebar in-place (no full refetch needed).
+      const [refreshedThread] = await pool.query<RowDataPacket[]>(
+        `SELECT ct.*, la.application_number,
+                COALESCE(
+                  ct.client_name,
+                  CONCAT(cl.first_name, ' ', cl.last_name),
+                  CONCAT(cb.first_name, ' ', cb.last_name),
+                  CONCAT(pb.first_name, ' ', pb.last_name)
+                ) AS client_name,
+                CONCAT(cl.first_name, ' ', cl.last_name) AS client_full_name
+         FROM conversation_threads ct
+         LEFT JOIN loan_applications la ON ct.application_id = la.id
+         LEFT JOIN clients cl ON ct.client_id = cl.id
+         LEFT JOIN brokers cb ON ct.contact_broker_id = cb.id
+         LEFT JOIN brokers pb ON pb.tenant_id = ct.tenant_id
+           AND ct.client_name IS NULL AND ct.client_id IS NULL AND ct.contact_broker_id IS NULL
+           AND ct.client_phone IS NOT NULL
+           AND RIGHT(REGEXP_REPLACE(pb.phone, '[^0-9]', ''), 10)
+               = RIGHT(REGEXP_REPLACE(ct.client_phone, '[^0-9]', ''), 10)
+         WHERE ct.conversation_id = ? AND ct.tenant_id = ?
+         LIMIT 1`,
+        [finalConversationId, MORTGAGE_TENANT_ID],
+      );
       await publishToAbly("conversations:all", "thread-updated", {
         conversationId: finalConversationId,
+        thread: refreshedThread[0]
+          ? {
+              ...refreshedThread[0],
+              tags: refreshedThread[0].tags
+                ? JSON.parse(refreshedThread[0].tags)
+                : [],
+            }
+          : null,
       });
     } catch (ablyErr) {
       console.warn("Ably publish failed (non-fatal):", ablyErr);
@@ -14102,15 +17427,19 @@ const handleSaveContactFromConversation: RequestHandler = async (req, res) => {
  */
 const handleUpdateConversation: RequestHandler = async (req, res) => {
   try {
-    const conversationId = req.params.conversationId as string;
+    const { conversationId } = req.params;
     const { status, priority, tags } = req.body;
     const brokerId = (req as any).brokerId;
 
     // Verify broker has access to this conversation
+    // Admins can update any thread; regular brokers can update their own or unassigned threads
+    const brokerRole = (req as any).brokerRole;
+    const isAdminRole = brokerRole === "admin" || brokerRole === "superadmin";
     const [threadCheck] = await pool.query<RowDataPacket[]>(
       `SELECT id FROM conversation_threads 
-       WHERE conversation_id = ? AND broker_id = ? AND tenant_id = ?`,
-      [conversationId, brokerId, MORTGAGE_TENANT_ID],
+       WHERE conversation_id = ? AND tenant_id = ?
+         AND (broker_id = ? OR broker_id IS NULL OR ?)`,
+      [conversationId, MORTGAGE_TENANT_ID, brokerId, isAdminRole],
     );
 
     if (threadCheck.length === 0) {
@@ -14123,11 +17452,11 @@ const handleUpdateConversation: RequestHandler = async (req, res) => {
     const updateFields: string[] = [];
     const updateValues: any[] = [];
 
-    if (status && ["active", "archived", "closed"].includes(status)) {
+    if (status && ["active", "closed"].includes(status)) {
       updateFields.push("status = ?");
       updateValues.push(status);
-      // Set or clear archived_at when archiving
-      if (status === "archived") {
+      // Clear archived_at when reopening; set it when closing
+      if (status === "closed") {
         updateFields.push("archived_at = NOW()");
       } else {
         updateFields.push("archived_at = NULL");
@@ -14153,31 +17482,61 @@ const handleUpdateConversation: RequestHandler = async (req, res) => {
 
     updateFields.push("updated_at = NOW()");
     updateValues.push(conversationId);
+    updateValues.push(MORTGAGE_TENANT_ID);
 
     await pool.query(
       `UPDATE conversation_threads SET ${updateFields.join(", ")} 
-       WHERE conversation_id = ?`,
+       WHERE conversation_id = ? AND tenant_id = ?`,
       updateValues,
     );
 
     // Get updated thread
     const [updatedThread] = await pool.query<RowDataPacket[]>(
-      `SELECT ct.*, 
+      `SELECT ct.*,
               la.application_number,
-              CONCAT(cl.first_name, ' ', cl.last_name) as client_full_name
+              COALESCE(
+                ct.client_name,
+                CONCAT(cl.first_name, ' ', cl.last_name),
+                CONCAT(cb.first_name, ' ', cb.last_name),
+                CONCAT(pb.first_name, ' ', pb.last_name)
+              ) AS client_name,
+              CONCAT(cl.first_name, ' ', cl.last_name) AS client_full_name
        FROM conversation_threads ct
        LEFT JOIN loan_applications la ON ct.application_id = la.id
        LEFT JOIN clients cl ON ct.client_id = cl.id
-       WHERE ct.conversation_id = ?`,
-      [conversationId],
+       LEFT JOIN brokers cb ON ct.contact_broker_id = cb.id
+       LEFT JOIN brokers pb ON pb.tenant_id = ct.tenant_id
+         AND ct.client_name IS NULL AND ct.client_id IS NULL AND ct.contact_broker_id IS NULL
+         AND ct.client_phone IS NOT NULL
+         AND RIGHT(REGEXP_REPLACE(pb.phone, '[^0-9]', ''), 10)
+             = RIGHT(REGEXP_REPLACE(ct.client_phone, '[^0-9]', ''), 10)
+       WHERE ct.conversation_id = ? AND ct.tenant_id = ?`,
+      [conversationId, MORTGAGE_TENANT_ID],
     );
+
+    const updatedThreadPayload = updatedThread[0]
+      ? {
+          ...updatedThread[0],
+          tags: updatedThread[0].tags ? JSON.parse(updatedThread[0].tags) : [],
+        }
+      : null;
+
+    // Broadcast the update to all listening clients (other tabs / other brokers)
+    // so close/reopen/priority/tag changes appear instantly without a refetch.
+    if (updatedThreadPayload) {
+      try {
+        await publishToAbly("conversations:all", "thread-updated", {
+          conversationId,
+          thread: updatedThreadPayload,
+        });
+      } catch (publishErr) {
+        console.warn("⚠️ Ably publish (thread-updated) failed:", publishErr);
+      }
+    }
 
     res.json({
       success: true,
-      thread: {
-        ...updatedThread[0],
-        tags: updatedThread[0]?.tags ? JSON.parse(updatedThread[0].tags) : [],
-      },
+      thread: updatedThreadPayload ?? { conversation_id: conversationId },
     });
   } catch (error) {
     console.error("Error updating conversation:", error);
@@ -14194,15 +17553,17 @@ const handleUpdateConversation: RequestHandler = async (req, res) => {
  */
 const handleDeleteConversation: RequestHandler = async (req, res) => {
   try {
-    const conversationId = req.params.conversationId as string;
+    const { conversationId } = req.params;
     const brokerId = (req as any).brokerId;
 
-    // Verify broker has access — owns the thread, or thread is unassigned (shared inbox)
+    // Verify broker has access — admins can delete any thread; brokers can delete own or unassigned
+    const brokerRole = (req as any).brokerRole;
+    const isAdminRole = brokerRole === "admin" || brokerRole === "superadmin";
     const [threadCheck] = await pool.query<RowDataPacket[]>(
       `SELECT id FROM conversation_threads
        WHERE conversation_id = ? AND tenant_id = ?
-         AND (broker_id = ? OR broker_id IS NULL)`,
-      [conversationId, MORTGAGE_TENANT_ID, brokerId],
+         AND (broker_id = ? OR broker_id IS NULL OR ?)`,
+      [conversationId, MORTGAGE_TENANT_ID, brokerId, isAdminRole],
     );
 
     if (threadCheck.length === 0) {
@@ -14795,29 +18156,889 @@ const handleUpdateCallForwarding: RequestHandler = async (req, res) => {
 };
 
 /**
+ * GET /api/voice/voicemail-settings
+ * Returns the authenticated broker's voicemail overrides AND the resolved
+ * tenant defaults. The frontend uses this to render the Voicemail Settings UI.
+ */
+const handleGetVoicemailSettings: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+
+    const [brokerRows] = await pool.query<RowDataPacket[]>(
+      `SELECT voicemail_enabled, voicemail_greeting_text, voicemail_greeting_url,
+              twilio_caller_id
+       FROM brokers WHERE id = ? AND tenant_id = ?`,
+      [brokerId, MORTGAGE_TENANT_ID],
+    );
+    if (brokerRows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Broker not found" });
+    }
+
+    const [tenantRows] = await pool.query<RowDataPacket[]>(
+      `SELECT voicemail_enabled, voicemail_greeting_text, voicemail_greeting_url,
+              voicemail_max_seconds, voicemail_transcribe
+       FROM tenants WHERE id = ? LIMIT 1`,
+      [MORTGAGE_TENANT_ID],
+    );
+    const tenant: any = tenantRows[0] || {};
+    const broker: any = brokerRows[0];
+
+    return res.json({
+      success: true,
+      broker: {
+        // null on these fields means "inherit from tenant"
+        voicemail_enabled:
+          broker.voicemail_enabled === null ? null : !!broker.voicemail_enabled,
+        voicemail_greeting_text: broker.voicemail_greeting_text ?? null,
+        voicemail_greeting_url: broker.voicemail_greeting_url ?? null,
+        has_personal_line: !!broker.twilio_caller_id,
+      },
+      tenant: {
+        voicemail_enabled: !!(tenant.voicemail_enabled ?? 1),
+        voicemail_greeting_text: tenant.voicemail_greeting_text ?? null,
+        voicemail_greeting_url: tenant.voicemail_greeting_url ?? null,
+        voicemail_max_seconds:
+          parseInt(String(tenant.voicemail_max_seconds ?? 120), 10) || 120,
+        voicemail_transcribe: !!(tenant.voicemail_transcribe ?? 1),
+      },
+    });
+  } catch (err) {
+    console.error("[handleGetVoicemailSettings] Error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to load voicemail settings",
+    });
+  }
+};
+
+/**
+ * PUT /api/voice/voicemail-settings
+ * Updates the authenticated broker's voicemail overrides.
+ * Body: { enabled?: boolean | null, greeting_text?: string | null, greeting_url?: string | null }
+ * Pass null on any field to clear the override and inherit from the tenant.
+ */
+const handleUpdateVoicemailSettings: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const { enabled, greeting_text, greeting_url } = req.body as {
+      enabled?: boolean | null;
+      greeting_text?: string | null;
+      greeting_url?: string | null;
+    };
+
+    const enabledVal =
+      enabled === undefined
+        ? undefined
+        : enabled === null
+          ? null
+          : enabled
+            ? 1
+            : 0;
+
+    const fields: string[] = [];
+    const values: any[] = [];
+
+    if (enabledVal !== undefined) {
+      fields.push("voicemail_enabled = ?");
+      values.push(enabledVal);
+    }
+    if (greeting_text !== undefined) {
+      const text =
+        greeting_text === null || !greeting_text.trim()
+          ? null
+          : greeting_text.trim().slice(0, 1000);
+      fields.push("voicemail_greeting_text = ?");
+      values.push(text);
+    }
+    if (greeting_url !== undefined) {
+      const url =
+        greeting_url === null || !greeting_url.trim()
+          ? null
+          : greeting_url.trim().slice(0, 500);
+      fields.push("voicemail_greeting_url = ?");
+      values.push(url);
+    }
+
+    if (fields.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, error: "No fields to update" });
+    }
+
+    fields.push("updated_at = NOW()");
+    values.push(brokerId, MORTGAGE_TENANT_ID);
+
+    await pool.query(
+      `UPDATE brokers SET ${fields.join(", ")} WHERE id = ? AND tenant_id = ?`,
+      values,
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("[handleUpdateVoicemailSettings] Error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to update voicemail settings",
+    });
+  }
+};
+
+/**
+ * PUT /api/voice/voicemail-settings/tenant
+ * Admin-only: updates tenant-level voicemail defaults.
+ * Body: { enabled?, greeting_text?, greeting_url?, max_seconds?, transcribe? }
+ */
+const handleUpdateTenantVoicemailSettings: RequestHandler = async (
+  req,
+  res,
+) => {
+  try {
+    const role = (req as any).brokerRole as string | undefined;
+    if (role !== "admin") {
+      return res
+        .status(403)
+        .json({ success: false, error: "Admin access required" });
+    }
+
+    const { enabled, greeting_text, greeting_url, max_seconds, transcribe } =
+      req.body as {
+        enabled?: boolean;
+        greeting_text?: string | null;
+        greeting_url?: string | null;
+        max_seconds?: number;
+        transcribe?: boolean;
+      };
+
+    const fields: string[] = [];
+    const values: any[] = [];
+
+    if (typeof enabled === "boolean") {
+      fields.push("voicemail_enabled = ?");
+      values.push(enabled ? 1 : 0);
+    }
+    if (greeting_text !== undefined) {
+      const text =
+        greeting_text === null || !greeting_text.trim()
+          ? null
+          : greeting_text.trim().slice(0, 1000);
+      fields.push("voicemail_greeting_text = ?");
+      values.push(text);
+    }
+    if (greeting_url !== undefined) {
+      const url =
+        greeting_url === null || !greeting_url.trim()
+          ? null
+          : greeting_url.trim().slice(0, 500);
+      fields.push("voicemail_greeting_url = ?");
+      values.push(url);
+    }
+    if (typeof max_seconds === "number") {
+      const clamped = Math.min(Math.max(Math.round(max_seconds), 10), 600);
+      fields.push("voicemail_max_seconds = ?");
+      values.push(clamped);
+    }
+    if (typeof transcribe === "boolean") {
+      fields.push("voicemail_transcribe = ?");
+      values.push(transcribe ? 1 : 0);
+    }
+
+    if (fields.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, error: "No fields to update" });
+    }
+
+    fields.push("updated_at = NOW()");
+    values.push(MORTGAGE_TENANT_ID);
+
+    await pool.query(
+      `UPDATE tenants SET ${fields.join(", ")} WHERE id = ?`,
+      values,
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("[handleUpdateTenantVoicemailSettings] Error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to update tenant voicemail settings",
+    });
+  }
+};
+
+/**
  * POST /api/voice/dial-status
- * Twilio statusCallback fired when ANY leg of the <Dial> is answered (browser OR phone).
- * We use this to publish the Ably call-answered event so ALL broker browsers dismiss
- * the ringing UI immediately — including when a personal phone answers.
+ * Twilio statusCallback fired when the <Dial> verb finishes (any leg answered,
+ * or all legs failed/no-answer/busy/canceled).
+ *
+ * Behaviour:
+ *   • DialCallStatus = "answered"  → broadcast Ably so all browsers dismiss
+ *     the ringing UI, return empty TwiML so the call ends after the answerer
+ *     hangs up.
+ *   • DialCallStatus = "no-answer" | "busy" | "failed" | "canceled" →
+ *     fall through to voicemail: play greeting + <Record> the caller.
+ *
  * No broker-session auth — called by Twilio servers.
  */
 const handleDialStatus: RequestHandler = async (req, res) => {
+  res.set("Content-Type", "text/xml");
   try {
     const callSid = (req.body?.CallSid as string) || "";
     const dialCallStatus = (req.body?.DialCallStatus as string) || "";
+    const calledNumber =
+      (req.body?.To as string) || (req.body?.Called as string) || "";
 
-    // Only broadcast when a leg actually answered (not busy/no-answer/failed)
+    // Answered → notify and end the call gracefully.
     if (callSid && dialCallStatus === "answered") {
       await publishToAbly("voice:incoming", "call-answered", { callSid });
+      return res.status(200).send("<Response></Response>");
     }
 
-    // Twilio expects a 200 with optional TwiML — empty response is fine
-    res.set("Content-Type", "text/xml");
-    return res.status(200).send("<Response></Response>");
+    // Unanswered states — drop into voicemail if enabled.
+    const unanswered = ["no-answer", "busy", "failed", "canceled"].includes(
+      dialCallStatus,
+    );
+
+    if (!unanswered) {
+      return res.status(200).send("<Response></Response>");
+    }
+
+    const VoiceResponse = twilio.twiml.VoiceResponse;
+    const twiml = new VoiceResponse();
+
+    // ── resolve voicemail settings (broker override → tenant default) ──
+    const settings = await resolveVoicemailSettings(calledNumber);
+
+    if (!settings.enabled) {
+      twiml.say(
+        { voice: "Polly.Joanna" },
+        "Sorry, no one is available to take your call right now. Please try again later. Goodbye.",
+      );
+      twiml.hangup();
+      return res.status(200).send(twiml.toString());
+    }
+
+    // 1) Greeting — pre-recorded MP3 wins, else TTS, else default.
+    if (settings.greetingUrl) {
+      twiml.play(settings.greetingUrl);
+    } else if (settings.greetingText && settings.greetingText.trim()) {
+      twiml.say({ voice: "Polly.Joanna" }, settings.greetingText.trim());
+    } else {
+      twiml.say(
+        { voice: "Polly.Joanna" },
+        "Hello, you've reached our office. We're unable to answer right now. Please leave your name, number, and a brief message after the tone, and we'll get back to you as soon as possible.",
+      );
+    }
+
+    // 2) Record the voicemail.
+    // Twilio's recordingStatusCallback / transcribeCallback do NOT include
+    // the original From/To in their POST body — only the recording metadata.
+    // We forward the caller (From) and called number (To) as query params so
+    // the voicemail row is correctly attributed to the inbound caller.
+    const callerFrom = (req.body?.From as string) || "";
+    const callerTo = calledNumber || "";
+    const cbQs = `?from=${encodeURIComponent(callerFrom)}&to=${encodeURIComponent(callerTo)}`;
+
+    twiml.record({
+      action: `${getVoiceBaseUrl()}/api/voice/voicemail-complete`,
+      method: "POST",
+      maxLength: settings.maxSeconds,
+      finishOnKey: "#",
+      playBeep: true,
+      trim: "trim-silence",
+      timeout: 5,
+      recordingStatusCallback: `${getVoiceBaseUrl()}/api/voice/voicemail-recording${cbQs}`,
+      recordingStatusCallbackMethod: "POST",
+      recordingStatusCallbackEvent: ["completed"],
+      transcribe: settings.transcribe,
+      transcribeCallback: settings.transcribe
+        ? `${getVoiceBaseUrl()}/api/voice/voicemail-transcription${cbQs}`
+        : undefined,
+    } as any);
+
+    // If recording finishes without explicit hangup, say goodbye.
+    twiml.say({ voice: "Polly.Joanna" }, "Thank you. Goodbye.");
+    twiml.hangup();
+
+    return res.status(200).send(twiml.toString());
   } catch (err) {
     console.error("[handleDialStatus] Error:", err);
-    res.set("Content-Type", "text/xml");
     return res.status(200).send("<Response></Response>");
+  }
+};
+
+/**
+ * Resolve effective voicemail settings for an inbound call.
+ * Voicemail is ONLY enabled for personal (assigned) lines — i.e. when the
+ * dialled number matches a broker's twilio_caller_id. Shared/main lines
+ * never record voicemails. Tenant settings only provide defaults (max
+ * length, transcribe, greeting fallback) for assigned lines whose broker
+ * hasn't customized their own greeting.
+ */
+async function resolveVoicemailSettings(calledNumber: string): Promise<{
+  enabled: boolean;
+  greetingUrl: string | null;
+  greetingText: string | null;
+  maxSeconds: number;
+  transcribe: boolean;
+}> {
+  // Tenant defaults
+  const [tenantRows] = await pool.query<RowDataPacket[]>(
+    `SELECT voicemail_enabled, voicemail_greeting_text, voicemail_greeting_url,
+            voicemail_max_seconds, voicemail_transcribe
+     FROM tenants WHERE id = ? LIMIT 1`,
+    [MORTGAGE_TENANT_ID],
+  );
+  const tenant: any = tenantRows[0] || {};
+
+  const maxSeconds = Math.min(
+    Math.max(
+      parseInt(String(tenant.voicemail_max_seconds ?? 120), 10) || 120,
+      10,
+    ),
+    600,
+  );
+  const transcribe = !!(tenant.voicemail_transcribe ?? 1);
+
+  // Voicemail is ONLY enabled for personal (assigned) lines. If no broker
+  // owns the dialled number, voicemail is disabled — shared/main lines do
+  // not record messages.
+  if (!calledNumber) {
+    return {
+      enabled: false,
+      greetingUrl: null,
+      greetingText: null,
+      maxSeconds,
+      transcribe,
+    };
+  }
+
+  const [brokerRows] = await pool.query<RowDataPacket[]>(
+    `SELECT voicemail_enabled, voicemail_greeting_text, voicemail_greeting_url
+     FROM brokers
+     WHERE tenant_id = ? AND status = 'active' AND twilio_caller_id = ?
+     LIMIT 1`,
+    [MORTGAGE_TENANT_ID, calledNumber],
+  );
+  const broker = brokerRows[0];
+  if (!broker) {
+    return {
+      enabled: false,
+      greetingUrl: null,
+      greetingText: null,
+      maxSeconds,
+      transcribe,
+    };
+  }
+
+  // Personal line — broker override falls back to tenant defaults when blank
+  const enabled =
+    broker.voicemail_enabled === null
+      ? !!(tenant.voicemail_enabled ?? 1)
+      : !!broker.voicemail_enabled;
+  let greetingUrl: string | null = tenant.voicemail_greeting_url ?? null;
+  let greetingText: string | null = tenant.voicemail_greeting_text ?? null;
+  if (broker.voicemail_greeting_url) {
+    greetingUrl = broker.voicemail_greeting_url;
+    greetingText = null;
+  } else if (broker.voicemail_greeting_text) {
+    greetingText = broker.voicemail_greeting_text;
+    greetingUrl = null;
+  }
+
+  return { enabled, greetingUrl, greetingText, maxSeconds, transcribe };
+}
+
+/**
+ * POST /api/voice/voicemail-complete
+ * Twilio fires this when the caller finishes recording (timeout, # key,
+ * or hangup). We respond with a polite goodbye TwiML — the recording itself
+ * is captured by the recordingStatusCallback (handleVoicemailRecording).
+ * No auth — called by Twilio servers.
+ */
+const handleVoicemailComplete: RequestHandler = async (_req, res) => {
+  res.set("Content-Type", "text/xml");
+  const VoiceResponse = twilio.twiml.VoiceResponse;
+  const twiml = new VoiceResponse();
+  twiml.say(
+    { voice: "Polly.Joanna" },
+    "Thank you for your message. We will get back to you soon. Goodbye.",
+  );
+  twiml.hangup();
+  return res.status(200).send(twiml.toString());
+};
+
+/**
+ * POST /api/voice/call-screen
+ * Twilio fires this URL when a forwarded <Number> leg is answered.
+ * We require a keypress before bridging — carrier voicemail systems
+ * won't press a key, so the leg hangs up and Twilio's <Dial> falls
+ * through to the CRM voicemail instead of the carrier's.
+ * No auth — called by Twilio servers.
+ */
+const handleCallScreen: RequestHandler = (_req, res) => {
+  res.set("Content-Type", "text/xml");
+  const VoiceResponse = twilio.twiml.VoiceResponse;
+  const twiml = new VoiceResponse();
+  // Give the broker 8 s to press any key; carrier voicemail won't answer.
+  // IMPORTANT: the action URL must return empty <Response/> so Twilio bridges
+  // the call after the keypress. Without action, Twilio re-requests this same
+  // URL and the call never connects.
+  const gather = twiml.gather({
+    numDigits: 1,
+    timeout: 8,
+    action: `${getVoiceBaseUrl()}/api/voice/call-screen-accept`,
+    method: "POST",
+  });
+  gather.say(
+    { voice: "Polly.Joanna" },
+    "Incoming call. Press any key to answer.",
+  );
+  // No key pressed within timeout → hang up this forwarded leg so Twilio
+  // continues ringing browser clients and eventually hits CRM voicemail.
+  twiml.hangup();
+  return res.send(twiml.toString());
+};
+
+/**
+ * POST /api/voice/call-screen-accept
+ * Called by Twilio after the broker presses any key in the call-screen prompt.
+ * Returning an empty <Response/> tells Twilio to bridge the call immediately.
+ * No auth — called by Twilio servers.
+ */
+const handleCallScreenAccept: RequestHandler = (_req, res) => {
+  res.set("Content-Type", "text/xml");
+  // Empty response = bridge the call. Any verb here would play to the broker
+  // before connecting; we want instant connection so we return nothing.
+  return res.send("<Response/>");
+};
+
+/**
+ * Builds the HTML email body for the voicemail transcript notification
+ * sent to the mortgage banker assigned to the dialed Twilio number.
+ */
+function buildVoicemailEmailHtml(params: {
+  bankerName: string;
+  callerNumber: string;
+  durationSec: number | null;
+  transcriptionText: string;
+  recordingUrl: string;
+  receivedAt: Date;
+  companyName: string;
+}): string {
+  const {
+    bankerName,
+    callerNumber,
+    durationSec,
+    transcriptionText,
+    recordingUrl,
+    receivedAt,
+    companyName,
+  } = params;
+
+  const timeFormatted = receivedAt.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "America/Los_Angeles",
+  });
+
+  const durationLabel = durationSec
+    ? `${Math.floor(durationSec / 60)}:${String(durationSec % 60).padStart(2, "0")} min`
+    : "—";
+
+  const transcriptBlock =
+    transcriptionText.trim().length > 0
+      ? transcriptionText.trim()
+      : '<em style="color:#94a3b8;">No transcript available.</em>';
+
+  const mp3Url = recordingUrl.endsWith(".mp3")
+    ? recordingUrl
+    : `${recordingUrl}.mp3`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>New Voicemail</title></head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f1f5f9;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;background-color:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+
+          <!-- Header banner -->
+          <tr>
+            <td style="background-color:#0f172a;padding:24px 32px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td>
+                    <p style="margin:0;color:#F9A826;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;">Voicemail Notification</p>
+                    <p style="margin:4px 0 0;color:#ffffff;font-size:20px;font-weight:700;">🎙️ New Voicemail Received</p>
+                  </td>
+                  <td style="text-align:right;vertical-align:top;">
+                    <p style="margin:0;color:#94a3b8;font-size:12px;">${companyName}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:28px 32px 0;">
+
+              <p style="margin:0 0 20px;color:#475569;font-size:14px;line-height:1.6;">
+                Hi <strong style="color:#0f172a;">${bankerName}</strong>, you have a new voicemail on your personal line.
+              </p>
+
+              <!-- Caller info card -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                     style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:20px;">
+                <tr>
+                  <td style="padding:20px 24px;">
+                    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="padding:5px 0;color:#64748b;font-size:13px;width:120px;">Caller</td>
+                        <td style="padding:5px 0;color:#0f172a;font-size:15px;font-weight:700;">${callerNumber}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:5px 0;color:#64748b;font-size:13px;">Received</td>
+                        <td style="padding:5px 0;color:#0f172a;font-size:14px;">${timeFormatted} PT</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:5px 0;color:#64748b;font-size:13px;">Duration</td>
+                        <td style="padding:5px 0;color:#0f172a;font-size:14px;">${durationLabel}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Transcript -->
+              <p style="margin:0 0 8px;color:#0f172a;font-size:14px;font-weight:700;">Transcript</p>
+              <div style="background-color:#f8fafc;border-left:4px solid #F9A826;border-radius:0 8px 8px 0;padding:16px 20px;margin-bottom:24px;font-size:14px;color:#334155;line-height:1.7;">
+                ${transcriptBlock}
+              </div>
+
+              <!-- CTA button -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;">
+                <tr>
+                  <td align="center">
+                    <a href="${mp3Url}"
+                       style="display:inline-block;background-color:#F9A826;color:#ffffff;font-size:14px;font-weight:700;padding:12px 28px;border-radius:8px;text-decoration:none;">
+                      ▶&nbsp; Listen to Recording
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color:#0f172a;padding:18px 32px;border-radius:0 0 16px 16px;text-align:center;">
+              <p style="margin:0;color:#94a3b8;font-size:12px;">
+                This notification was sent by ${companyName} CRM. The full voicemail thread is available in your Conversations inbox.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+}
+
+/**
+ * POST /api/voice/voicemail-recording
+ * Twilio recordingStatusCallback for the voicemail <Record>.
+ * Inserts a NEW communications row (is_voicemail=1) and broadcasts an Ably
+ * event so the inbox refreshes in real time.
+ * No auth — called by Twilio servers.
+ */
+const handleVoicemailRecording: RequestHandler = async (req, res) => {
+  try {
+    const {
+      CallSid,
+      RecordingUrl,
+      RecordingDuration,
+      RecordingStatus,
+      RecordingSid,
+      From,
+      To,
+    } = req.body as {
+      CallSid?: string;
+      RecordingUrl?: string;
+      RecordingDuration?: string;
+      RecordingStatus?: string;
+      RecordingSid?: string;
+      From?: string;
+      To?: string;
+    };
+
+    if (RecordingStatus !== "completed" || !RecordingUrl) {
+      return res.sendStatus(204);
+    }
+
+    const mp3Url = RecordingUrl.endsWith(".mp3")
+      ? RecordingUrl
+      : `${RecordingUrl}.mp3`;
+    const durationSec = RecordingDuration
+      ? parseInt(RecordingDuration, 10)
+      : null;
+
+    // Skip ultra-short hang-ups (< 2s of audio)
+    if (durationSec !== null && durationSec < 2) {
+      return res.sendStatus(204);
+    }
+
+    // Twilio's recordingStatusCallback body does NOT include From/To by
+    // default — we forward them via query string from handleDialStatus.
+    // Fall back to Twilio API lookup using CallSid if missing for any reason.
+    let callerNumber = (req.query?.from as string) || From || "";
+    let calledNumber: string | null = (req.query?.to as string) || To || null;
+
+    if ((!callerNumber || !calledNumber) && CallSid && twilioClient) {
+      try {
+        const call = await twilioClient.calls(CallSid).fetch();
+        if (!callerNumber) callerNumber = call.from || "";
+        if (!calledNumber) calledNumber = call.to || null;
+      } catch (e) {
+        console.warn(
+          "[handleVoicemailRecording] Twilio call lookup failed:",
+          (e as any)?.message || e,
+        );
+      }
+    }
+
+    if (!callerNumber) callerNumber = "Unknown";
+
+    const digits = callerNumber.replace(/\D/g, "");
+    const conversationId = digits
+      ? `conv_phone_${digits}`
+      : `conv_phone_unknown_${CallSid || RecordingSid || Date.now()}`;
+    const body = `🎙️ Voicemail from ${callerNumber}${
+      durationSec ? ` (${durationSec}s)` : ""
+    }`;
+    // Use a distinct external_id so it doesn't collide with the original
+    // inbound-call communication row that shares the same CallSid.
+    const externalId = RecordingSid
+      ? `vm_${RecordingSid}`
+      : `vm_${CallSid || Date.now()}`;
+
+    const [insertResult] = await pool.query<any>(
+      `INSERT INTO communications
+         (tenant_id, from_broker_id, to_user_id, communication_type, direction,
+          body, status, external_id, conversation_id, recording_url,
+          recording_duration, is_voicemail, delivery_status, sent_at, created_at)
+       VALUES (?, NULL, NULL, 'call', 'inbound', ?, 'sent', ?, ?, ?, ?, 1, 'sent', NOW(), NOW())`,
+      [
+        MORTGAGE_TENANT_ID,
+        body,
+        externalId,
+        conversationId,
+        mp3Url,
+        durationSec,
+      ],
+    );
+
+    await upsertConversationThread({
+      tenantId: MORTGAGE_TENANT_ID,
+      commId: insertResult.insertId,
+      conversationId,
+      applicationId: null,
+      leadId: null,
+      fromUserId: null,
+      fromBrokerId: null,
+      toUserId: null,
+      toBrokerId: null,
+      communicationType: "call",
+      direction: "inbound",
+      body,
+      inboxNumber: calledNumber,
+      recipientPhone: callerNumber,
+    }).catch((e) =>
+      console.error("[handleVoicemailRecording] thread upsert error:", e),
+    );
+
+    // Broadcast so all online brokers see the voicemail instantly.
+    await publishToAbly("voice:voicemail", "new", {
+      commId: insertResult.insertId,
+      conversationId,
+      from: callerNumber,
+      to: calledNumber,
+      durationSec,
+      callSid: CallSid,
+    }).catch(() => {});
+    await publishToAbly("conversations:all", "thread-updated", {
+      conversationId,
+      tenantId: MORTGAGE_TENANT_ID,
+    }).catch(() => {});
+
+    return res.sendStatus(204);
+  } catch (err) {
+    console.error("[handleVoicemailRecording] Error:", err);
+    return res.sendStatus(500);
+  }
+};
+
+/**
+ * POST /api/voice/voicemail-transcription
+ * Twilio transcribeCallback — fires after voicemail audio is transcribed.
+ * Patches the matching voicemail communications row.
+ * No auth — called by Twilio servers.
+ */
+const handleVoicemailTranscription: RequestHandler = async (req, res) => {
+  try {
+    const { RecordingSid, TranscriptionText, TranscriptionStatus } =
+      req.body as {
+        RecordingSid?: string;
+        TranscriptionText?: string;
+        TranscriptionStatus?: string;
+      };
+
+    if (TranscriptionStatus !== "completed" || !RecordingSid) {
+      return res.sendStatus(204);
+    }
+
+    const externalId = `vm_${RecordingSid}`;
+    await pool.query(
+      `UPDATE communications
+       SET voicemail_transcription = ?
+       WHERE external_id = ? AND tenant_id = ? AND is_voicemail = 1`,
+      [TranscriptionText || null, externalId, MORTGAGE_TENANT_ID],
+    );
+
+    // Look up the conversation_id so the UI can patch in place.
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, conversation_id FROM communications
+       WHERE external_id = ? AND tenant_id = ? AND is_voicemail = 1
+       LIMIT 1`,
+      [externalId, MORTGAGE_TENANT_ID],
+    );
+    if (rows.length > 0) {
+      await publishToAbly("voice:voicemail", "transcribed", {
+        commId: rows[0].id,
+        conversationId: rows[0].conversation_id,
+        transcription: TranscriptionText || "",
+      }).catch(() => {});
+
+      // ── Voicemail transcript email to assigned mortgage banker ──────────
+      // Only fires when the voicemail landed on a personal Twilio line
+      // (twilio_caller_id) assigned to a mortgage banker.
+      try {
+        const conversationId: string = rows[0].conversation_id;
+
+        // 1. Fetch conversation metadata: inbox number + caller + recording info
+        const [threadRows] = await pool.query<RowDataPacket[]>(
+          `SELECT ct.inbox_number, ct.client_phone,
+                  c.recording_url, c.recording_duration, c.created_at
+           FROM conversation_threads ct
+           JOIN communications c ON c.conversation_id = ct.conversation_id
+           WHERE ct.conversation_id = ?
+             AND c.external_id = ?
+           LIMIT 1`,
+          [conversationId, externalId],
+        );
+
+        if (threadRows.length > 0) {
+          const {
+            inbox_number,
+            client_phone,
+            recording_url,
+            recording_duration,
+            created_at,
+          } = threadRows[0] as {
+            inbox_number: string | null;
+            client_phone: string | null;
+            recording_url: string | null;
+            recording_duration: number | null;
+            created_at: Date;
+          };
+
+          if (inbox_number) {
+            // 2. Find the banker whose personal line received the call
+            const [bankerRows] = await pool.query<RowDataPacket[]>(
+              `SELECT email, first_name, last_name
+               FROM brokers
+               WHERE tenant_id = ?
+                 AND status = 'active'
+                 AND twilio_caller_id = ?
+                 AND email NOT LIKE 'noemail_%'
+               LIMIT 1`,
+              [MORTGAGE_TENANT_ID, inbox_number],
+            );
+
+            if (bankerRows.length > 0) {
+              const banker = bankerRows[0] as {
+                email: string;
+                first_name: string;
+                last_name: string;
+              };
+              const bankerName =
+                `${banker.first_name} ${banker.last_name}`.trim();
+
+              // 3. Fetch company name from tenant settings (best-effort)
+              const [settingRows] = await pool.query<RowDataPacket[]>(
+                `SELECT value FROM settings
+                 WHERE tenant_id = ? AND key_name = 'company_name'
+                 LIMIT 1`,
+                [MORTGAGE_TENANT_ID],
+              );
+              const companyName =
+                (settingRows[0]?.value as string | undefined) ||
+                "The Mortgage Professionals";
+
+              const html = buildVoicemailEmailHtml({
+                bankerName,
+                callerNumber: client_phone || "Unknown",
+                durationSec: recording_duration,
+                transcriptionText: TranscriptionText || "",
+                recordingUrl: recording_url || "",
+                receivedAt:
+                  created_at instanceof Date
+                    ? created_at
+                    : new Date(created_at),
+                companyName,
+              });
+
+              const callerDisplay = client_phone || "Unknown";
+              const durationDisplay = recording_duration
+                ? ` — ${recording_duration}s`
+                : "";
+              const subject = `🎙️ New Voicemail from ${callerDisplay}${durationDisplay}`;
+
+              await sendEmailMessage(banker.email, subject, html, true).catch(
+                (e) =>
+                  console.error(
+                    "[handleVoicemailTranscription] email send failed:",
+                    e,
+                  ),
+              );
+            }
+          }
+        }
+      } catch (emailErr) {
+        // Non-fatal — never block the 204 response to Twilio
+        console.error(
+          "[handleVoicemailTranscription] email notification error:",
+          emailErr,
+        );
+      }
+      // ────────────────────────────────────────────────────────────────────
+    }
+
+    return res.sendStatus(204);
+  } catch (err) {
+    console.error("[handleVoicemailTranscription] Error:", err);
+    return res.sendStatus(500);
   }
 };
 
@@ -14945,10 +19166,18 @@ const handleVoiceIncoming: RequestHandler = async (req, res) => {
     // Ring all target brokers simultaneously — first to accept wins.
     for (const bid of brokerIds) {
       dial.client(`broker_${bid}`);
-      // If this broker has call forwarding enabled, also ring their personal phone
+      // If this broker has call forwarding enabled, also ring their personal phone.
+      // Use a call-screen URL so carrier voicemail won't silently "answer" the
+      // Twilio <Dial>, which would prevent the CRM voicemail from ever triggering.
       const fwdPhone = forwardingMap.get(bid);
       if (fwdPhone) {
-        dial.number({}, fwdPhone);
+        dial.number(
+          {
+            url: `${getVoiceBaseUrl()}/api/voice/call-screen`,
+            method: "POST",
+          } as any,
+          fwdPhone,
+        );
       }
     }
 
@@ -14987,8 +19216,18 @@ const handleVoiceIncoming: RequestHandler = async (req, res) => {
           communicationType: "call",
           direction: "inbound",
           body,
+          inboxNumber: calledNumber || null,
           recipientPhone: callerNumber,
         }),
+      )
+      .then(() =>
+        // Notify the sidebar so the call appears in real-time.
+        // A partial thread-updated is enough — the UI will full-refetch
+        // if the thread isn't already in the list.
+        publishToAbly("conversations:all", "thread-updated", {
+          conversationId,
+          thread: { status: "active" },
+        }).catch(() => undefined),
       )
       .catch((logErr) =>
         console.error("[handleVoiceIncoming] Log error:", logErr),
@@ -15395,7 +19634,9 @@ const handleGetRecording: RequestHandler = async (req, res) => {
       return res.status(401).json({ success: false, error: "Unauthorized" });
     }
     try {
-      const decoded = jwt.verify(sessionToken, JWT_SECRET) as any;
+      const decoded = jwt.verify(sessionToken, JWT_SECRET, {
+        algorithms: ["HS256"],
+      }) as any;
       if (decoded.userType !== "broker") throw new Error("not a broker");
     } catch {
       return res.status(401).json({ success: false, error: "Invalid session" });
@@ -17810,9 +22051,12 @@ const handleGetReminderFlows: RequestHandler = async (req, res) => {
         (SELECT COUNT(*) FROM reminder_flow_executions rfe WHERE rfe.flow_id = rf.id AND rfe.status = 'active') AS active_executions_count
        FROM reminder_flows rf
        WHERE rf.tenant_id = ?
+         AND (rf.restricted_to_broker_id IS NULL OR rf.restricted_to_broker_id = ?)
        ${categoryFilter ? "AND rf.flow_category = ?" : ""}
        ORDER BY rf.created_at DESC`,
-      categoryFilter ? [tenantId, categoryFilter] : [tenantId],
+      categoryFilter
+        ? [tenantId, brokerId, categoryFilter]
+        : [tenantId, brokerId],
     );
 
     return res.json({ success: true, flows });
@@ -17840,6 +22084,8 @@ const handleCreateReminderFlow: RequestHandler = async (req, res) => {
       apply_to_all_loans = true,
       loan_type_filter = "all",
       flow_category = "loan",
+      restricted_to_broker_id = null,
+      enable_trace_logging = false,
     } = req.body;
 
     if (!name || !trigger_event) {
@@ -17855,8 +22101,8 @@ const handleCreateReminderFlow: RequestHandler = async (req, res) => {
     const tenantId = tenantRows[0]?.tenant_id;
 
     const [result] = await pool.query<ResultSetHeader>(
-      `INSERT INTO reminder_flows (tenant_id, name, description, trigger_event, trigger_delay_days, is_active, apply_to_all_loans, loan_type_filter, flow_category, created_by_broker_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO reminder_flows (tenant_id, name, description, trigger_event, trigger_delay_days, is_active, apply_to_all_loans, loan_type_filter, flow_category, created_by_broker_id, restricted_to_broker_id, enable_trace_logging)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         tenantId,
         name,
@@ -17872,6 +22118,12 @@ const handleCreateReminderFlow: RequestHandler = async (req, res) => {
           ? flow_category
           : "loan",
         brokerId,
+        restricted_to_broker_id !== null &&
+        restricted_to_broker_id !== "" &&
+        Number.isFinite(Number(restricted_to_broker_id))
+          ? Number(restricted_to_broker_id)
+          : null,
+        enable_trace_logging ? 1 : 0,
       ],
     );
 
@@ -17904,8 +22156,10 @@ const handleGetReminderFlow: RequestHandler = async (req, res) => {
     const tenantId = tenantRows[0]?.tenant_id;
 
     const [flowRows] = await pool.query<RowDataPacket[]>(
-      "SELECT * FROM reminder_flows WHERE id = ? AND tenant_id = ?",
-      [flowId, tenantId],
+      `SELECT * FROM reminder_flows
+        WHERE id = ? AND tenant_id = ?
+          AND (restricted_to_broker_id IS NULL OR restricted_to_broker_id = ?)`,
+      [flowId, tenantId, brokerId],
     );
 
     if (!flowRows.length) {
@@ -17964,9 +22218,137 @@ const handleSaveReminderFlow: RequestHandler = async (req, res) => {
       is_active,
       apply_to_all_loans,
       loan_type_filter,
+      flow_category,
+      restricted_to_broker_id,
+      enable_trace_logging,
       steps = [],
       connections = [],
     } = req.body;
+
+    // ── Validation: enums for safety ───────────────────────────────
+    // Keep these in sync with database/schema.sql `reminder_flows`,
+    // `reminder_flow_steps`, `reminder_flow_connections` enums.
+    const VALID_TRIGGER_EVENTS = new Set([
+      "app_sent",
+      "application_received",
+      "prequalified",
+      "preapproved",
+      "under_contract_loan_setup",
+      "submitted_to_underwriting",
+      "approved_with_conditions",
+      "clear_to_close",
+      "docs_out",
+      "loan_funded",
+      "task_pending",
+      "task_in_progress",
+      "task_overdue",
+      "no_activity",
+      "manual",
+      "prospect_contact_attempted",
+      "prospect_contacted",
+      "prospect_appt_set",
+      "prospect_waiting_for_1st_deal",
+      "prospect_first_deal_funded",
+      "prospect_second_deal_funded",
+      "prospect_top_agent_whale",
+    ]);
+    const VALID_STEP_TYPES = new Set([
+      "trigger",
+      "wait",
+      "send_notification",
+      "send_email",
+      "send_sms",
+      "send_whatsapp",
+      "condition",
+      "branch",
+      "wait_for_response",
+      "wait_until_date",
+      "end",
+    ]);
+    const VALID_EDGE_TYPES = new Set([
+      "default",
+      "condition_yes",
+      "condition_no",
+      "loan_type_purchase",
+      "loan_type_refinance",
+      "no_response",
+      "responded",
+    ]);
+
+    if (
+      trigger_event !== undefined &&
+      !VALID_TRIGGER_EVENTS.has(trigger_event)
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid trigger_event: ${trigger_event}`,
+      });
+    }
+
+    // Validate step payload
+    const stepKeysSeen = new Set<string>();
+    for (const s of steps) {
+      if (!s?.step_key || typeof s.step_key !== "string") {
+        return res
+          .status(400)
+          .json({ success: false, error: "Each step requires step_key" });
+      }
+      if (stepKeysSeen.has(s.step_key)) {
+        return res.status(400).json({
+          success: false,
+          error: `Duplicate step_key in payload: ${s.step_key}`,
+        });
+      }
+      stepKeysSeen.add(s.step_key);
+      if (!VALID_STEP_TYPES.has(s.step_type)) {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid step_type "${s.step_type}" for step ${s.step_key}`,
+        });
+      }
+      if (!s.label || typeof s.label !== "string") {
+        return res.status(400).json({
+          success: false,
+          error: `Step ${s.step_key} requires a label`,
+        });
+      }
+    }
+
+    // Validate connection payload
+    const edgeKeysSeen = new Set<string>();
+    for (const c of connections) {
+      if (!c?.edge_key || typeof c.edge_key !== "string") {
+        return res
+          .status(400)
+          .json({ success: false, error: "Each connection requires edge_key" });
+      }
+      if (edgeKeysSeen.has(c.edge_key)) {
+        return res.status(400).json({
+          success: false,
+          error: `Duplicate edge_key in payload: ${c.edge_key}`,
+        });
+      }
+      edgeKeysSeen.add(c.edge_key);
+      if (c.edge_type && !VALID_EDGE_TYPES.has(c.edge_type)) {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid edge_type "${c.edge_type}" for edge ${c.edge_key}`,
+        });
+      }
+      // Referential integrity — connection endpoints must exist in step set
+      if (!stepKeysSeen.has(c.source_step_key)) {
+        return res.status(400).json({
+          success: false,
+          error: `Edge ${c.edge_key} references unknown source_step_key: ${c.source_step_key}`,
+        });
+      }
+      if (!stepKeysSeen.has(c.target_step_key)) {
+        return res.status(400).json({
+          success: false,
+          error: `Edge ${c.edge_key} references unknown target_step_key: ${c.target_step_key}`,
+        });
+      }
+    }
 
     const [tenantRows] = await pool.query<RowDataPacket[]>(
       "SELECT tenant_id FROM brokers WHERE id = ?",
@@ -17975,8 +22357,10 @@ const handleSaveReminderFlow: RequestHandler = async (req, res) => {
     const tenantId = tenantRows[0]?.tenant_id;
 
     const [flowRows] = await pool.query<RowDataPacket[]>(
-      "SELECT id FROM reminder_flows WHERE id = ? AND tenant_id = ?",
-      [flowId, tenantId],
+      `SELECT id FROM reminder_flows
+        WHERE id = ? AND tenant_id = ?
+          AND (restricted_to_broker_id IS NULL OR restricted_to_broker_id = ?)`,
+      [flowId, tenantId, brokerId],
     );
 
     if (!flowRows.length) {
@@ -18006,8 +22390,9 @@ const handleSaveReminderFlow: RequestHandler = async (req, res) => {
         updateValues.push(trigger_event);
       }
       if (trigger_delay_days !== undefined) {
+        const delay = Math.max(0, Number(trigger_delay_days) || 0);
         updateFields.push("trigger_delay_days = ?");
-        updateValues.push(trigger_delay_days);
+        updateValues.push(delay);
       }
       if (is_active !== undefined) {
         updateFields.push("is_active = ?");
@@ -18023,6 +22408,30 @@ const handleSaveReminderFlow: RequestHandler = async (req, res) => {
       ) {
         updateFields.push("loan_type_filter = ?");
         updateValues.push(loan_type_filter);
+      }
+      // B1 fix: persist flow_category on update (was previously ignored)
+      if (
+        flow_category !== undefined &&
+        ["loan", "realtor_prospecting"].includes(flow_category)
+      ) {
+        updateFields.push("flow_category = ?");
+        updateValues.push(flow_category);
+      }
+      // Per-broker restriction: NULL clears, integer sets, else ignored.
+      if (restricted_to_broker_id !== undefined) {
+        if (
+          restricted_to_broker_id === null ||
+          restricted_to_broker_id === ""
+        ) {
+          updateFields.push("restricted_to_broker_id = NULL");
+        } else if (Number.isFinite(Number(restricted_to_broker_id))) {
+          updateFields.push("restricted_to_broker_id = ?");
+          updateValues.push(Number(restricted_to_broker_id));
+        }
+      }
+      if (enable_trace_logging !== undefined) {
+        updateFields.push("enable_trace_logging = ?");
+        updateValues.push(enable_trace_logging ? 1 : 0);
       }
 
       if (updateFields.length) {
@@ -18044,8 +22453,8 @@ const handleSaveReminderFlow: RequestHandler = async (req, res) => {
           s.label,
           s.description || null,
           s.config ? JSON.stringify(s.config) : null,
-          s.position_x ?? 0,
-          s.position_y ?? 0,
+          Number.isFinite(Number(s.position_x)) ? Number(s.position_x) : 0,
+          Number.isFinite(Number(s.position_y)) ? Number(s.position_y) : 0,
         ]);
         await conn.query(
           `INSERT INTO reminder_flow_steps (flow_id, step_key, step_type, label, description, config, position_x, position_y)
@@ -18111,8 +22520,10 @@ const handleDeleteReminderFlow: RequestHandler = async (req, res) => {
     const tenantId = tenantRows[0]?.tenant_id;
 
     const [result] = await pool.query<ResultSetHeader>(
-      "DELETE FROM reminder_flows WHERE id = ? AND tenant_id = ?",
-      [flowId, tenantId],
+      `DELETE FROM reminder_flows
+        WHERE id = ? AND tenant_id = ?
+          AND (restricted_to_broker_id IS NULL OR restricted_to_broker_id = ?)`,
+      [flowId, tenantId, brokerId],
     );
 
     if (result.affectedRows === 0) {
@@ -18127,6 +22538,75 @@ const handleDeleteReminderFlow: RequestHandler = async (req, res) => {
     return res
       .status(500)
       .json({ success: false, error: "Failed to delete reminder flow" });
+  }
+};
+
+/**
+ * GET /api/reminder-flows/:flowId/trace
+ * Return per-step trace logs for a flow's executions, gated by per-broker
+ * restriction. Useful for debugging the test flow lifecycle. Optional query:
+ *   - execution_id (number) — filter to a single execution
+ *   - limit (1..500, default 200)
+ */
+const handleGetReminderFlowTrace: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId;
+    const { flowId } = req.params;
+    const executionId = req.query.execution_id
+      ? Number(req.query.execution_id)
+      : null;
+    const limit = Math.min(
+      500,
+      Math.max(1, parseInt(req.query.limit as string) || 200),
+    );
+
+    const [tenantRows] = await pool.query<RowDataPacket[]>(
+      "SELECT tenant_id FROM brokers WHERE id = ?",
+      [brokerId],
+    );
+    const tenantId = tenantRows[0]?.tenant_id;
+
+    // Confirm caller can see this flow (per-broker restriction).
+    const [flowRows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, name, enable_trace_logging FROM reminder_flows
+        WHERE id = ? AND tenant_id = ?
+          AND (restricted_to_broker_id IS NULL OR restricted_to_broker_id = ?)`,
+      [flowId, tenantId, brokerId],
+    );
+    if (!flowRows.length) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Reminder flow not found" });
+    }
+
+    const params: any[] = [tenantId, flowId];
+    let where = "tenant_id = ? AND flow_id = ?";
+    if (executionId) {
+      where += " AND execution_id = ?";
+      params.push(executionId);
+    }
+
+    const [logs] = await pool.query<RowDataPacket[]>(
+      `SELECT id, execution_id, step_key, step_type, event, channel,
+              recipient, external_id, delivery_status, payload,
+              error_message, duration_ms, started_at, completed_at
+         FROM reminder_flow_step_logs
+         WHERE ${where}
+         ORDER BY started_at DESC, id DESC
+         LIMIT ${limit}`,
+      params,
+    );
+
+    return res.json({
+      success: true,
+      flow: flowRows[0],
+      logs,
+    });
+  } catch (error) {
+    console.error("Error fetching reminder flow trace:", error);
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to fetch trace logs" });
   }
 };
 
@@ -18146,8 +22626,10 @@ const handleToggleReminderFlow: RequestHandler = async (req, res) => {
     const tenantId = tenantRows[0]?.tenant_id;
 
     const [flowRows] = await pool.query<RowDataPacket[]>(
-      "SELECT id, is_active FROM reminder_flows WHERE id = ? AND tenant_id = ?",
-      [flowId, tenantId],
+      `SELECT id, is_active FROM reminder_flows
+        WHERE id = ? AND tenant_id = ?
+          AND (restricted_to_broker_id IS NULL OR restricted_to_broker_id = ?)`,
+      [flowId, tenantId, brokerId],
     );
 
     if (!flowRows.length) {
@@ -18313,10 +22795,79 @@ function createServer() {
 
   const expressApp = express();
 
-  // Middleware
+  // Trust proxy so req.ip is correct behind Vercel/load balancers (used by rate limiters & audit)
+  expressApp.set("trust proxy", 1);
+
+  // Security headers
+  expressApp.use(
+    helmet({
+      contentSecurityPolicy: false, // CSP managed at edge / not yet authored
+      crossOriginEmbedderPolicy: false,
+      crossOriginResourcePolicy: { policy: "cross-origin" },
+    }),
+  );
+
+  // CORS — temporarily permissive (revert of P0-4 allowlist).
+  // TODO: Re-enable origin allowlist once prod env vars / domains are confirmed.
   expressApp.use(cors());
+
   expressApp.use(express.json({ limit: "10mb" }));
   expressApp.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+  // ─── Rate limiters (P0-3) ─────────────────────────────────────────────────
+  const ipKey = (req: express.Request) =>
+    ipKeyGenerator(req.ip ?? "unknown") ?? "unknown";
+  // OTP send: prevents email/SMS bombing & cost amplification
+  const otpSendLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) =>
+      `${ipKey(req)}:${String((req.body as any)?.email ?? "").toLowerCase()}`,
+    message: {
+      success: false,
+      message: "Too many code requests. Try again later.",
+    },
+  });
+  // OTP verify: prevents brute force of 6-digit codes
+  const otpVerifyLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) =>
+      `${ipKey(req)}:${String((req.body as any)?.email ?? "").toLowerCase()}`,
+    message: {
+      success: false,
+      message: "Too many verification attempts. Try again later.",
+    },
+  });
+  // Public form submissions
+  const publicFormLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => ipKey(req),
+    message: { success: false, message: "Too many submissions. Slow down." },
+  });
+  // Generic write/auth-bearing endpoints (defense in depth)
+  const generalLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => ipKey(req),
+  });
+  expressApp.use("/api", generalLimiter);
+
+  // Expose limiters so route registration can use them
+  (expressApp as any).locals.limiters = {
+    otpSend: otpSendLimiter,
+    otpVerify: otpVerifyLimiter,
+    publicForm: publicFormLimiter,
+  };
 
   // Log requests
   expressApp.use((req, _res, next) => {
@@ -18330,21 +22881,47 @@ function createServer() {
   expressApp.get("/api/health", handleHealth);
   expressApp.get("/api/ping", handlePing);
 
+  const limiters = (expressApp as any).locals.limiters as {
+    otpSend: express.RequestHandler;
+    otpVerify: express.RequestHandler;
+    publicForm: express.RequestHandler;
+  };
+
   // Broker auth routes (no auth required)
-  expressApp.post("/api/admin/auth/send-code", handleAdminSendCode);
-  expressApp.post("/api/admin/auth/verify-code", handleAdminVerifyCode);
+  expressApp.post(
+    "/api/admin/auth/send-code",
+    limiters.otpSend,
+    handleAdminSendCode,
+  );
+  expressApp.post(
+    "/api/admin/auth/verify-code",
+    limiters.otpVerify,
+    handleAdminVerifyCode,
+  );
   expressApp.get("/api/admin/auth/validate", handleAdminValidateSession);
   expressApp.post("/api/admin/auth/logout", handleAdminLogout);
 
   // Client auth routes (no auth required)
-  expressApp.post("/api/client/auth/send-code", handleClientSendCode);
-  expressApp.post("/api/client/auth/verify-code", handleClientVerifyCode);
+  expressApp.post(
+    "/api/client/auth/send-code",
+    limiters.otpSend,
+    handleClientSendCode,
+  );
+  expressApp.post(
+    "/api/client/auth/verify-code",
+    limiters.otpVerify,
+    handleClientVerifyCode,
+  );
   expressApp.get("/api/client/auth/validate", handleClientValidateSession);
   expressApp.post("/api/client/auth/logout", handleClientLogout);
 
   // Public apply route (no auth required)
-  expressApp.post("/api/apply", handlePublicApply);
-  expressApp.post("/api/apply/draft", handlePublicSaveDraft);
+  expressApp.post("/api/apply", limiters.publicForm, handlePublicApply);
+  expressApp.post(
+    "/api/apply/draft",
+    limiters.publicForm,
+    handlePublicSaveDraft,
+  );
 
   // Public broker info for share link (no auth required)
   expressApp.get("/api/public/broker/:token", handleGetBrokerPublicInfo);
@@ -18699,7 +23276,7 @@ function createServer() {
 
       const [rows] = (await pool.query(
         `SELECT sm.id, sm.meeting_date, sm.meeting_time, sm.meeting_end_time,
-                sm.meeting_type, sm.status, sm.zoom_join_url, sm.notes,
+                sm.meeting_type, sm.status, sm.zoom_join_url, sm.teams_join_url, sm.notes,
                 sm.booking_token, sm.cancelled_reason,
                 CONCAT(b.first_name, ' ', b.last_name) AS broker_name,
                 b.phone AS broker_phone
@@ -18853,6 +23430,16 @@ function createServer() {
   // Inbound IMAP poll cron — called by Vercel Cron or HostGator cPanel cron via curl
   expressApp.get("/api/cron/poll-inbound-email", handlePollInboundEmail);
 
+  // Office365 mailbox sync cron — called by scheduler with CRON_SECRET
+  expressApp.get(
+    "/api/cron/sync-office365-mailboxes",
+    handleCronSyncOffice365Mailboxes,
+  );
+
+  // Teams application-access policy sync cron — run daily via cPanel cron:
+  //   curl -s "https://yourdomain.com/api/cron/sync-teams-policy?secret=CRON_SECRET"
+  expressApp.get("/api/cron/sync-teams-policy", handleCronSyncTeamsPolicy);
+
   // Reminder flow execution engine cron — run every 5-15 min via cPanel cron:
   //   curl -s "https://yourdomain.com/api/cron/process-reminder-flows?secret=CRON_SECRET"
   expressApp.get(
@@ -18860,11 +23447,49 @@ function createServer() {
     handleProcessReminderFlows,
   );
 
+  // Twilio delivery-status backfill cron — run every 10 min:
+  //   curl -s "https://yourdomain.com/api/cron/backfill-message-status?secret=CRON_SECRET"
+  // Catches SMS/MMS/WhatsApp rows whose statusCallback never arrived and
+  // refreshes their delivery_status from Twilio's authoritative state.
+  expressApp.get(
+    "/api/cron/backfill-message-status",
+    handleBackfillMessageStatus,
+  );
+
   // Conversation routes
   expressApp.get(
     "/api/conversations/threads",
     verifyBrokerSession,
     handleGetConversationThreads,
+  );
+  expressApp.get(
+    "/api/conversations/mailboxes",
+    verifyBrokerSession,
+    handleGetConversationMailboxes,
+  );
+  expressApp.post(
+    "/api/conversations/mailboxes/office365/connect",
+    verifyBrokerSession,
+    handleConnectOffice365Mailbox,
+  );
+  expressApp.get(
+    "/api/conversations/mailboxes/office365/callback",
+    handleOffice365Callback,
+  );
+  expressApp.post(
+    "/api/conversations/mailboxes/:mailboxId/sync",
+    verifyBrokerSession,
+    handleSyncConversationMailbox,
+  );
+  expressApp.patch(
+    "/api/conversations/mailboxes/:mailboxId/assign",
+    verifyBrokerSession,
+    handleAssignConversationMailbox,
+  );
+  expressApp.delete(
+    "/api/conversations/mailboxes/:mailboxId",
+    verifyBrokerSession,
+    handleDisconnectConversationMailbox,
   );
   expressApp.get(
     "/api/conversations/:conversationId/messages",
@@ -18928,6 +23553,15 @@ function createServer() {
   expressApp.post("/api/voice/incoming", handleVoiceIncoming); // no auth — Twilio webhook for inbound calls
   expressApp.post("/api/voice/dial-status", handleDialStatus); // no auth — Twilio statusCallback
   expressApp.post("/api/voice/recording-status", handleRecordingStatus); // no auth — Twilio recording webhook
+  // ── Voicemail webhooks (no auth — called by Twilio servers) ──
+  expressApp.post("/api/voice/voicemail-complete", handleVoicemailComplete);
+  expressApp.post("/api/voice/call-screen", handleCallScreen); // no auth — Twilio Number url callback
+  expressApp.post("/api/voice/call-screen-accept", handleCallScreenAccept); // no auth — Twilio Gather action callback
+  expressApp.post("/api/voice/voicemail-recording", handleVoicemailRecording);
+  expressApp.post(
+    "/api/voice/voicemail-transcription",
+    handleVoicemailTranscription,
+  );
   expressApp.get("/api/voice/recording/:callSid", handleGetRecording);
   expressApp.get(
     "/api/voice/recording-check/:callSid",
@@ -18962,6 +23596,22 @@ function createServer() {
     "/api/voice/call-forwarding",
     verifyBrokerSession,
     handleUpdateCallForwarding,
+  );
+  // ── Voicemail settings ──
+  expressApp.get(
+    "/api/voice/voicemail-settings",
+    verifyBrokerSession,
+    handleGetVoicemailSettings,
+  );
+  expressApp.put(
+    "/api/voice/voicemail-settings",
+    verifyBrokerSession,
+    handleUpdateVoicemailSettings,
+  );
+  expressApp.put(
+    "/api/voice/voicemail-settings/tenant",
+    verifyBrokerSession,
+    handleUpdateTenantVoicemailSettings,
   );
   expressApp.post("/api/voice/log", verifyBrokerSession, handleVoiceLog);
   expressApp.get("/api/voice/calls", verifyBrokerSession, handleGetCallHistory);
@@ -19115,6 +23765,11 @@ function createServer() {
     handleToggleReminderFlow,
   );
   expressApp.get(
+    "/api/reminder-flows/:flowId/trace",
+    verifyBrokerSession,
+    handleGetReminderFlowTrace,
+  );
+  expressApp.get(
     "/api/reminder-flow-executions",
     verifyBrokerSession,
     handleGetReminderFlowExecutions,
@@ -19210,8 +23865,9 @@ function createServer() {
     meetingDate: string; // "YYYY-MM-DD"
     meetingTime: string; // "HH:MM"
     meetingEndTime: string;
-    meetingType: "phone" | "video";
+    meetingType: "phone" | "video" | "teams";
     videoRoomUrl: string | null;
+    videoHostUrl: string | null;
     brokerPhone: string | null;
     bookingToken: string;
     notes: string | null;
@@ -19241,18 +23897,31 @@ function createServer() {
       : "";
     const timeLabel = (t: string) =>
       `${formatTime(t)}${tzAbbr ? ` ${tzAbbr}` : ""}`;
-    const connectionHtml =
-      opts.meetingType === "video" && opts.videoRoomUrl
+    const isVideoMeeting =
+      opts.meetingType === "video" || opts.meetingType === "teams";
+    const videoProviderLabel =
+      opts.meetingType === "teams" ? "Microsoft Teams" : "Zoom";
+    const connectionHtml = isVideoMeeting
+      ? opts.videoRoomUrl
         ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;">
             <tr>
               <td style="background-color:#e8f4fd;border-left:4px solid #2D8CFF;border-radius:0 8px 8px 0;padding:14px 18px;">
-                <p style="margin:0 0 6px 0;color:#0f172a;font-size:14px;font-weight:700;">🎥 Zoom Video Call Link</p>
+                <p style="margin:0 0 6px 0;color:#0f172a;font-size:14px;font-weight:700;">🎥 ${videoProviderLabel} Video Call Link</p>
                 <a href="${opts.videoRoomUrl}" style="color:#2D8CFF;font-size:14px;word-break:break-all;">${opts.videoRoomUrl}</a>
+                ${opts.videoHostUrl ? `<p style="margin:8px 0 4px 0;color:#0f172a;font-size:13px;font-weight:700;">Host Link</p><a href="${opts.videoHostUrl}" style="color:#2D8CFF;font-size:13px;word-break:break-all;">${opts.videoHostUrl}</a>` : ""}
                 <p style="margin:6px 0 0 0;color:#64748b;font-size:12px;">Click the link above at meeting time — no download required if using a browser.</p>
               </td>
             </tr>
           </table>`
         : `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;">
+            <tr>
+              <td style="background-color:#fff7ed;border-left:4px solid #f97316;border-radius:0 8px 8px 0;padding:14px 18px;">
+                <p style="margin:0 0 6px 0;color:#0f172a;font-size:14px;font-weight:700;">🎥 ${videoProviderLabel} Video Call</p>
+                <p style="margin:0;color:#475569;font-size:13px;">Join link is being generated. Please contact your mortgage banker if you don't receive a join link shortly.</p>
+              </td>
+            </tr>
+          </table>`
+      : `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;">
             <tr>
               <td style="background-color:#f0f9ff;border-left:4px solid #0ea5e9;border-radius:0 8px 8px 0;padding:14px 18px;">
                 <p style="margin:0 0 4px 0;color:#0f172a;font-size:14px;font-weight:700;">📞 Phone Call</p>
@@ -19264,14 +23933,15 @@ function createServer() {
     const cancelUrl = `${process.env.CLIENT_URL || "https://portal.themortgageprofessionals.net"}/scheduler/cancel/${opts.bookingToken}`;
     const rescheduleUrl = `${process.env.CLIENT_URL || "https://portal.themortgageprofessionals.net"}/scheduler/reschedule/${opts.rescheduleToken}`;
 
-    const icsLocation =
-      opts.meetingType === "video" && opts.videoRoomUrl
-        ? opts.videoRoomUrl
-        : "Phone Call — your mortgage banker will call you";
-    const icsDescription =
-      opts.meetingType === "video" && opts.videoRoomUrl
-        ? `Join the Zoom meeting: ${opts.videoRoomUrl}`
-        : `Phone call meeting with ${opts.brokerName}${opts.brokerPhone ? ` — ${opts.brokerPhone}` : ""}`;
+    const icsLocation = isVideoMeeting
+      ? opts.videoRoomUrl ||
+        `${videoProviderLabel} Video Call (join link pending)`
+      : "Phone Call — your mortgage banker will call you";
+    const icsDescription = isVideoMeeting
+      ? opts.videoRoomUrl
+        ? `Join the ${videoProviderLabel} meeting: ${opts.videoRoomUrl}`
+        : `${videoProviderLabel} video call with ${opts.brokerName} (join link pending)`
+      : `Phone call meeting with ${opts.brokerName}${opts.brokerPhone ? ` — ${opts.brokerPhone}` : ""}`;
     const icsAttachment = generateIcs({
       uid: `meeting-${opts.meetingId}@themortgageprofessionals.net`,
       summary: `Mortgage Meeting with ${opts.brokerName}`,
@@ -19322,7 +23992,7 @@ function createServer() {
                       </td></tr>
                       <tr><td style="padding:6px 0;">
                         <span style="color:#64748b;font-size:13px;display:inline-block;width:130px;">📡 Method</span>
-                        <strong style="color:#0f172a;font-size:14px;">${opts.meetingType === "video" ? "Zoom Video Call" : "Phone Call"}</strong>
+                        <strong style="color:#0f172a;font-size:14px;">${isVideoMeeting ? `${videoProviderLabel} Video Call` : "Phone Call"}</strong>
                       </td></tr>
                     </table>
                   </td></tr>
@@ -19368,9 +24038,9 @@ function createServer() {
     meetingDate: string;
     meetingTime: string;
     meetingEndTime: string;
-    meetingType: "phone" | "video";
+    meetingType: "phone" | "video" | "teams";
     videoRoomUrl: string | null;
-    zoomStartUrl: string | null;
+    videoHostUrl: string | null;
     notes: string | null;
     meetingId: number;
     brokerTimezone?: string;
@@ -19399,6 +24069,11 @@ function createServer() {
     const timeLabel = (t: string) =>
       `${formatTime(t)}${tzAbbr ? ` ${tzAbbr}` : ""}`;
     const adminUrl = `${process.env.BASE_URL || "https://portal.themortgageprofessionals.net"}/admin/scheduler`;
+
+    const isVideoMeeting =
+      opts.meetingType === "video" || opts.meetingType === "teams";
+    const videoProviderLabel =
+      opts.meetingType === "teams" ? "Microsoft Teams" : "Zoom";
 
     await sendViaResend({
       from: process.env.SMTP_FROM,
@@ -19437,12 +24112,12 @@ function createServer() {
                       </td></tr>
                       <tr><td style="padding:6px 0;">
                         <span style="color:#64748b;font-size:13px;width:140px;display:inline-block;">📡 Method</span>
-                        <strong style="color:#0f172a;font-size:14px;">${opts.meetingType === "video" ? "Video Call" : "Phone Call"}</strong>
+                        <strong style="color:#0f172a;font-size:14px;">${isVideoMeeting ? `${videoProviderLabel} Video Call` : "Phone Call"}</strong>
                       </td></tr>
                     </table>
                   </td></tr>
                 </table>
-                ${opts.videoRoomUrl ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;"><tr><td style="background-color:#e8f4fd;border-left:4px solid #2D8CFF;border-radius:0 8px 8px 0;padding:12px 16px;"><p style="margin:0 0 4px 0;color:#0f172a;font-size:13px;font-weight:700;">🎥 Zoom — Client Join Link</p><a href="${opts.videoRoomUrl}" style="color:#2D8CFF;font-size:13px;">${opts.videoRoomUrl}</a>${opts.zoomStartUrl ? `<p style="margin:8px 0 4px 0;color:#0f172a;font-size:13px;font-weight:700;">▶️ Your Host Start Link</p><a href="${opts.zoomStartUrl}" style="color:#2D8CFF;font-size:13px;">Start the meeting as host</a>` : ""}</td></tr></table>` : ""}
+                ${opts.videoRoomUrl ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;"><tr><td style="background-color:#e8f4fd;border-left:4px solid #2D8CFF;border-radius:0 8px 8px 0;padding:12px 16px;"><p style="margin:0 0 4px 0;color:#0f172a;font-size:13px;font-weight:700;">🎥 ${videoProviderLabel} — Client Join Link</p><a href="${opts.videoRoomUrl}" style="color:#2D8CFF;font-size:13px;">${opts.videoRoomUrl}</a>${opts.videoHostUrl ? `<p style="margin:8px 0 4px 0;color:#0f172a;font-size:13px;font-weight:700;">Host Link</p><a href="${opts.videoHostUrl}" style="color:#2D8CFF;font-size:13px;">Open host link</a>` : ""}</td></tr></table>` : ""}
                 ${opts.notes ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;"><tr><td style="background-color:#f8fafc;border-radius:8px;padding:12px 16px;"><p style="margin:0 0 4px 0;color:#64748b;font-size:12px;font-weight:700;text-transform:uppercase;">Client Notes</p><p style="margin:0;color:#475569;font-size:14px;">${opts.notes}</p></td></tr></table>` : ""}
                 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;">
                   <tr><td align="center">
@@ -19624,6 +24299,221 @@ function createServer() {
     };
   }
 
+  let _microsoftGraphAccessToken: string | null = null;
+  let _microsoftGraphTokenExpiry = 0;
+
+  async function getMicrosoftGraphAccessToken(): Promise<string | null> {
+    const tenantId = process.env.OFFICE365_TENANT_ID;
+    const clientId = process.env.OFFICE365_CLIENT_ID;
+    const clientSecret = process.env.OFFICE365_CLIENT_SECRET;
+    if (!tenantId || !clientId || !clientSecret) return null;
+
+    if (_microsoftGraphAccessToken && Date.now() < _microsoftGraphTokenExpiry) {
+      return _microsoftGraphAccessToken;
+    }
+
+    const params = new URLSearchParams();
+    params.set("grant_type", "client_credentials");
+    params.set("client_id", clientId);
+    params.set("client_secret", clientSecret);
+    params.set("scope", "https://graph.microsoft.com/.default");
+
+    const resp = await fetch(
+      `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params.toString(),
+      },
+    );
+
+    if (!resp.ok) {
+      console.error(
+        "Microsoft Graph token fetch failed:",
+        resp.status,
+        await resp.text(),
+      );
+      return null;
+    }
+
+    const json = (await resp.json()) as {
+      access_token: string;
+      expires_in: number;
+    };
+
+    _microsoftGraphAccessToken = json.access_token;
+    _microsoftGraphTokenExpiry = Date.now() + (json.expires_in - 60) * 1000;
+    return _microsoftGraphAccessToken;
+  }
+
+  async function createTeamsMeeting(opts: {
+    organizerEmail: string;
+    subject: string;
+    startDatetime: string;
+    endDatetime: string;
+  }): Promise<
+    | {
+        meeting_id: string;
+        join_url: string;
+        host_url: string | null;
+      }
+    | { policyPending: true }
+    | null
+  > {
+    const normalizeGraphDateTime = (value: string): string => {
+      // Graph onlineMeetings expects timezone-aware ISO datetimes.
+      return /(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`;
+    };
+
+    const token = await getMicrosoftGraphAccessToken();
+    if (!token) return null;
+    const configuredOrganizerId =
+      process.env.OFFICE365_TEAMS_ORGANIZER_ID?.trim() || "";
+    const configuredOrganizerEmail =
+      process.env.OFFICE365_TEAMS_ORGANIZER_EMAIL?.trim() || "";
+
+    const organizerCandidates = Array.from(
+      new Set(
+        [configuredOrganizerId, configuredOrganizerEmail, opts.organizerEmail]
+          .map((v) => v.trim())
+          .filter(Boolean),
+      ),
+    );
+
+    if (organizerCandidates.length === 0) {
+      console.error("Teams create meeting failed: no organizer candidate");
+      return null;
+    }
+
+    let lastError: { status: number; body: string; organizer: string } | null =
+      null;
+    let policyPendingDetected = false;
+
+    for (const organizer of organizerCandidates) {
+      const resp = await fetch(
+        `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(organizer)}/onlineMeetings`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            subject: opts.subject,
+            startDateTime: normalizeGraphDateTime(opts.startDatetime),
+            endDateTime: normalizeGraphDateTime(opts.endDatetime),
+          }),
+        },
+      );
+
+      if (resp.ok) {
+        const data = (await resp.json()) as {
+          id: string;
+          joinWebUrl: string;
+        };
+        return {
+          meeting_id: data.id,
+          join_url: data.joinWebUrl,
+          host_url: data.joinWebUrl,
+        };
+      }
+
+      const body = await resp.text();
+      console.error(
+        "Teams create meeting attempt failed:",
+        resp.status,
+        "organizer:",
+        organizer,
+        body,
+      );
+      lastError = { status: resp.status, body, organizer };
+
+      if (resp.status === 404) {
+        try {
+          const parsed = JSON.parse(body);
+          if (parsed?.error?.code === "UnknownError") {
+            policyPendingDetected = true;
+          }
+        } catch {
+          // body not JSON — treat as generic 404
+        }
+        continue;
+      }
+      if (resp.status === 403) {
+        continue;
+      }
+    }
+
+    if (lastError) {
+      console.error(
+        "Teams create meeting failed:",
+        lastError.status,
+        "organizer:",
+        lastError.organizer,
+        lastError.body,
+      );
+    }
+    if (policyPendingDetected) return { policyPending: true };
+    return null;
+  }
+
+  async function validateTeamsOrganizerEligibility(opts: {
+    brokerEmail: string;
+  }): Promise<{ ok: true } | { ok: false; error: string }> {
+    const overrideOrganizerId =
+      process.env.OFFICE365_TEAMS_ORGANIZER_ID?.trim() || "";
+    const overrideOrganizerEmail =
+      process.env.OFFICE365_TEAMS_ORGANIZER_EMAIL?.trim() || "";
+
+    // If a global organizer override exists, teams meetings do not depend on
+    // each broker email being a tenant user.
+    if (overrideOrganizerId || overrideOrganizerEmail) {
+      return { ok: true };
+    }
+
+    const token = await getMicrosoftGraphAccessToken();
+    if (!token) {
+      return {
+        ok: false,
+        error:
+          "Teams is not configured in server environment. Set OFFICE365_TENANT_ID, OFFICE365_CLIENT_ID and OFFICE365_CLIENT_SECRET.",
+      };
+    }
+
+    const resp = await fetch(
+      `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(opts.brokerEmail)}?$select=id,mail,userPrincipalName`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    );
+
+    if (resp.ok) {
+      return { ok: true };
+    }
+
+    if (resp.status === 404) {
+      return {
+        ok: false,
+        error:
+          "Cannot enable Teams: this broker email is not a Microsoft 365 user in your tenant. Use a tenant mailbox for the broker or set OFFICE365_TEAMS_ORGANIZER_ID / OFFICE365_TEAMS_ORGANIZER_EMAIL as a global organizer.",
+      };
+    }
+
+    if (resp.status === 403) {
+      return {
+        ok: false,
+        error:
+          "Cannot verify Teams eligibility for this broker email. Azure app permissions are insufficient to read users. Grant directory read permission or configure OFFICE365_TEAMS_ORGANIZER_ID / OFFICE365_TEAMS_ORGANIZER_EMAIL.",
+      };
+    }
+
+    return {
+      ok: false,
+      error:
+        "Unable to validate Teams organizer eligibility right now. Please try again in a moment.",
+    };
+  }
+
   // ---- Helper: compute available slots for a given date ----
 
   async function getAvailableSlotsForDate(
@@ -19773,8 +24663,8 @@ function createServer() {
       // Upsert default settings if missing
       await pool.query(
         `INSERT IGNORE INTO scheduler_settings
-           (tenant_id, broker_id, meeting_title, meeting_description, slot_duration_minutes, buffer_time_minutes, advance_booking_days, min_booking_hours, timezone, allow_phone, allow_video)
-         VALUES (?, ?, 'Mortgage Consultation', 'Schedule a free consultation with our mortgage expert.', 30, 15, 30, 2, 'America/Chicago', 1, 1)`,
+           (tenant_id, broker_id, meeting_title, meeting_description, slot_duration_minutes, buffer_time_minutes, advance_booking_days, min_booking_hours, timezone, allow_phone, allow_video, allow_teams)
+         VALUES (?, ?, 'Mortgage Consultation', 'Schedule a free consultation with our mortgage expert.', 30, 15, 30, 2, 'America/Chicago', 1, 1, 0)`,
         [MORTGAGE_TENANT_ID, brokerRow.id],
       );
 
@@ -19829,6 +24719,7 @@ function createServer() {
           timezone: settings.timezone,
           allow_phone: !!settings.allow_phone,
           allow_video: !!settings.allow_video,
+          allow_teams: !!settings.allow_teams,
           is_enabled: !!settings.is_enabled,
         },
         available_dates: availableDates,
@@ -19920,7 +24811,7 @@ function createServer() {
         client_phone?: string;
         meeting_date?: string;
         meeting_time?: string;
-        meeting_type?: "phone" | "video";
+        meeting_type?: "phone" | "video" | "teams";
         notes?: string;
       };
 
@@ -20008,6 +24899,11 @@ function createServer() {
           .status(400)
           .json({ success: false, error: "Video meetings are not available" });
       }
+      if (meeting_type === "teams" && !settings.allow_teams) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Teams meetings are not available" });
+      }
 
       // Validate slot is truly available
       const allSlots = await getAvailableSlotsForDate(
@@ -20036,6 +24932,9 @@ function createServer() {
       let zoomMeetingId: string | null = null;
       let zoomJoinUrl: string | null = null;
       let zoomStartUrl: string | null = null;
+      let teamsMeetingId: string | null = null;
+      let teamsJoinUrl: string | null = null;
+      let teamsHostUrl: string | null = null;
 
       if (meeting_type === "video") {
         const zoomMeeting = await createZoomMeeting({
@@ -20048,6 +24947,39 @@ function createServer() {
           zoomMeetingId = zoomMeeting.meeting_id;
           zoomJoinUrl = zoomMeeting.join_url;
           zoomStartUrl = zoomMeeting.start_url;
+        } else {
+          return res.status(503).json({
+            success: false,
+            error:
+              "Unable to create Zoom meeting right now. Please try again in a moment.",
+          });
+        }
+      }
+      if (meeting_type === "teams") {
+        const [startHour, startMinute] = meeting_time.split(":").map(Number);
+        const endMinutes =
+          startHour * 60 + startMinute + settings.slot_duration_minutes;
+        const endHour = Math.floor(endMinutes / 60);
+        const endMinute = endMinutes % 60;
+        const teamsMeeting = await createTeamsMeeting({
+          organizerEmail: brokerData.email,
+          subject: settings.meeting_title || "Mortgage Consultation",
+          startDatetime: `${meeting_date}T${meeting_time}:00`,
+          endDatetime: `${meeting_date}T${String(endHour).padStart(2, "0")}:${String(endMinute).padStart(2, "0")}:00`,
+        });
+        if (teamsMeeting && !("policyPending" in teamsMeeting)) {
+          teamsMeetingId = teamsMeeting.meeting_id;
+          teamsJoinUrl = teamsMeeting.join_url;
+          teamsHostUrl = teamsMeeting.host_url;
+        } else {
+          const isPending = teamsMeeting && "policyPending" in teamsMeeting;
+          return res.status(503).json({
+            success: false,
+            errorCode: isPending ? "TEAMS_POLICY_PENDING" : undefined,
+            error: isPending
+              ? "Teams meeting setup is still activating. This typically takes up to 1 hour after first setup. Please try again in a few minutes."
+              : "Unable to create Teams meeting right now. Please try again in a moment.",
+          });
         }
       }
 
@@ -20056,8 +24988,9 @@ function createServer() {
            (tenant_id, broker_id, client_name, client_email, client_phone,
             meeting_date, meeting_time, meeting_end_time, meeting_type,
             zoom_meeting_id, zoom_join_url, zoom_start_url,
+            teams_meeting_id, teams_join_url,
             status, notes, booking_token, public_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)`,
         [
           MORTGAGE_TENANT_ID,
           brokerId,
@@ -20071,6 +25004,8 @@ function createServer() {
           zoomMeetingId,
           zoomJoinUrl,
           zoomStartUrl,
+          teamsMeetingId,
+          teamsJoinUrl,
           notes || null,
           bookingToken,
           brokerData.public_token,
@@ -20090,7 +25025,8 @@ function createServer() {
         meetingTime: meeting_time,
         meetingEndTime: requestedSlot.end_time,
         meetingType: meeting_type,
-        videoRoomUrl: zoomJoinUrl,
+        videoRoomUrl: meeting_type === "teams" ? teamsJoinUrl : zoomJoinUrl,
+        videoHostUrl: meeting_type === "teams" ? teamsHostUrl : zoomStartUrl,
         brokerPhone: brokerData.phone,
         bookingToken,
         notes: notes || null,
@@ -20108,8 +25044,8 @@ function createServer() {
         meetingTime: meeting_time,
         meetingEndTime: requestedSlot.end_time,
         meetingType: meeting_type,
-        videoRoomUrl: zoomJoinUrl,
-        zoomStartUrl,
+        videoRoomUrl: meeting_type === "teams" ? teamsJoinUrl : zoomJoinUrl,
+        videoHostUrl: meeting_type === "teams" ? teamsHostUrl : zoomStartUrl,
         notes: notes || null,
         meetingId: result.insertId,
         brokerTimezone: brokerData.timezone || undefined,
@@ -20147,6 +25083,7 @@ function createServer() {
         booking_token: bookingToken,
         zoom_join_url: zoomJoinUrl,
         zoom_start_url: zoomStartUrl,
+        teams_join_url: teamsJoinUrl,
         meeting_date,
         meeting_time,
         meeting_type,
@@ -20319,6 +25256,9 @@ function createServer() {
       let zoomMeetingId: string | null = null;
       let zoomJoinUrl: string | null = null;
       let zoomStartUrl: string | null = null;
+      let teamsMeetingId: string | null = null;
+      let teamsJoinUrl: string | null = null;
+      let teamsHostUrl: string | null = null;
 
       if (old.meeting_type === "video") {
         const zoomMeeting = await createZoomMeeting({
@@ -20331,6 +25271,39 @@ function createServer() {
           zoomMeetingId = zoomMeeting.meeting_id;
           zoomJoinUrl = zoomMeeting.join_url;
           zoomStartUrl = zoomMeeting.start_url;
+        } else {
+          return res.status(503).json({
+            success: false,
+            error:
+              "Unable to create Zoom meeting right now. Please try rescheduling again in a moment.",
+          });
+        }
+      }
+      if (old.meeting_type === "teams") {
+        const [startHour, startMinute] = new_time.split(":").map(Number);
+        const endMinutes =
+          startHour * 60 + startMinute + settings.slot_duration_minutes;
+        const endHour = Math.floor(endMinutes / 60);
+        const endMinute = endMinutes % 60;
+        const teamsMeeting = await createTeamsMeeting({
+          organizerEmail: old.broker_email,
+          subject: settings.meeting_title || "Mortgage Consultation",
+          startDatetime: `${new_date}T${new_time}:00`,
+          endDatetime: `${new_date}T${String(endHour).padStart(2, "0")}:${String(endMinute).padStart(2, "0")}:00`,
+        });
+        if (teamsMeeting && !("policyPending" in teamsMeeting)) {
+          zoomMeetingId = teamsMeeting.meeting_id;
+          zoomJoinUrl = teamsMeeting.join_url;
+          zoomStartUrl = teamsMeeting.host_url;
+        } else {
+          const isPending = teamsMeeting && "policyPending" in teamsMeeting;
+          return res.status(503).json({
+            success: false,
+            errorCode: isPending ? "TEAMS_POLICY_PENDING" : undefined,
+            error: isPending
+              ? "Teams meeting setup is still activating. This typically takes up to 1 hour after first setup. Please try rescheduling again in a few minutes."
+              : "Unable to create Teams meeting right now. Please try rescheduling again in a moment.",
+          });
         }
       }
 
@@ -20342,8 +25315,9 @@ function createServer() {
            (tenant_id, broker_id, client_name, client_email, client_phone,
             meeting_date, meeting_time, meeting_end_time, meeting_type,
             zoom_meeting_id, zoom_join_url, zoom_start_url,
+          teams_meeting_id, teams_join_url,
             status, notes, booking_token, public_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)`,
         [
           MORTGAGE_TENANT_ID,
           old.broker_id,
@@ -20357,6 +25331,8 @@ function createServer() {
           zoomMeetingId,
           zoomJoinUrl,
           zoomStartUrl,
+          old.meeting_type === "teams" ? zoomMeetingId : null,
+          old.meeting_type === "teams" ? zoomJoinUrl : null,
           old.notes,
           newBookingToken,
           old.broker_public_token,
@@ -20377,6 +25353,7 @@ function createServer() {
         meetingEndTime: requestedSlot.end_time,
         meetingType: old.meeting_type,
         videoRoomUrl: zoomJoinUrl,
+        videoHostUrl: zoomStartUrl,
         brokerPhone: old.broker_phone,
         bookingToken: newBookingToken,
         notes: old.notes || null,
@@ -20395,7 +25372,7 @@ function createServer() {
         meetingEndTime: requestedSlot.end_time,
         meetingType: old.meeting_type,
         videoRoomUrl: zoomJoinUrl,
-        zoomStartUrl,
+        videoHostUrl: zoomStartUrl,
         notes: old.notes || null,
         meetingId: result.insertId,
         brokerTimezone: old.broker_timezone || undefined,
@@ -20408,7 +25385,9 @@ function createServer() {
         booking_token: newBookingToken,
         meeting_date: new_date,
         meeting_time: new_time,
+        meeting_type: old.meeting_type,
         zoom_join_url: zoomJoinUrl,
+        teams_join_url: old.meeting_type === "teams" ? zoomJoinUrl : null,
         broker_name: brokerName,
       });
     } catch (err) {
@@ -20488,8 +25467,8 @@ function createServer() {
 
       await pool.query(
         `INSERT INTO scheduler_settings
-           (tenant_id, broker_id, meeting_title, meeting_description, slot_duration_minutes, buffer_time_minutes, advance_booking_days, min_booking_hours, timezone, allow_phone, allow_video)
-         VALUES (?, ?, 'Mortgage Consultation', 'Schedule a free consultation with our mortgage expert.', 30, 15, 30, 2, 'America/Chicago', 1, 1)
+           (tenant_id, broker_id, meeting_title, meeting_description, slot_duration_minutes, buffer_time_minutes, advance_booking_days, min_booking_hours, timezone, allow_phone, allow_video, allow_teams)
+         VALUES (?, ?, 'Mortgage Consultation', 'Schedule a free consultation with our mortgage expert.', 30, 15, 30, 2, 'America/Chicago', 1, 1, 0)
          ON DUPLICATE KEY UPDATE updated_at = updated_at`,
         [MORTGAGE_TENANT_ID, reqBrokerId],
       );
@@ -20519,6 +25498,7 @@ function createServer() {
           is_enabled: !!settings.is_enabled,
           allow_phone: !!settings.allow_phone,
           allow_video: !!settings.allow_video,
+          allow_teams: !!settings.allow_teams,
         },
         availability: availability.map((a) => ({
           ...a,
@@ -20547,6 +25527,7 @@ function createServer() {
         timezone,
         allow_phone,
         allow_video,
+        allow_teams,
         availability,
       } = req.body as {
         is_enabled?: boolean;
@@ -20559,6 +25540,7 @@ function createServer() {
         timezone?: string;
         allow_phone?: boolean;
         allow_video?: boolean;
+        allow_teams?: boolean;
         availability?: Array<{
           day_of_week: number;
           start_time: string;
@@ -20567,12 +25549,41 @@ function createServer() {
         }>;
       };
 
+      if (allow_teams === true) {
+        const [[brokerRow]] = await pool.query<RowDataPacket[]>(
+          `SELECT email FROM brokers WHERE id = ? AND tenant_id = ? LIMIT 1`,
+          [reqBrokerId, MORTGAGE_TENANT_ID],
+        );
+
+        if (!brokerRow?.email) {
+          return res.status(400).json({
+            success: false,
+            error:
+              "Cannot enable Teams: broker email is missing. Update broker profile email first.",
+          });
+        }
+
+        const eligibility = await validateTeamsOrganizerEligibility({
+          brokerEmail: String(brokerRow.email),
+        });
+        if (!eligibility.ok) {
+          const eligibilityError =
+            "error" in eligibility
+              ? eligibility.error
+              : "Unable to validate Teams organizer eligibility right now.";
+          return res.status(400).json({
+            success: false,
+            error: eligibilityError,
+          });
+        }
+      }
+
       await pool.query(
         `INSERT INTO scheduler_settings
            (tenant_id, broker_id, is_enabled, meeting_title, meeting_description,
             slot_duration_minutes, buffer_time_minutes, advance_booking_days,
-            min_booking_hours, timezone, allow_phone, allow_video)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            min_booking_hours, timezone, allow_phone, allow_video, allow_teams)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            is_enabled = COALESCE(VALUES(is_enabled), is_enabled),
            meeting_title = COALESCE(VALUES(meeting_title), meeting_title),
@@ -20583,7 +25594,8 @@ function createServer() {
            min_booking_hours = COALESCE(VALUES(min_booking_hours), min_booking_hours),
            timezone = COALESCE(VALUES(timezone), timezone),
            allow_phone = COALESCE(VALUES(allow_phone), allow_phone),
-           allow_video = COALESCE(VALUES(allow_video), allow_video)`,
+            allow_video = COALESCE(VALUES(allow_video), allow_video),
+            allow_teams = COALESCE(VALUES(allow_teams), allow_teams)`,
         [
           MORTGAGE_TENANT_ID,
           reqBrokerId,
@@ -20597,6 +25609,7 @@ function createServer() {
           timezone || null,
           allow_phone !== undefined ? (allow_phone ? 1 : 0) : null,
           allow_video !== undefined ? (allow_video ? 1 : 0) : null,
+          allow_teams !== undefined ? (allow_teams ? 1 : 0) : null,
         ],
       );
 
@@ -20632,6 +25645,80 @@ function createServer() {
       return res.json({ success: true, message: "Scheduler settings updated" });
     } catch (err) {
       console.error("handleUpdateSchedulerSettings error:", err);
+      return res
+        .status(500)
+        .json({ success: false, error: "Internal server error" });
+    }
+  };
+
+  const handleGetTeamsEligibility: RequestHandler = async (req, res) => {
+    try {
+      const reqBrokerId = (req as any).brokerId as number;
+
+      const [[brokerRow]] = await pool.query<RowDataPacket[]>(
+        `SELECT email FROM brokers WHERE id = ? AND tenant_id = ? LIMIT 1`,
+        [reqBrokerId, MORTGAGE_TENANT_ID],
+      );
+
+      if (!brokerRow?.email) {
+        return res.json({
+          success: true,
+          eligible: false,
+          error:
+            "Cannot enable Teams: broker email is missing. Update broker profile email first.",
+        });
+      }
+
+      const eligibility = await validateTeamsOrganizerEligibility({
+        brokerEmail: String(brokerRow.email),
+      });
+
+      if (!eligibility.ok) {
+        const eligibilityError =
+          "error" in eligibility
+            ? eligibility.error
+            : "Unable to validate Teams organizer eligibility right now.";
+        return res.json({
+          success: true,
+          eligible: false,
+          error: eligibilityError,
+        });
+      }
+
+      // Non-destructive policy readiness check: attempt to list meetings.
+      // Returns 200 if app access policy is applied, 404/UnknownError if pending.
+      let policyReady = true;
+      const overrideOrg =
+        process.env.OFFICE365_TEAMS_ORGANIZER_ID?.trim() ||
+        process.env.OFFICE365_TEAMS_ORGANIZER_EMAIL?.trim() ||
+        "";
+      if (!overrideOrg) {
+        const policyToken = await getMicrosoftGraphAccessToken();
+        if (policyToken) {
+          const policyResp = await fetch(
+            `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(String(brokerRow.email))}/onlineMeetings?$top=1`,
+            { headers: { Authorization: `Bearer ${policyToken}` } },
+          );
+          if (!policyResp.ok) {
+            const policyBody = await policyResp.text().catch(() => "");
+            try {
+              const parsed = JSON.parse(policyBody);
+              if (
+                parsed?.error?.code === "UnknownError" ||
+                policyResp.status === 404
+              ) {
+                policyReady = false;
+              }
+            } catch {
+              if (policyResp.status === 404) policyReady = false;
+            }
+          }
+        }
+      }
+
+      return res.json({ success: true, eligible: true, policyReady });
+    } catch (err) {
+      console.error("handleGetTeamsEligibility error:", err);
       return res
         .status(500)
         .json({ success: false, error: "Internal server error" });
@@ -20721,7 +25808,7 @@ function createServer() {
         broker_notes?: string;
         meeting_date?: string;
         meeting_time?: string;
-        meeting_type?: "phone" | "video";
+        meeting_type?: "phone" | "video" | "teams";
         cancelled_reason?: string;
         cancelled_by?: "client" | "broker";
       };
@@ -20861,7 +25948,7 @@ function createServer() {
         client_phone?: string;
         meeting_date?: string;
         meeting_time?: string;
-        meeting_type?: "phone" | "video";
+        meeting_type?: "phone" | "video" | "teams";
         notes?: string;
         target_broker_id?: number;
       };
@@ -20920,6 +26007,9 @@ function createServer() {
       let zoomMeetingId: string | null = null;
       let zoomJoinUrl: string | null = null;
       let zoomStartUrl: string | null = null;
+      let teamsMeetingId: string | null = null;
+      let teamsJoinUrl: string | null = null;
+      let teamsHostUrl: string | null = null;
 
       if (meeting_type === "video") {
         try {
@@ -20933,12 +26023,58 @@ function createServer() {
             zoomMeetingId = zoomMeeting.meeting_id;
             zoomJoinUrl = zoomMeeting.join_url;
             zoomStartUrl = zoomMeeting.start_url;
+          } else {
+            return res.status(503).json({
+              success: false,
+              error:
+                "Unable to create Zoom meeting right now. Please try again in a moment.",
+            });
           }
         } catch (zoomErr) {
           console.error(
             "Zoom meeting creation error (admin booking):",
             zoomErr,
           );
+          return res.status(503).json({
+            success: false,
+            error:
+              "Unable to create Zoom meeting right now. Please try again in a moment.",
+          });
+        }
+      }
+
+      if (meeting_type === "teams") {
+        try {
+          const teamsMeeting = await createTeamsMeeting({
+            organizerEmail: brokerData.email,
+            subject: `Mortgage Meeting - ${client_name.trim()}`,
+            startDatetime: `${meeting_date}T${meeting_time}:00`,
+            endDatetime: `${meeting_date}T${endTime.slice(0, 5)}:00`,
+          });
+          if (teamsMeeting && !("policyPending" in teamsMeeting)) {
+            teamsMeetingId = teamsMeeting.meeting_id;
+            teamsJoinUrl = teamsMeeting.join_url;
+            teamsHostUrl = teamsMeeting.host_url;
+          } else {
+            const isPending = teamsMeeting && "policyPending" in teamsMeeting;
+            return res.status(503).json({
+              success: false,
+              errorCode: isPending ? "TEAMS_POLICY_PENDING" : undefined,
+              error: isPending
+                ? "Teams meeting setup is still activating. This typically takes up to 1 hour after first setup. Please try again in a few minutes."
+                : "Unable to create Teams meeting right now. Please try again in a moment.",
+            });
+          }
+        } catch (teamsErr) {
+          console.error(
+            "Teams meeting creation error (admin booking):",
+            teamsErr,
+          );
+          return res.status(503).json({
+            success: false,
+            error:
+              "Unable to create Teams meeting right now. Please try again in a moment.",
+          });
         }
       }
 
@@ -20949,8 +26085,9 @@ function createServer() {
            (tenant_id, broker_id, client_name, client_email, client_phone,
             meeting_date, meeting_time, meeting_end_time, meeting_type,
             zoom_meeting_id, zoom_join_url, zoom_start_url,
+            teams_meeting_id, teams_join_url,
             status, notes, booking_token)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?)`,
         [
           MORTGAGE_TENANT_ID,
           effectiveBrokerId,
@@ -20964,6 +26101,8 @@ function createServer() {
           zoomMeetingId,
           zoomJoinUrl,
           zoomStartUrl,
+          teamsMeetingId,
+          teamsJoinUrl,
           notes || null,
           bookingToken,
         ],
@@ -20985,7 +26124,8 @@ function createServer() {
           meetingTime: meeting_time,
           meetingEndTime: endTime.slice(0, 5),
           meetingType: meeting_type,
-          videoRoomUrl: zoomJoinUrl,
+          videoRoomUrl: meeting_type === "teams" ? teamsJoinUrl : zoomJoinUrl,
+          videoHostUrl: meeting_type === "teams" ? teamsHostUrl : zoomStartUrl,
           brokerPhone: brokerData.phone || null,
           bookingToken,
           notes: notes || null,
@@ -21005,8 +26145,8 @@ function createServer() {
           meetingTime: meeting_time,
           meetingEndTime: endTime.slice(0, 5),
           meetingType: meeting_type,
-          videoRoomUrl: zoomJoinUrl,
-          zoomStartUrl,
+          videoRoomUrl: meeting_type === "teams" ? teamsJoinUrl : zoomJoinUrl,
+          videoHostUrl: meeting_type === "teams" ? teamsHostUrl : zoomStartUrl,
           notes: notes || null,
           meetingId: result.insertId,
           brokerTimezone: brokerData.timezone || undefined,
@@ -21021,6 +26161,7 @@ function createServer() {
         booking_token: bookingToken,
         zoom_join_url: zoomJoinUrl,
         zoom_start_url: zoomStartUrl,
+        teams_join_url: teamsJoinUrl,
       });
     } catch (err) {
       console.error("handleCreateScheduledMeeting error:", err);
@@ -21082,6 +26223,7 @@ function createServer() {
                 is_enabled: !!settings.is_enabled,
                 allow_phone: !!settings.allow_phone,
                 allow_video: !!settings.allow_video,
+                allow_teams: !!settings.allow_teams,
               }
             : null,
           availability: availability.map((a) => ({
@@ -21101,6 +26243,11 @@ function createServer() {
     "/api/scheduler/settings",
     verifyBrokerSession,
     handleUpdateSchedulerSettings,
+  );
+  expressApp.get(
+    "/api/scheduler/teams-eligibility",
+    verifyBrokerSession,
+    handleGetTeamsEligibility,
   );
   expressApp.get(
     "/api/scheduler/meetings",
@@ -21870,7 +27017,11 @@ function createServer() {
     }
   };
 
-  expressApp.post("/api/contact", handleSubmitContact);
+  expressApp.post(
+    "/api/contact",
+    (expressApp as any).locals.limiters.publicForm,
+    handleSubmitContact,
+  );
   expressApp.get(
     "/api/contact",
     verifyBrokerSession,
@@ -22428,6 +27579,172 @@ function createServer() {
     "/api/realtor-prospects/:id",
     verifyBrokerSession,
     handleDeleteRealtorProspect,
+  );
+
+  // =====================================================
+  // BROKER NOTIFICATIONS — bell feed in admin layout
+  // =====================================================
+
+  // GET /api/notifications — list notifications for the authenticated broker
+  // Query params: unread_only=1, limit (default 50)
+  expressApp.get(
+    "/api/notifications",
+    verifyBrokerSession,
+    async (req, res) => {
+      try {
+        const brokerId = (req as any).brokerId;
+        const unreadOnly = req.query.unread_only === "1";
+        const limit = Math.min(
+          parseInt((req.query.limit as string) || "50", 10) || 50,
+          200,
+        );
+
+        const where = unreadOnly ? "AND is_read = 0" : "";
+
+        const [rows] = await pool.query<any[]>(
+          `SELECT id, title, message, notification_type, category, is_read,
+                  action_url, created_at, read_at
+             FROM notifications
+            WHERE tenant_id = ?
+              AND recipient_type = 'broker'
+              AND user_id = ?
+              ${where}
+            ORDER BY created_at DESC
+            LIMIT ?`,
+          [MORTGAGE_TENANT_ID, brokerId, limit],
+        );
+
+        const [unreadRows] = await pool.query<any[]>(
+          `SELECT COUNT(*) AS unread
+             FROM notifications
+            WHERE tenant_id = ?
+              AND recipient_type = 'broker'
+              AND user_id = ?
+              AND is_read = 0`,
+          [MORTGAGE_TENANT_ID, brokerId],
+        );
+
+        return res.json({
+          success: true,
+          notifications: rows.map((n) => ({
+            id: n.id,
+            title: n.title,
+            message: n.message,
+            notification_type: n.notification_type,
+            category: n.category,
+            is_read: !!n.is_read,
+            action_url: n.action_url,
+            created_at: n.created_at,
+            read_at: n.read_at,
+          })),
+          unread_count: unreadRows[0]?.unread ?? 0,
+        });
+      } catch (error: any) {
+        console.error("Error fetching broker notifications:", error);
+        return res.status(500).json({
+          success: false,
+          error: "Failed to fetch notifications",
+        });
+      }
+    },
+  );
+
+  // PUT /api/notifications/:id/read — mark single notification as read
+  expressApp.put(
+    "/api/notifications/:id/read",
+    verifyBrokerSession,
+    async (req, res) => {
+      try {
+        const brokerId = (req as any).brokerId;
+        const notificationId = parseInt(req.params.id as string, 10);
+        if (!Number.isFinite(notificationId)) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid notification id" });
+        }
+
+        const [result] = await pool.query<any>(
+          `UPDATE notifications
+              SET is_read = 1, read_at = NOW()
+            WHERE id = ?
+              AND tenant_id = ?
+              AND recipient_type = 'broker'
+              AND user_id = ?
+              AND is_read = 0`,
+          [notificationId, MORTGAGE_TENANT_ID, brokerId],
+        );
+
+        return res.json({
+          success: true,
+          updated: (result as any).affectedRows ?? 0,
+        });
+      } catch (error: any) {
+        console.error("Error marking notification as read:", error);
+        return res
+          .status(500)
+          .json({ success: false, error: "Failed to mark as read" });
+      }
+    },
+  );
+
+  // PUT /api/notifications/read-all — mark all broker notifications as read
+  expressApp.put(
+    "/api/notifications/read-all",
+    verifyBrokerSession,
+    async (req, res) => {
+      try {
+        const brokerId = (req as any).brokerId;
+        const [result] = await pool.query<any>(
+          `UPDATE notifications
+              SET is_read = 1, read_at = NOW()
+            WHERE tenant_id = ?
+              AND recipient_type = 'broker'
+              AND user_id = ?
+              AND is_read = 0`,
+          [MORTGAGE_TENANT_ID, brokerId],
+        );
+        return res.json({
+          success: true,
+          updated: (result as any).affectedRows ?? 0,
+        });
+      } catch (error: any) {
+        console.error("Error marking all notifications read:", error);
+        return res
+          .status(500)
+          .json({ success: false, error: "Failed to mark all as read" });
+      }
+    },
+  );
+
+  // DELETE /api/notifications/:id — dismiss a notification
+  expressApp.delete(
+    "/api/notifications/:id",
+    verifyBrokerSession,
+    async (req, res) => {
+      try {
+        const brokerId = (req as any).brokerId;
+        const notificationId = parseInt(req.params.id as string, 10);
+        if (!Number.isFinite(notificationId)) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid notification id" });
+        }
+        await pool.query(
+          `DELETE FROM notifications
+            WHERE id = ?
+              AND tenant_id = ?
+              AND recipient_type = 'broker'
+              AND user_id = ?`,
+          [notificationId, MORTGAGE_TENANT_ID, brokerId],
+        );
+        return res.json({ success: true });
+      } catch (error: any) {
+        console.error("Error deleting notification:", error);
+        return res
+          .status(500)
+          .json({ success: false, error: "Failed to delete notification" });
+      }
+    },
   );
 
   // 404 handler - only for API routes

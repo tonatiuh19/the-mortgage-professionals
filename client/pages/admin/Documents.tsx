@@ -70,7 +70,7 @@ const Documents = () => {
   const hasGlobalDocumentAccess = user?.role === "superadmin";
 
   useEffect(() => {
-    dispatch(fetchAllDocuments({}));
+    dispatch(fetchAllDocuments());
   }, [dispatch]);
 
   // Get unique brokers for filter
@@ -186,7 +186,7 @@ const Documents = () => {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => dispatch(fetchAllDocuments({}))}
+                onClick={() => dispatch(fetchAllDocuments())}
                 disabled={isLoading}
               >
                 <RefreshCw

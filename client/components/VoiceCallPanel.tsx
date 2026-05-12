@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Device, Call } from "@twilio/voice-sdk";
-import axios from "axios";
+import { useAppDispatch } from "@/store/hooks";
+import { fetchVoiceToken, logVoiceCall } from "@/store/slices/voiceSlice";
 import {
   Phone,
   PhoneOff,
@@ -39,7 +40,6 @@ import {
 import { cn } from "@/lib/utils";
 import { logger } from "@/lib/logger";
 import { useAppSelector } from "@/store/hooks";
-import type { VoiceLogRequest } from "@shared/api";
 
 export type CallState =
   | "idle"
@@ -83,6 +83,7 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
   direction = "outbound",
   deviceAudio,
 }) => {
+  const dispatch = useAppDispatch();
   const { sessionToken } = useAppSelector((s) => s.brokerAuth);
 
   const deviceRef = useRef<Device | null>(null);
@@ -97,6 +98,15 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [callSid, setCallSid] = useState<string | null>(null);
   const [closeCountdown, setCloseCountdown] = useState<number | null>(null);
+
+  // Mic preemption watchdog: true when the OS has paused the browser's mic
+  // input (e.g. an incoming cell-phone call on macOS/iOS preempts the audio
+  // session). While preempted the customer cannot hear the banker — we show
+  // a banner, mute the Twilio leg, and auto-end the call after 8 s of silence.
+  const [micPreempted, setMicPreempted] = useState(false);
+  const micPreemptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   // Device selection
   const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
@@ -246,6 +256,86 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
     };
   }, [callState, getAudioHelper, selectedMicId, startMicMeter, stopMicMeter]);
 
+  // ── Mic preemption watchdog ─────────────────────────────────────────
+  // Watches the active microphone MediaStreamTrack while in-call. When the
+  // OS preempts the mic (most commonly an incoming cell call on macOS/iOS),
+  // the track fires "mute" and audio output is silenced. We:
+  //   1. Show a red banner so the banker knows the customer can't hear them.
+  //   2. Mute the Twilio call leg so any junk noise (when the OS releases the
+  //      track mid-cell-conversation) doesn't bleed in.
+  //   3. After 8 s of sustained loss, hang up — the customer is better off
+  //      reaching voicemail than listening to silence.
+  // If the mic returns within the window, the banner clears and we restore
+  // the previous mute state.
+  useEffect(() => {
+    if (callState !== "in-call") return;
+    const stream = micStreamRef.current;
+    const track = stream?.getAudioTracks()?.[0];
+    if (!track) return;
+
+    let preMuteState = isMuted;
+
+    const onMute = () => {
+      logger.warn(
+        "[VoiceCallPanel] Mic preempted by OS — caller is hearing silence",
+      );
+      setMicPreempted(true);
+      preMuteState = isMuted;
+      // Force-mute Twilio leg so we don't emit garbage audio.
+      try {
+        callRef.current?.mute(true);
+      } catch {
+        /* noop */
+      }
+      // Auto-hangup after 8s if mic doesn't come back.
+      if (micPreemptTimeoutRef.current) {
+        clearTimeout(micPreemptTimeoutRef.current);
+      }
+      micPreemptTimeoutRef.current = setTimeout(() => {
+        logger.warn(
+          "[VoiceCallPanel] Mic still unavailable after 8s — ending call",
+        );
+        try {
+          callRef.current?.disconnect();
+        } catch {
+          /* noop */
+        }
+      }, 8000);
+    };
+
+    const onUnmute = () => {
+      logger.log("[VoiceCallPanel] Mic restored");
+      setMicPreempted(false);
+      if (micPreemptTimeoutRef.current) {
+        clearTimeout(micPreemptTimeoutRef.current);
+        micPreemptTimeoutRef.current = null;
+      }
+      // Restore the user's intended mute state.
+      try {
+        callRef.current?.mute(preMuteState);
+      } catch {
+        /* noop */
+      }
+    };
+
+    track.addEventListener("mute", onMute);
+    track.addEventListener("unmute", onUnmute);
+    // Some platforms mark the track as muted before listeners attach.
+    if (track.muted) onMute();
+
+    return () => {
+      track.removeEventListener("mute", onMute);
+      track.removeEventListener("unmute", onUnmute);
+      if (micPreemptTimeoutRef.current) {
+        clearTimeout(micPreemptTimeoutRef.current);
+        micPreemptTimeoutRef.current = null;
+      }
+    };
+    // We intentionally re-run when the meter restarts (selectedMicId change)
+    // so we attach to the fresh track.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callState, selectedMicId]);
+
   const handleMicChange = useCallback(
     async (deviceId: string) => {
       setSelectedMicId(deviceId);
@@ -308,24 +398,23 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
   const logCall = useCallback(
     async (status: string, durationSec: number, sid?: string | null) => {
       try {
-        const payload: VoiceLogRequest = {
-          phone,
-          duration: durationSec,
-          call_status: status,
-          call_sid: sid ?? undefined,
-          client_id: clientId ?? undefined,
-          application_id: applicationId ?? undefined,
-          client_name: clientName ?? undefined,
-          direction,
-        };
-        await axios.post("/api/voice/log", payload, {
-          headers: { Authorization: `Bearer ${sessionToken}` },
-        });
+        await dispatch(
+          logVoiceCall({
+            phone,
+            duration: durationSec,
+            call_status: status,
+            call_sid: sid ?? undefined,
+            client_id: clientId ?? undefined,
+            application_id: applicationId ?? undefined,
+            client_name: clientName ?? undefined,
+            direction,
+          }),
+        );
       } catch (err) {
         logger.error("[VoiceCallPanel] Failed to log call:", err);
       }
     },
-    [phone, clientId, applicationId, clientName, direction, sessionToken],
+    [phone, clientId, applicationId, clientName, direction, dispatch],
   );
 
   const stopTimer = useCallback(() => {
@@ -377,16 +466,18 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
     setErrorMsg(null);
 
     try {
-      // 1. Fetch Access Token
-      const { data } = await axios.post<{ success: boolean; token: string }>(
-        "/api/voice/token",
-        {},
-        { headers: { Authorization: `Bearer ${sessionToken}` } },
-      );
-      if (!data.success || !data.token) throw new Error("Token fetch failed");
+      // 1. Fetch Access Token via Redux thunk
+      const tokenResult = await dispatch(fetchVoiceToken());
+      if (fetchVoiceToken.rejected.match(tokenResult)) {
+        throw new Error(
+          (tokenResult.payload as string) || "Token fetch failed",
+        );
+      }
+      const token = tokenResult.payload as string;
+      if (!token) throw new Error("Token fetch failed");
 
       // 2. Create Device with HD audio settings
-      const device = new Device(data.token, {
+      const device = new Device(token, {
         logLevel: 1,
         // Opus first for HD wideband audio (~16 kHz), PCMU as PSTN fallback
         codecPreferences: [Call.Codec.Opus, Call.Codec.PCMU],
@@ -699,6 +790,21 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
         <p className="text-xs text-red-600 text-center bg-red-50 rounded px-3 py-2">
           {errorMsg}
         </p>
+      )}
+
+      {/* Mic preemption banner — shows when the OS has paused the browser's
+          microphone (most often: an incoming cell-phone call on macOS/iOS). */}
+      {micPreempted && callState === "in-call" && (
+        <div className="flex items-start gap-2 text-xs bg-red-50 border border-red-200 rounded px-3 py-2 animate-in fade-in slide-in-from-top-1 duration-200">
+          <MicOff className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+          <div className="flex-1 leading-snug">
+            <p className="font-semibold text-red-700">Microphone unavailable</p>
+            <p className="text-red-600/90">
+              Another app (likely a phone call) is using your mic. The caller
+              can't hear you. Call will end automatically if not restored.
+            </p>
+          </div>
+        </div>
       )}
 
       {/* Pre-call settings screen (Teams-style) */}

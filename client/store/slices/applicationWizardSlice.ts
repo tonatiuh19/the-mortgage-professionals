@@ -14,7 +14,7 @@ import type {
 } from "@shared/api";
 import type { RootState } from "../index";
 
-const DRAFT_KEY = "themortgageprofessionals_wizard_draft";
+const DRAFT_KEY = "encore_wizard_draft";
 
 export interface WizardDraft {
   values: Omit<PublicApplicationPayload, "broker_token">;
@@ -27,10 +27,12 @@ export interface WizardDraft {
 export interface PublicApplicationPayload {
   // Step 1 – Identity
   first_name: string;
+  middle_name?: string;
   last_name: string;
   email: string;
   phone: string;
   address_street: string;
+  address_unit?: string;
   address_city: string;
   address_state: string;
   address_zip: string;
@@ -40,6 +42,7 @@ export interface PublicApplicationPayload {
   down_payment: string;
   property_type: string;
   property_address: string;
+  property_unit?: string;
   property_city: string;
   property_state: string;
   property_zip: string;
@@ -52,6 +55,9 @@ export interface PublicApplicationPayload {
   employment_status: string;
   employer_name: string;
   years_employed: string;
+  marital_status?: string;
+  dependent_count?: string | number;
+  years_at_address?: string | number;
   // Step 1 – Citizenship / immigration
   citizenship_status: string; // 'us_citizen' | 'permanent_resident' | 'non_resident' | 'other'
   // Optional broker association (from share link)

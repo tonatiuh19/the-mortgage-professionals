@@ -292,6 +292,21 @@ const SchedulerPage: React.FC = () => {
     if (bookingSuccess) setStep("confirm");
   }, [bookingSuccess]);
 
+  useEffect(() => {
+    if (!publicBroker) return;
+    if (publicBroker.allow_phone) {
+      setMeetingType("phone");
+      return;
+    }
+    if (publicBroker.allow_video) {
+      setMeetingType("video");
+      return;
+    }
+    if (publicBroker.allow_teams) {
+      setMeetingType("teams");
+    }
+  }, [publicBroker]);
+
   const handleSelectDate = useCallback(
     (date: string) => {
       dispatch(setSelectedDate(date));
@@ -345,8 +360,10 @@ const SchedulerPage: React.FC = () => {
   });
 
   const handleCopyLink = () => {
-    if (bookingSuccess?.zoom_join_url) {
-      navigator.clipboard.writeText(bookingSuccess.zoom_join_url);
+    const joinUrl =
+      bookingSuccess?.teams_join_url || bookingSuccess?.zoom_join_url;
+    if (joinUrl) {
+      navigator.clipboard.writeText(joinUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -485,6 +502,12 @@ const SchedulerPage: React.FC = () => {
                       <span>Video call available (Zoom)</span>
                     </div>
                   )}
+                  {publicBroker.allow_teams && (
+                    <div className="flex items-center gap-2.5 text-sm text-foreground/80">
+                      <Video className="h-4 w-4 text-primary shrink-0" />
+                      <span>Video call available (Microsoft Teams)</span>
+                    </div>
+                  )}
                 </div>
               </motion.div>
 
@@ -544,7 +567,11 @@ const SchedulerPage: React.FC = () => {
                         ) : (
                           <Video className="h-4 w-4 text-primary" />
                         )}
-                        {meetingType === "phone" ? "Phone call" : "Video call"}
+                        {meetingType === "phone"
+                          ? "Phone call"
+                          : meetingType === "teams"
+                            ? "Teams video call"
+                            : "Zoom video call"}
                       </div>
                     )}
                   </motion.div>
@@ -710,63 +737,92 @@ const SchedulerPage: React.FC = () => {
                     </div>
 
                     {/* Meeting type selector */}
-                    {publicBroker.allow_phone && publicBroker.allow_video && (
-                      <div className="mb-6">
-                        <p className="text-sm font-medium text-foreground/80 mb-3">
-                          How would you like to connect?
-                        </p>
-                        <div className="grid grid-cols-2 gap-3">
-                          {[
-                            {
-                              type: "phone" as MeetingType,
-                              icon: Phone,
-                              label: "Phone Call",
-                              desc: "We'll call you",
-                            },
-                            {
-                              type: "video" as MeetingType,
-                              icon: Video,
-                              label: "Video Call",
-                              desc: "Zoom meeting",
-                            },
-                          ].map(({ type, icon: Icon, label, desc }) => (
-                            <button
-                              key={type}
-                              type="button"
-                              onClick={() => setMeetingType(type)}
-                              className={cn(
-                                "rounded-xl border p-4 text-left transition-all",
-                                meetingType === type
-                                  ? "border-primary bg-primary/10"
-                                  : "border-border hover:border-border/80 bg-muted/30",
-                              )}
-                            >
-                              <Icon
-                                className={cn(
-                                  "h-5 w-5 mb-2",
-                                  meetingType === type
-                                    ? "text-primary"
-                                    : "text-muted-foreground",
-                                )}
-                              />
-                              <p
-                                className={cn(
-                                  "font-semibold text-sm",
-                                  meetingType === type
-                                    ? "text-foreground"
-                                    : "text-foreground/80",
-                                )}
-                              >
-                                {label}
-                              </p>
-                              <p className="text-xs text-muted-foreground mt-0.5">
-                                {desc}
-                              </p>
-                            </button>
-                          ))}
+                    {(() => {
+                      const meetingOptions: Array<{
+                        type: MeetingType;
+                        icon: typeof Phone;
+                        label: string;
+                        desc: string;
+                      }> = [];
+                      if (publicBroker.allow_phone) {
+                        meetingOptions.push({
+                          type: "phone",
+                          icon: Phone,
+                          label: "Phone Call",
+                          desc: "We'll call you",
+                        });
+                      }
+                      if (publicBroker.allow_video) {
+                        meetingOptions.push({
+                          type: "video",
+                          icon: Video,
+                          label: "Video Call (Zoom)",
+                          desc: "Zoom meeting",
+                        });
+                      }
+                      if (publicBroker.allow_teams) {
+                        meetingOptions.push({
+                          type: "teams",
+                          icon: Video,
+                          label: "Video Call (Teams)",
+                          desc: "Microsoft Teams meeting",
+                        });
+                      }
+
+                      return meetingOptions.length > 1 ? (
+                        <div className="mb-6">
+                          <p className="text-sm font-medium text-foreground/80 mb-3">
+                            How would you like to connect?
+                          </p>
+                          <div
+                            className={cn(
+                              "grid gap-3",
+                              meetingOptions.length === 2
+                                ? "grid-cols-2"
+                                : "grid-cols-1 md:grid-cols-3",
+                            )}
+                          >
+                            {meetingOptions.map(
+                              ({ type, icon: Icon, label, desc }) => (
+                                <button
+                                  key={type}
+                                  type="button"
+                                  onClick={() => setMeetingType(type)}
+                                  className={cn(
+                                    "rounded-xl border p-4 text-left transition-all",
+                                    meetingType === type
+                                      ? "border-primary bg-primary/10"
+                                      : "border-border hover:border-border/80 bg-muted/30",
+                                  )}
+                                >
+                                  <Icon
+                                    className={cn(
+                                      "h-5 w-5 mb-2",
+                                      meetingType === type
+                                        ? "text-primary"
+                                        : "text-muted-foreground",
+                                    )}
+                                  />
+                                  <p
+                                    className={cn(
+                                      "font-semibold text-sm",
+                                      meetingType === type
+                                        ? "text-foreground"
+                                        : "text-foreground/80",
+                                    )}
+                                  >
+                                    {label}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground mt-0.5">
+                                    {desc}
+                                  </p>
+                                </button>
+                              ),
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      ) : null;
+                    })()}
 
                     {/* Only phone allowed */}
                     {publicBroker.allow_phone && !publicBroker.allow_video && (
@@ -797,6 +853,23 @@ const SchedulerPage: React.FC = () => {
                         </div>
                       </div>
                     )}
+
+                    {!publicBroker.allow_phone &&
+                      !publicBroker.allow_video &&
+                      publicBroker.allow_teams && (
+                        <div className="mb-6 rounded-xl border border-green-500/20 bg-green-500/8 p-4 flex items-center gap-3">
+                          <Video className="h-5 w-5 text-green-400 shrink-0" />
+                          <div>
+                            <p className="font-semibold text-foreground text-sm">
+                              Video Call via Microsoft Teams
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              A Teams link will be sent in your confirmation
+                              email.
+                            </p>
+                          </div>
+                        </div>
+                      )}
 
                     <form onSubmit={formik.handleSubmit} className="space-y-4">
                       <div>
@@ -975,7 +1048,9 @@ const SchedulerPage: React.FC = () => {
                         <span className="text-foreground font-medium">
                           {bookingSuccess.meeting_type === "phone"
                             ? "Phone Call"
-                            : "Video Call"}
+                            : bookingSuccess.meeting_type === "teams"
+                              ? "Video Call (Teams)"
+                              : "Video Call (Zoom)"}
                         </span>
                       </div>
                       <div className="flex items-center gap-3">
@@ -986,14 +1061,19 @@ const SchedulerPage: React.FC = () => {
                       </div>
                     </div>
 
-                    {bookingSuccess.zoom_join_url && (
+                    {(bookingSuccess.teams_join_url ||
+                      bookingSuccess.zoom_join_url) && (
                       <div className="rounded-xl border border-blue-500/20 bg-blue-500/8 p-4 mb-6">
                         <p className="text-sm font-semibold text-blue-400 mb-2 flex items-center gap-1.5">
-                          <Video className="h-4 w-4" /> Zoom Meeting Link
+                          <Video className="h-4 w-4" />
+                          {bookingSuccess.meeting_type === "teams"
+                            ? "Teams Meeting Link"
+                            : "Zoom Meeting Link"}
                         </p>
                         <div className="flex items-center gap-2">
                           <p className="text-xs text-foreground/80 flex-1 break-all">
-                            {bookingSuccess.zoom_join_url}
+                            {bookingSuccess.teams_join_url ||
+                              bookingSuccess.zoom_join_url}
                           </p>
                           <button
                             onClick={handleCopyLink}
@@ -1006,7 +1086,11 @@ const SchedulerPage: React.FC = () => {
                             )}
                           </button>
                           <a
-                            href={bookingSuccess.zoom_join_url}
+                            href={
+                              bookingSuccess.teams_join_url ||
+                              bookingSuccess.zoom_join_url ||
+                              "#"
+                            }
                             target="_blank"
                             rel="noopener noreferrer"
                             className="shrink-0 p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"

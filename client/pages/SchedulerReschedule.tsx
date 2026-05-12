@@ -9,9 +9,12 @@ import {
   Calendar,
   Clock,
 } from "lucide-react";
-import axios from "axios";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { fetchPublicScheduler } from "@/store/slices/schedulerSlice";
+import {
+  fetchPublicScheduler,
+  fetchPublicRescheduleInfo,
+  submitPublicReschedule,
+} from "@/store/slices/schedulerSlice";
 import { ClientDatePicker } from "@/components/ClientDatePicker";
 import { ClientTimePicker } from "@/components/ClientTimePicker";
 
@@ -22,7 +25,7 @@ interface RescheduleInfo {
   client_name: string;
   client_email: string;
   client_phone: string | null;
-  meeting_type: "phone" | "video";
+  meeting_type: "phone" | "video" | "teams";
   old_meeting_date: string;
   old_meeting_time: string;
 }
@@ -32,6 +35,8 @@ interface SuccessInfo {
   meeting_date: string;
   meeting_time: string;
   zoom_join_url: string | null;
+  teams_join_url: string | null;
+  meeting_type: "phone" | "video" | "teams";
   broker_name: string;
 }
 
@@ -55,76 +60,100 @@ export default function SchedulerReschedule() {
   useEffect(() => {
     if (!bookingToken) return;
     // Fetch meeting info first to show a confirmation screen
-    axios
-      .get<{ success: boolean; error?: string } & Partial<RescheduleInfo>>(
-        `/api/public/scheduler/reschedule/${bookingToken}`,
-      )
-      .then(({ data }) => {
-        if (!data.success) {
-          setError(data.error ?? "Booking not found");
-          setStatus("error");
-          return;
-        }
-        if (!data.broker_public_token) {
-          setError("This booking cannot be rescheduled right now.");
-          setStatus("error");
-          return;
-        }
-        setInfo({
-          broker_public_token: data.broker_public_token!,
-          broker_name: data.broker_name ?? null,
-          broker_timezone: data.broker_timezone ?? null,
-          client_name: data.client_name!,
-          client_email: data.client_email!,
-          client_phone: data.client_phone ?? null,
-          meeting_type: (data.meeting_type as "phone" | "video") ?? "phone",
-          old_meeting_date: data.old_meeting_date!,
-          old_meeting_time: data.old_meeting_time!,
-        });
-        // Load public scheduler data for available dates
-        dispatch(fetchPublicScheduler(data.broker_public_token!));
-        setStatus("confirming");
-      })
-      .catch(() => {
-        setError("Could not load booking information. Please try again.");
+    dispatch(fetchPublicRescheduleInfo(bookingToken)).then((result) => {
+      if (fetchPublicRescheduleInfo.rejected.match(result)) {
+        setError(
+          (result.payload as string) ||
+            "Could not load booking information. Please try again.",
+        );
         setStatus("error");
+        return;
+      }
+      const data = result.payload as {
+        success: boolean;
+        error?: string;
+        broker_public_token?: string;
+        broker_name?: string | null;
+        broker_timezone?: string | null;
+        client_name?: string;
+        client_email?: string;
+        client_phone?: string | null;
+        meeting_type?: "phone" | "video" | "teams";
+        old_meeting_date?: string;
+        old_meeting_time?: string;
+      };
+      if (!data.success) {
+        setError(data.error ?? "Booking not found");
+        setStatus("error");
+        return;
+      }
+      if (!data.broker_public_token) {
+        setError("This booking cannot be rescheduled right now.");
+        setStatus("error");
+        return;
+      }
+      setInfo({
+        broker_public_token: data.broker_public_token!,
+        broker_name: data.broker_name ?? null,
+        broker_timezone: data.broker_timezone ?? null,
+        client_name: data.client_name!,
+        client_email: data.client_email!,
+        client_phone: data.client_phone ?? null,
+        meeting_type:
+          (data.meeting_type as "phone" | "video" | "teams") ?? "phone",
+        old_meeting_date: data.old_meeting_date!,
+        old_meeting_time: data.old_meeting_time!,
       });
-  }, [bookingToken]);
+      // Load public scheduler data for available dates
+      dispatch(fetchPublicScheduler(data.broker_public_token!));
+      setStatus("confirming");
+    });
+  }, [bookingToken, dispatch]);
 
   const handleConfirm = async () => {
     if (!info || !bookingToken || !newDate || !newTime) return;
     setStatus("submitting");
-    try {
-      const { data } = await axios.post<{
-        success: boolean;
-        booking_token?: string;
-        meeting_date?: string;
-        meeting_time?: string;
-        zoom_join_url?: string | null;
-        broker_name?: string;
-        error?: string;
-      }>(`/api/public/scheduler/reschedule/${bookingToken}`, {
+    const result = await dispatch(
+      submitPublicReschedule({
+        bookingToken,
         new_date: newDate,
         new_time: newTime,
-      });
-      if (!data.success) {
-        setError(data.error ?? "Failed to reschedule booking");
-        setStatus("error");
-        return;
-      }
-      setSuccessInfo({
-        booking_token: data.booking_token!,
-        meeting_date: data.meeting_date!,
-        meeting_time: data.meeting_time!,
-        zoom_join_url: data.zoom_join_url ?? null,
-        broker_name:
-          data.broker_name ?? info.broker_name ?? "Your Mortgage Banker",
-      });
-      setStatus("success");
-    } catch {
-      setError("Something went wrong. Please try again.");
+      }),
+    );
+    if (submitPublicReschedule.rejected.match(result)) {
+      setError(
+        (result.payload as string) || "Something went wrong. Please try again.",
+      );
       setStatus("error");
+      return;
     }
+    const data = result.payload as {
+      success: boolean;
+      booking_token?: string;
+      meeting_date?: string;
+      meeting_time?: string;
+      zoom_join_url?: string | null;
+      teams_join_url?: string | null;
+      meeting_type?: "phone" | "video" | "teams";
+      broker_name?: string;
+      error?: string;
+    };
+    if (!data.success) {
+      setError(data.error ?? "Failed to reschedule booking");
+      setStatus("error");
+      return;
+    }
+    setSuccessInfo({
+      booking_token: data.booking_token!,
+      meeting_date: data.meeting_date!,
+      meeting_time: data.meeting_time!,
+      zoom_join_url: data.zoom_join_url ?? null,
+      teams_join_url: data.teams_join_url ?? null,
+      meeting_type: data.meeting_type ?? info.meeting_type,
+      broker_name:
+        data.broker_name ?? info.broker_name ?? "Your Mortgage Banker",
+    });
+    setStatus("success");
   };
 
   const formatDate = (d: string) => {
@@ -155,10 +184,12 @@ export default function SchedulerReschedule() {
     return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
   };
 
-  const meetingTypeLabel = (value: "phone" | "video") =>
-    value === "video" ? "Video Call" : "Phone Call";
-
-  const isSubmitting = status === "submitting";
+  const meetingTypeLabel = (value: "phone" | "video" | "teams") =>
+    value === "teams"
+      ? "Video Call (Teams)"
+      : value === "video"
+        ? "Video Call (Zoom)"
+        : "Phone Call";
 
   return (
     <div className="min-h-screen bg-background">
@@ -249,15 +280,21 @@ export default function SchedulerReschedule() {
                     {formatTime(successInfo.meeting_time)}
                   </span>
                 </div>
-                {successInfo.zoom_join_url && (
+                {(successInfo.teams_join_url || successInfo.zoom_join_url) && (
                   <div className="pt-2 border-t border-border">
                     <a
-                      href={successInfo.zoom_join_url}
+                      href={
+                        successInfo.teams_join_url ||
+                        successInfo.zoom_join_url ||
+                        "#"
+                      }
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex items-center justify-center gap-2 w-full h-9 bg-violet-600 text-white rounded-lg text-sm font-medium hover:bg-violet-700 transition-colors"
                     >
-                      Join Video Call
+                      {successInfo.meeting_type === "teams"
+                        ? "Join Teams Call"
+                        : "Join Video Call"}
                     </a>
                   </div>
                 )}
@@ -268,134 +305,138 @@ export default function SchedulerReschedule() {
             </motion.div>
           )}
 
-          {status === "confirming" && info && !isLoadingPublic && (
-            <motion.div
-              key="confirming"
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -16 }}
-              className="w-full max-w-lg space-y-4"
-            >
-              {/* Header */}
-              <div className="rounded-2xl border border-border bg-card p-6 space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="rounded-xl bg-primary/10 p-3">
-                    <CalendarClock className="h-6 w-6 text-primary" />
+          {(status === "confirming" || status === "submitting") &&
+            info &&
+            !isLoadingPublic && (
+              <motion.div
+                key="confirming"
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -16 }}
+                className="w-full max-w-lg space-y-4"
+              >
+                {/* Header */}
+                <div className="rounded-2xl border border-border bg-card p-6 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-xl bg-primary/10 p-3">
+                      <CalendarClock className="h-6 w-6 text-primary" />
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-bold text-foreground">
+                        Reschedule Meeting
+                      </h2>
+                      <p className="text-sm text-muted-foreground">
+                        Choose a new date and time below
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <h2 className="text-xl font-bold text-foreground">
-                      Reschedule Meeting
-                    </h2>
-                    <p className="text-sm text-muted-foreground">
-                      Choose a new date and time below
-                    </p>
-                  </div>
-                </div>
 
-                {/* Current booking summary */}
-                <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-2 text-sm">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                    Current booking
-                  </p>
-                  <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">With</span>
-                    <span className="font-medium text-foreground text-right">
-                      {info.broker_name || "Your Mortgage Banker"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Client</span>
-                    <span className="font-medium text-foreground text-right">
-                      {info.client_name}
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Meeting Type</span>
-                    <span className="font-medium text-foreground text-right">
-                      {meetingTypeLabel(info.meeting_type)}
-                    </span>
-                  </div>
-                  {info.broker_timezone && (
+                  {/* Current booking summary */}
+                  <div className="rounded-xl border border-border bg-muted/30 p-4 space-y-2 text-sm">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+                      Current booking
+                    </p>
                     <div className="flex justify-between gap-3">
-                      <span className="text-muted-foreground">Timezone</span>
+                      <span className="text-muted-foreground">With</span>
                       <span className="font-medium text-foreground text-right">
-                        {info.broker_timezone}
+                        {info.broker_name || "Your Mortgage Banker"}
                       </span>
                     </div>
-                  )}
-                  <div className="flex justify-between border-t border-border/60 pt-2 mt-1">
-                    <span className="text-muted-foreground">Was</span>
-                    <span className="font-medium text-foreground text-right">
-                      {formatDate(info.old_meeting_date)} ·{" "}
-                      {formatTime(info.old_meeting_time)}
-                    </span>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">Client</span>
+                      <span className="font-medium text-foreground text-right">
+                        {info.client_name}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">
+                        Meeting Type
+                      </span>
+                      <span className="font-medium text-foreground text-right">
+                        {meetingTypeLabel(info.meeting_type)}
+                      </span>
+                    </div>
+                    {info.broker_timezone && (
+                      <div className="flex justify-between gap-3">
+                        <span className="text-muted-foreground">Timezone</span>
+                        <span className="font-medium text-foreground text-right">
+                          {info.broker_timezone}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex justify-between border-t border-border/60 pt-2 mt-1">
+                      <span className="text-muted-foreground">Was</span>
+                      <span className="font-medium text-foreground text-right">
+                        {formatDate(info.old_meeting_date)} ·{" "}
+                        {formatTime(info.old_meeting_time)}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* New date + time pickers */}
-              <div className="rounded-2xl border border-border bg-card p-6 space-y-5">
-                <p className="text-sm font-semibold text-foreground">
-                  Pick a new slot
-                </p>
+                {/* New date + time pickers */}
+                <div className="rounded-2xl border border-border bg-card p-6 space-y-5">
+                  <p className="text-sm font-semibold text-foreground">
+                    Pick a new slot
+                  </p>
 
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    <Calendar className="h-3 w-3" />
-                    Date
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <Calendar className="h-3 w-3" />
+                      Date
+                    </div>
+                    <ClientDatePicker
+                      value={newDate}
+                      onChange={(d) => {
+                        setNewDate(d);
+                        setNewTime(""); // reset time when date changes
+                      }}
+                      availableDates={availableDates}
+                      disabled={status === "submitting"}
+                    />
                   </div>
-                  <ClientDatePicker
-                    value={newDate}
-                    onChange={(d) => {
-                      setNewDate(d);
-                      setNewTime(""); // reset time when date changes
-                    }}
-                    availableDates={availableDates}
-                    disabled={isSubmitting}
-                  />
+
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                      <Clock className="h-3 w-3" />
+                      Time
+                    </div>
+                    <ClientTimePicker
+                      date={newDate}
+                      value={newTime}
+                      onChange={setNewTime}
+                      brokerToken={info.broker_public_token}
+                      disabled={status === "submitting"}
+                    />
+                  </div>
                 </div>
 
-                <div className="space-y-2">
-                  <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    <Clock className="h-3 w-3" />
-                    Time
-                  </div>
-                  <ClientTimePicker
-                    date={newDate}
-                    value={newTime}
-                    onChange={setNewTime}
-                    brokerToken={info.broker_public_token}
-                    disabled={isSubmitting}
-                  />
+                {/* Actions */}
+                <div className="flex flex-col gap-3">
+                  <button
+                    onClick={handleConfirm}
+                    disabled={!newDate || !newTime || status === "submitting"}
+                    className="w-full h-12 bg-primary text-primary-foreground rounded-xl font-semibold text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {status === "submitting" ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Rescheduling…
+                      </>
+                    ) : (
+                      "Confirm Reschedule"
+                    )}
+                  </button>
+                  <button
+                    onClick={() => navigate("/")}
+                    disabled={status === "submitting"}
+                    className="w-full h-10 text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                  >
+                    Keep my current appointment
+                  </button>
                 </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex flex-col gap-3">
-                <button
-                  onClick={handleConfirm}
-                  disabled={!newDate || !newTime || isSubmitting}
-                  className="w-full h-12 bg-primary text-primary-foreground rounded-xl font-semibold text-sm hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Rescheduling…
-                    </>
-                  ) : (
-                    "Confirm Reschedule"
-                  )}
-                </button>
-                <button
-                  onClick={() => navigate("/")}
-                  disabled={isSubmitting}
-                  className="w-full h-10 text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-                >
-                  Keep my current appointment
-                </button>
-              </div>
-            </motion.div>
-          )}
+              </motion.div>
+            )}
         </AnimatePresence>
       </div>
     </div>

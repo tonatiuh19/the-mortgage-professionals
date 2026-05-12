@@ -27,12 +27,12 @@ const initialState: ContactSubmissionsState = {
 
 export const fetchContactSubmissions = createAsyncThunk(
   "contactSubmissions/fetchAll",
-  async (params: FetchContactParams = {}, { getState, rejectWithValue }) => {
+  async (params: FetchContactParams | void, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
       const { data } = await axios.get("/api/contact", {
         headers: { Authorization: `Bearer ${sessionToken}` },
-        params,
+        params: params ?? {},
       });
       return {
         submissions: data.submissions as ContactSubmission[],
@@ -41,6 +41,29 @@ export const fetchContactSubmissions = createAsyncThunk(
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.error || "Failed to fetch contact submissions",
+      );
+    }
+  },
+);
+
+interface SubmitContactPayload {
+  name: string;
+  email: string;
+  phone: string | null;
+  subject: string;
+  message: string;
+}
+
+export const submitContactForm = createAsyncThunk(
+  "contactSubmissions/submit",
+  async (payload: SubmitContactPayload, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.post("/api/contact", payload);
+      return data;
+    } catch (error: any) {
+      return rejectWithValue(
+        error?.response?.data?.error ||
+          "Something went wrong. Please try again or call us directly.",
       );
     }
   },

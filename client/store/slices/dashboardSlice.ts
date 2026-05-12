@@ -58,15 +58,19 @@ export const fetchDashboardStats = createAsyncThunk(
 export const fetchBrokerMetrics = createAsyncThunk(
   "dashboard/fetchBrokerMetrics",
   async (
-    params: { year?: number; month?: number; filterBrokerIds?: number[] } = {},
+    params: {
+      year?: number;
+      month?: number;
+      filterBrokerIds?: number[];
+    } | void,
     { getState, rejectWithValue },
   ) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
       const now = new Date();
-      const year = params?.year ?? now.getFullYear();
-      const month = params?.month ?? now.getMonth() + 1;
-      const filterBrokerIds = params?.filterBrokerIds ?? [];
+      const year = (params as any)?.year ?? now.getFullYear();
+      const month = (params as any)?.month ?? now.getMonth() + 1;
+      const filterBrokerIds = (params as any)?.filterBrokerIds ?? [];
       const brokerParam =
         filterBrokerIds.length > 0
           ? `&filter_broker_ids=${filterBrokerIds.join(",")}`
@@ -110,14 +114,14 @@ export const updateBrokerMetrics = createAsyncThunk(
 export const fetchAnnualMetrics = createAsyncThunk(
   "dashboard/fetchAnnualMetrics",
   async (
-    params: { year?: number; filterBrokerIds?: number[] } = {},
+    params: { year?: number; filterBrokerIds?: number[] } | void,
     { getState, rejectWithValue },
   ) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
       const now = new Date();
-      const year = params?.year ?? now.getFullYear();
-      const filterBrokerIds = params?.filterBrokerIds ?? [];
+      const year = (params as any)?.year ?? now.getFullYear();
+      const filterBrokerIds = (params as any)?.filterBrokerIds ?? [];
       const brokerParam =
         filterBrokerIds.length > 0
           ? `&filter_broker_ids=${filterBrokerIds.join(",")}`

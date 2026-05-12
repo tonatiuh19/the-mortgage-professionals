@@ -43,9 +43,10 @@ export interface ClientMeeting {
   meeting_date: string; // "YYYY-MM-DD"
   meeting_time: string; // "HH:MM:SS"
   meeting_end_time: string;
-  meeting_type: "phone" | "video";
+  meeting_type: "phone" | "video" | "teams";
   status: string;
   zoom_join_url: string | null;
+  teams_join_url: string | null;
   notes: string | null;
   booking_token: string;
   cancelled_reason: string | null;

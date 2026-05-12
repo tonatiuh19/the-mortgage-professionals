@@ -38,12 +38,12 @@ const initialState: ClientsState = {
 
 export const fetchClients = createAsyncThunk(
   "clients/fetchClients",
-  async (params: FetchClientsParams = {}, { getState, rejectWithValue }) => {
+  async (params: FetchClientsParams | void, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
       const { data } = await axios.get<GetClientsResponse>("/api/clients", {
         headers: { Authorization: `Bearer ${sessionToken}` },
-        params,
+        params: params ?? {},
       });
       return { clients: data.clients, pagination: data.pagination };
     } catch (error: any) {

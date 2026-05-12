@@ -432,7 +432,8 @@ const Dashboard = () => {
                   className="rounded-xl border border-primary/20 bg-background/60 p-4 flex flex-col sm:flex-row sm:items-center gap-3"
                 >
                   <div className="flex-shrink-0 flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary">
-                    {meeting.meeting_type === "video" ? (
+                    {meeting.meeting_type === "video" ||
+                    meeting.meeting_type === "teams" ? (
                       <Video className="h-5 w-5" />
                     ) : (
                       <Phone className="h-5 w-5" />
@@ -440,9 +441,11 @@ const Dashboard = () => {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-sm">
-                      {meeting.meeting_type === "video"
-                        ? "Zoom Video Call"
-                        : "Phone Call"}{" "}
+                      {meeting.meeting_type === "teams"
+                        ? "Teams Video Call"
+                        : meeting.meeting_type === "video"
+                          ? "Zoom Video Call"
+                          : "Phone Call"}{" "}
                       with{" "}
                       <span className="text-primary">
                         {meeting.broker_name}
@@ -454,16 +457,21 @@ const Dashboard = () => {
                       {formatMeetingTime(meeting.meeting_end_time)}
                     </p>
                   </div>
-                  {meeting.meeting_type === "video" &&
-                    meeting.zoom_join_url && (
+                  {(meeting.meeting_type === "video" ||
+                    meeting.meeting_type === "teams") &&
+                    (meeting.teams_join_url || meeting.zoom_join_url) && (
                       <a
-                        href={meeting.zoom_join_url}
+                        href={
+                          meeting.teams_join_url || meeting.zoom_join_url || "#"
+                        }
                         target="_blank"
                         rel="noopener noreferrer"
                       >
                         <Button size="sm" className="shrink-0">
                           <Video className="h-3.5 w-3.5 mr-1.5" />
-                          Join Zoom
+                          {meeting.meeting_type === "teams"
+                            ? "Join Teams"
+                            : "Join Zoom"}
                         </Button>
                       </a>
                     )}

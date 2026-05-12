@@ -26,6 +26,7 @@ import calendarEventsReducer from "./slices/calendarEventsSlice";
 import clientDetailReducer from "./slices/clientDetailSlice";
 import voiceReducer from "./slices/voiceSlice";
 import realtorProspectingReducer from "./slices/realtorProspectingSlice";
+import emailReducer from "./slices/emailSlice";
 
 export const store = configureStore({
   reducer: {
@@ -56,6 +57,7 @@ export const store = configureStore({
     voice: voiceReducer,
     clientDetail: clientDetailReducer,
     realtorProspecting: realtorProspectingReducer,
+    email: emailReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

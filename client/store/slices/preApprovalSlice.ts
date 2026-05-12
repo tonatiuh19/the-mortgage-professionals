@@ -119,6 +119,37 @@ export const deletePreApprovalLetter = createAsyncThunk(
   },
 );
 
+export interface SendPreApprovalEmailPayload {
+  loanId: number;
+  subject?: string;
+  custom_message?: string;
+  template_id?: number;
+  pdf_base64?: string;
+}
+
+export const sendPreApprovalEmail = createAsyncThunk(
+  "preApproval/sendEmail",
+  async (
+    { loanId, ...body }: SendPreApprovalEmailPayload,
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const state = getState() as RootState;
+      const token = state.brokerAuth.sessionToken;
+      await axios.post(
+        `/api/loans/${loanId}/pre-approval-letter/send-email`,
+        body,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      return { loanId };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to send pre-approval email",
+      );
+    }
+  },
+);
+
 // ── Slice ────────────────────────────────────────────────────────────────────
 
 const preApprovalSlice = createSlice({
