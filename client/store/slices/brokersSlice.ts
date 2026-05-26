@@ -23,14 +23,18 @@ interface BrokersState {
   pagination: PaginationInfo | null;
   isLoading: boolean;
   error: string | null;
-  // Mortgage Bankers (admin-role) list for dropdowns
+  // Operational brokers (admin + loan_officer) for assignment dropdowns
   mortgageBankers: Broker[];
   mortgageBankersLoading: boolean;
   // Selected broker profile (for admin editing)
   selectedBrokerProfile: BrokerProfileDetails | null;
   profileLoading: boolean;
   // Share link for a specific broker (admin view)
-  brokerShareLink: { public_token: string; share_url: string } | null;
+  brokerShareLink: {
+    public_token: string;
+    slug: string | null;
+    share_url: string;
+  } | null;
   shareLinkLoading: boolean;
 }
 
@@ -53,6 +57,7 @@ interface FetchBrokersParams {
   sortBy?: string;
   sortOrder?: "ASC" | "DESC";
   search?: string;
+  role?: string;
 }
 
 export const fetchBrokers = createAsyncThunk(
@@ -206,7 +211,7 @@ export const uploadBrokerAvatarByAdmin = createAsyncThunk(
   },
 );
 
-/** Fetch all active Mortgage Bankers (role=admin) for dropdowns — stored separately from the main paginated list */
+/** Fetch all active operational brokers (admin + loan_officer) for assignment dropdowns — stored separately from the main paginated list */
 export const fetchMortgageBankers = createAsyncThunk(
   "brokers/fetchMortgageBankers",
   async (_, { getState, rejectWithValue }) => {
@@ -214,12 +219,12 @@ export const fetchMortgageBankers = createAsyncThunk(
       const { sessionToken } = (getState() as RootState).brokerAuth;
       const { data } = await axios.get<GetBrokersResponse>("/api/brokers", {
         headers: { Authorization: `Bearer ${sessionToken}` },
-        params: { role: "admin", limit: 100 },
+        params: { role: "admin,loan_officer", limit: 200 },
       });
       return data.brokers;
     } catch (error: any) {
       return rejectWithValue(
-        error.response?.data?.error || "Failed to fetch mortgage bankers",
+        error.response?.data?.error || "Failed to fetch operational brokers",
       );
     }
   },
@@ -406,6 +411,7 @@ const brokersSlice = createSlice({
         state.shareLinkLoading = false;
         state.brokerShareLink = {
           public_token: action.payload.public_token,
+          slug: action.payload.slug ?? null,
           share_url: action.payload.share_url,
         };
       })
@@ -421,6 +427,7 @@ const brokersSlice = createSlice({
         state.shareLinkLoading = false;
         state.brokerShareLink = {
           public_token: action.payload.public_token,
+          slug: action.payload.slug ?? null,
           share_url: action.payload.share_url,
         };
       })

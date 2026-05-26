@@ -71,6 +71,7 @@ import { fetchTasks } from "@/store/slices/tasksSlice";
 import { fetchBrokers } from "@/store/slices/brokersSlice";
 import ShareLinkModal from "@/components/ShareLinkModal";
 import type { GetClientsResponse, TaskTemplate } from "@shared/api";
+import { isAdminRole } from "@shared/api";
 
 interface NewLoanWizardProps {
   open: boolean;
@@ -245,7 +246,7 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
       dispatch(fetchClients());
       dispatch(fetchTasks());
       // Fetch brokers if admin
-      if (user && (user.role === "admin" || user.role === "superadmin")) {
+      if (user && isAdminRole(user.role)) {
         dispatch(fetchBrokers());
       }
       // Set default broker assignment to current user
@@ -465,7 +466,7 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
     { number: 5, title: "Review", icon: User },
   ];
 
-  const isAdmin = user?.role === "admin" || user?.role === "superadmin";
+  const isAdmin = isAdminRole(user?.role);
 
   // Available active task templates
   const activeTemplates = taskTemplates.filter((t) => t.is_active);

@@ -40,6 +40,7 @@ export const fetchDashboardStats = createAsyncThunk(
   async (_, { getState, rejectWithValue }) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
+      if (!sessionToken) return rejectWithValue("No session");
       const { data } = await axios.get<GetDashboardStatsResponse>(
         "/api/dashboard/stats",
         {
@@ -67,6 +68,7 @@ export const fetchBrokerMetrics = createAsyncThunk(
   ) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
+      if (!sessionToken) return rejectWithValue("No session");
       const now = new Date();
       const year = (params as any)?.year ?? now.getFullYear();
       const month = (params as any)?.month ?? now.getMonth() + 1;
@@ -81,6 +83,8 @@ export const fetchBrokerMetrics = createAsyncThunk(
       );
       return data.metrics;
     } catch (error: any) {
+      if (error.response?.status === 401)
+        return rejectWithValue("UNAUTHORIZED");
       return rejectWithValue(
         error.response?.data?.error || "Failed to fetch broker metrics",
       );
@@ -119,6 +123,7 @@ export const fetchAnnualMetrics = createAsyncThunk(
   ) => {
     try {
       const { sessionToken } = (getState() as RootState).brokerAuth;
+      if (!sessionToken) return rejectWithValue("No session");
       const now = new Date();
       const year = (params as any)?.year ?? now.getFullYear();
       const filterBrokerIds = (params as any)?.filterBrokerIds ?? [];
@@ -132,6 +137,8 @@ export const fetchAnnualMetrics = createAsyncThunk(
       );
       return data.annual;
     } catch (error: any) {
+      if (error.response?.status === 401)
+        return rejectWithValue("UNAUTHORIZED");
       return rejectWithValue(
         error.response?.data?.error || "Failed to fetch annual metrics",
       );

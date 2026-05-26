@@ -66,6 +66,7 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { logger } from "@/lib/logger";
 import type { PreApprovalLetter } from "@shared/api";
+import { isAdminRole, isPartnerRole } from "@shared/api";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Placeholder rendering logic
@@ -271,8 +272,8 @@ export function PreApprovalLetterModal({
     (state) => state.communicationTemplates,
   );
 
-  const isAdmin = user?.role === "admin" || user?.role === "superadmin";
-  const isPartner = user?.role === "broker";
+  const isAdmin = isAdminRole(user?.role);
+  const isPartner = isPartnerRole(user?.role ?? "");
   const isLoading = loadingLoanIds.includes(loanId);
   const isSaving = savingLoanIds.includes(loanId);
 

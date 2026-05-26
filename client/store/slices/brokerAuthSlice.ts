@@ -7,6 +7,7 @@ import type {
   GetBrokerProfileResponse,
   UpdateBrokerProfileRequest,
   UpdateBrokerProfileResponse,
+  BrokerRole,
 } from "@shared/api";
 
 interface BrokerUser {
@@ -15,7 +16,7 @@ interface BrokerUser {
   first_name: string;
   last_name: string;
   phone?: string;
-  role: string;
+  role: BrokerRole;
   tenant_id: number;
   status: "active" | "inactive" | "suspended";
   license_number?: string;
@@ -23,6 +24,7 @@ interface BrokerUser {
   email_verified: boolean;
   last_login?: string;
   public_token?: string | null;
+  slug?: string | null;
   timezone?: string;
   // profile fields
   avatar_url?: string | null;

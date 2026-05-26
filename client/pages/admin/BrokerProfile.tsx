@@ -25,6 +25,8 @@ import {
   Plus,
   Voicemail,
   Volume2,
+  Link2,
+  XCircle,
 } from "lucide-react";
 import { MetaHelmet } from "@/components/MetaHelmet";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -52,7 +54,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { ConversationMailbox } from "@shared/api";
+import type { ConversationMailbox, BrokerRole } from "@shared/api";
+import { ROLE_LABELS } from "@shared/api";
 
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
@@ -60,7 +63,13 @@ import {
   updateBrokerProfile,
   uploadBrokerAvatar,
   clearProfileError,
+  setUser,
 } from "@/store/slices/brokerAuthSlice";
+import {
+  checkSlug,
+  updateSlug,
+  fetchO365CalendarStatus,
+} from "@/store/slices/schedulerSlice";
 import {
   connectOffice365Mailbox,
   disconnectConversationMailbox,
@@ -88,6 +97,11 @@ const TIMEZONES = [
     value: "America/Chicago",
     label: "Central Time (CT)",
     cities: "Chicago, Dallas, Houston",
+  },
+  {
+    value: "America/Mexico_City",
+    label: "Central Time – no DST (CT)",
+    cities: "Mexico City, Guadalajara, Monterrey",
   },
   {
     value: "America/Denver",
@@ -202,6 +216,17 @@ const BrokerProfile = () => {
   // ── Voicemail settings ─────────────────────────────────────────────
   const [vmLoading, setVmLoading] = useState(false);
   const [vmSaving, setVmSaving] = useState(false);
+
+  // ── Slug editor state ────────────────────────────────────────────────────
+  const [slugInput, setSlugInput] = useState("");
+  const [slugAvailable, setSlugAvailable] = useState<boolean | null>(null);
+  const [slugChecking, setSlugChecking] = useState(false);
+  const [slugSaving, setSlugSaving] = useState(false);
+
+  // Sync slugInput when user data loads
+  useEffect(() => {
+    if (user?.slug) setSlugInput(user.slug);
+  }, [user?.slug]);
   const [vmData, setVmData] = useState<VoicemailSettingsResponse | null>(null);
   // null = "inherit tenant default"
   const [vmEnabled, setVmEnabled] = useState<boolean | null>(null);
@@ -217,9 +242,7 @@ const BrokerProfile = () => {
   // ── Email mailbox state ──────────────────────────────────────────────────
   const myMailbox = useAppSelector((s) =>
     (s.conversations.mailboxes as ConversationMailbox[]).find(
-      (m) =>
-        m.assigned_broker_id === user?.id ||
-        (m.is_shared && m.status === "active"),
+      (m) => m.assigned_broker_id === user?.id,
     ),
   );
   const myOwnMailbox = useAppSelector((s) =>
@@ -248,7 +271,6 @@ const BrokerProfile = () => {
       const result = await dispatch(
         connectOffice365Mailbox({
           mailbox_email: email,
-          is_shared: false,
           return_path: "/admin/profile",
         }),
       ).unwrap();
@@ -268,6 +290,8 @@ const BrokerProfile = () => {
     setIsDisconnecting(true);
     try {
       await dispatch(disconnectConversationMailbox(mailboxId)).unwrap();
+      // Reset calendar sync state immediately so the sync card disappears
+      dispatch(fetchO365CalendarStatus());
       toast({
         title: "Mailbox disconnected",
         description: "You can connect a new account at any time.",
@@ -491,6 +515,45 @@ const BrokerProfile = () => {
     },
   });
 
+  // ── Slug handlers ──────────────────────────────────────────────────────────
+  const handleSlugInputChange = (value: string) => {
+    const normalized = value.toLowerCase().replace(/[^a-z0-9-]/g, "");
+    setSlugInput(normalized);
+    setSlugAvailable(null);
+    if (normalized.length >= 3 && normalized !== user?.slug) {
+      setSlugChecking(true);
+      dispatch(checkSlug(normalized))
+        .unwrap()
+        .then((res) => setSlugAvailable(res.available))
+        .catch(() => setSlugAvailable(null))
+        .finally(() => setSlugChecking(false));
+    } else if (normalized === user?.slug) {
+      // Same as current — already theirs
+      setSlugAvailable(true);
+    }
+  };
+
+  const handleSaveSlug = async () => {
+    if (!slugAvailable || slugInput.length < 3 || slugSaving) return;
+    setSlugSaving(true);
+    try {
+      const res = await dispatch(updateSlug(slugInput)).unwrap();
+      dispatch(setUser({ ...user!, slug: res.slug }));
+      toast({
+        title: "URL slug updated",
+        description: `Your links now use /${res.slug}`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Update failed",
+        description: err || "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSlugSaving(false);
+    }
+  };
+
   const handleAvatarUpload = async (file: File) => {
     const result = await dispatch(uploadBrokerAvatar(file));
     if (uploadBrokerAvatar.fulfilled.match(result)) {
@@ -629,7 +692,7 @@ const BrokerProfile = () => {
                         variant="secondary"
                         className="text-xs bg-primary/10 text-primary border-0"
                       >
-                        {user?.role === "admin" ? "Mortgage Banker" : "Partner"}
+                        {ROLE_LABELS[user?.role as BrokerRole] ?? "Partner"}
                       </Badge>
                     </div>
                     {user?.email && (
@@ -990,142 +1053,14 @@ const BrokerProfile = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-5">
-                {fwdLoading ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Loading settings…
-                  </div>
-                ) : (
-                  <>
-                    {/* Forward Calls to — checkboxes */}
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium text-foreground">
-                        Forward Calls to
-                      </p>
-                      <div className="grid sm:grid-cols-2 gap-3">
-                        {/* Browser — always on */}
-                        <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10">
-                            <Monitor className="h-4 w-4 text-primary" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium">
-                              Browser (Web App)
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              Always rings in the CRM
-                            </p>
-                          </div>
-                          <Badge
-                            variant="secondary"
-                            className="text-[10px] bg-green-100 text-green-700 border-0 shrink-0"
-                          >
-                            Always on
-                          </Badge>
-                        </div>
-
-                        {/* My Phone Number — toggle */}
-                        <div
-                          className={cn(
-                            "flex items-center gap-3 rounded-lg border px-4 py-3 transition-colors",
-                            fwdEnabled
-                              ? "border-primary/40 bg-primary/5"
-                              : "border-border bg-background",
-                          )}
-                        >
-                          <div
-                            className={cn(
-                              "flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors",
-                              fwdEnabled ? "bg-primary/15" : "bg-muted",
-                            )}
-                          >
-                            <Smartphone
-                              className={cn(
-                                "h-4 w-4",
-                                fwdEnabled
-                                  ? "text-primary"
-                                  : "text-muted-foreground",
-                              )}
-                            />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium">
-                              My Phone Number
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              Ring my personal cell
-                            </p>
-                          </div>
-                          <Switch
-                            checked={fwdEnabled}
-                            onCheckedChange={setFwdEnabled}
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Forwarding number input — shown when enabled */}
-                    <div
-                      className={cn(
-                        "overflow-hidden transition-all duration-300",
-                        fwdEnabled
-                          ? "max-h-40 opacity-100"
-                          : "max-h-0 opacity-0 pointer-events-none",
-                      )}
-                    >
-                      <div className="space-y-1.5">
-                        <Label htmlFor="fwd_phone">Forwarding Number</Label>
-                        <div className="relative">
-                          <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                          <Input
-                            id="fwd_phone"
-                            value={fwdPhone}
-                            onChange={(e) => setFwdPhone(e.target.value)}
-                            placeholder="+1 (555) 000-0000"
-                            className="pl-9"
-                          />
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Enter your personal cell. Defaults to your profile
-                          phone if left blank.
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Info banner */}
-                    <div className="flex items-start gap-2.5 rounded-lg bg-blue-50 border border-blue-100 px-3.5 py-3">
-                      <Zap className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
-                      <p className="text-xs text-blue-700">
-                        When enabled, incoming calls ring your browser{" "}
-                        <strong>and</strong> your personal phone simultaneously.
-                        Answering on either one lets you handle the call.
-                      </p>
-                    </div>
-
-                    {/* Save button */}
-                    <div className="flex justify-end">
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="gap-2"
-                        onClick={saveForwarding}
-                        disabled={fwdSaving}
-                      >
-                        {fwdSaving ? (
-                          <>
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            Saving…
-                          </>
-                        ) : (
-                          <>
-                            <Save className="h-3.5 w-3.5" />
-                            Save Settings
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </>
-                )}
+                <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/50 px-4 py-3">
+                  <PhoneForwarded className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                  <p className="text-sm text-amber-800">
+                    Call &amp; voicemail settings are temporarily unavailable.
+                    This section will be re-enabled once phone features are
+                    fully configured.
+                  </p>
+                </div>
               </CardContent>
             </Card>
 
@@ -1157,13 +1092,21 @@ const BrokerProfile = () => {
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-muted-foreground">
-                          {vmEnabled === false ? "Disabled" : "Enabled"}
+                          {vmEnabled === null
+                            ? vmData?.tenant.voicemail_enabled
+                              ? "Enabled (team default)"
+                              : "Disabled (team default)"
+                            : vmEnabled
+                              ? "Enabled"
+                              : "Disabled"}
                         </span>
                         <Switch
-                          checked={vmEnabled !== false}
-                          onCheckedChange={(v) =>
-                            setVmEnabled(v ? true : false)
+                          checked={
+                            vmEnabled === null
+                              ? !!vmData?.tenant.voicemail_enabled
+                              : vmEnabled
                           }
+                          onCheckedChange={(v) => setVmEnabled(v)}
                         />
                       </div>
                     </div>
@@ -1347,157 +1290,7 @@ const BrokerProfile = () => {
               </Card>
             ) : null}
 
-            {/* Email Mailbox */}
-            <Card className={!user?.office365_enabled ? "opacity-60" : ""}>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Mail className="h-4 w-4 text-primary" />
-                  Email Inbox
-                  {!user?.office365_enabled && (
-                    <span className="ml-auto text-[10px] font-normal bg-muted text-muted-foreground rounded px-2 py-0.5 tracking-wide uppercase">
-                      Not configured
-                    </span>
-                  )}
-                </CardTitle>
-                <CardDescription>
-                  {user?.office365_enabled
-                    ? "Connect your Office 365 mailbox so emails you send and receive in Conversations route through your personal address."
-                    : "Office 365 integration is not yet configured for this platform. Contact your administrator to set up the Azure app credentials."}
-                </CardDescription>
-              </CardHeader>
-              {user?.office365_enabled && (
-                <CardContent className="space-y-4">
-                  {isLoadingMailboxes ? (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Loading…
-                    </div>
-                  ) : myOwnMailbox ? (
-                    /* Connected — show status + sync */
-                    <div className="flex items-center gap-3 rounded-lg border border-border px-4 py-3">
-                      <div
-                        className={cn(
-                          "h-2.5 w-2.5 rounded-full shrink-0",
-                          myOwnMailbox.status === "active"
-                            ? "bg-green-500"
-                            : myOwnMailbox.status === "error"
-                              ? "bg-red-500"
-                              : "bg-yellow-400",
-                        )}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">
-                          {myOwnMailbox.mailbox_email}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground">
-                          {myOwnMailbox.status === "active"
-                            ? myOwnMailbox.last_sync_at
-                              ? `Last synced ${new Date(myOwnMailbox.last_sync_at).toLocaleString()}`
-                              : "Connected — not yet synced"
-                            : myOwnMailbox.status === "error"
-                              ? myOwnMailbox.last_sync_error || "Sync error"
-                              : myOwnMailbox.status === "disabled"
-                                ? "Disconnected — click Connect to re-link"
-                                : "Pending authorization"}
-                        </p>
-                      </div>
-                      {myOwnMailbox.status === "active" && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 gap-1.5 text-xs shrink-0"
-                          onClick={() => handleSyncMyMailbox(myOwnMailbox.id)}
-                          disabled={isSyncingMyMailbox}
-                        >
-                          <RefreshCw
-                            className={cn(
-                              "h-3.5 w-3.5",
-                              isSyncingMyMailbox && "animate-spin",
-                            )}
-                          />
-                          Sync now
-                        </Button>
-                      )}
-                      {(myOwnMailbox.status === "pending" ||
-                        myOwnMailbox.status === "disabled" ||
-                        myOwnMailbox.status === "error") && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 text-xs shrink-0"
-                          onClick={() =>
-                            handleConnectMyMailbox(myOwnMailbox.mailbox_email)
-                          }
-                          disabled={isConnectingMailbox}
-                        >
-                          {myOwnMailbox.status === "disabled"
-                            ? "Connect"
-                            : "Re-authorize"}
-                        </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 text-xs shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-                        onClick={() =>
-                          handleDisconnectMyMailbox(myOwnMailbox.id)
-                        }
-                        disabled={isDisconnecting}
-                      >
-                        {isDisconnecting ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          "Disconnect"
-                        )}
-                      </Button>
-                    </div>
-                  ) : (
-                    /* Not connected — show connect form */
-                    <div className="space-y-3">
-                      <div className="flex gap-2">
-                        <div className="relative flex-1">
-                          <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                          <Input
-                            type="email"
-                            placeholder="yourname@themortgageprofessionals.net"
-                            value={mailboxEmailInput}
-                            onChange={(e) =>
-                              setMailboxEmailInput(e.target.value)
-                            }
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") handleConnectMyMailbox();
-                            }}
-                            className="pl-9 h-9 text-sm"
-                          />
-                        </div>
-                        <Button
-                          size="sm"
-                          className="h-9 gap-1.5 shrink-0"
-                          onClick={() => handleConnectMyMailbox()}
-                          disabled={
-                            isConnectingMailbox ||
-                            !mailboxEmailInput.trim().includes("@")
-                          }
-                        >
-                          {isConnectingMailbox ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <>
-                              <Plus className="h-3.5 w-3.5" />
-                              Connect
-                            </>
-                          )}
-                        </Button>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground">
-                        You'll be redirected to Microsoft to authorize access.
-                        Make sure the address is a valid Office 365 account.
-                      </p>
-                    </div>
-                  )}
-                </CardContent>
-              )}
-            </Card>
+            {/* Email Mailbox — hidden until O365 is configured */}
 
             {/* Office Address */}
             <Card>
@@ -1562,6 +1355,125 @@ const BrokerProfile = () => {
                       />
                     </div>
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Public URL Slug */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Link2 className="h-4 w-4 text-primary" />
+                  Public URL Slug
+                </CardTitle>
+                <CardDescription>
+                  Personalise your public-facing links. Both{" "}
+                  <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                    /apply/
+                  </code>{" "}
+                  and{" "}
+                  <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                    /scheduler/
+                  </code>{" "}
+                  will use this slug. UUID links continue to work.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Current URLs preview */}
+                <div className="rounded-lg border border-border bg-muted/30 divide-y divide-border text-xs">
+                  {[
+                    { label: "Scheduler", path: "/scheduler/" },
+                    { label: "Apply", path: "/apply/" },
+                  ].map(({ label, path }) => (
+                    <div
+                      key={path}
+                      className="flex items-center gap-2 px-4 py-2.5"
+                    >
+                      <span className="text-muted-foreground w-16 shrink-0">
+                        {label}
+                      </span>
+                      <span className="font-mono text-foreground/80 truncate">
+                        {window.location.origin}
+                        {path}
+                        <span className="text-primary font-semibold">
+                          {user?.slug ?? user?.public_token ?? "…"}
+                        </span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Slug input */}
+                <div className="space-y-2">
+                  <Label htmlFor="slug_input">Custom slug</Label>
+                  <div className="flex items-center gap-2">
+                    <div className="flex flex-1 items-center rounded-lg border border-border bg-background overflow-hidden focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-0">
+                      <span className="px-3 text-xs text-muted-foreground border-r border-border py-2.5 shrink-0 bg-muted/40 select-none">
+                        /apply/
+                      </span>
+                      <input
+                        id="slug_input"
+                        className="flex-1 px-3 py-2.5 text-sm bg-transparent outline-none placeholder:text-muted-foreground"
+                        placeholder={user?.slug ?? "your-slug"}
+                        value={slugInput}
+                        onChange={(e) => handleSlugInputChange(e.target.value)}
+                        maxLength={48}
+                      />
+                      <span className="px-3">
+                        {slugChecking && (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                        )}
+                        {!slugChecking && slugAvailable === true && (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-green-400" />
+                        )}
+                        {!slugChecking && slugAvailable === false && (
+                          <XCircle className="h-3.5 w-3.5 text-red-400" />
+                        )}
+                      </span>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={
+                        !slugAvailable ||
+                        slugInput.length < 3 ||
+                        slugSaving ||
+                        slugInput === user?.slug
+                      }
+                      onClick={handleSaveSlug}
+                      className="shrink-0 gap-1.5"
+                    >
+                      {slugSaving ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Save className="h-3.5 w-3.5" />
+                      )}
+                      Save
+                    </Button>
+                  </div>
+
+                  {/* Availability feedback */}
+                  {slugAvailable === false && (
+                    <p className="text-xs text-destructive flex items-center gap-1">
+                      <XCircle className="h-3 w-3" />
+                      That slug is already taken. Try a different one.
+                    </p>
+                  )}
+                  {slugAvailable === true && slugInput !== user?.slug && (
+                    <p className="text-xs text-green-500 flex items-center gap-1">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Available!
+                    </p>
+                  )}
+                  {slugInput === user?.slug && (
+                    <p className="text-xs text-muted-foreground">
+                      This is your current slug.
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    3–48 characters. Lowercase letters, numbers, and hyphens
+                    only.
+                  </p>
                 </div>
               </CardContent>
             </Card>

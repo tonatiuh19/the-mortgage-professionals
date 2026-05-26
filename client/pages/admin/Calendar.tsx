@@ -8,6 +8,9 @@ import {
   Plus,
   Settings2,
   RefreshCw,
+  CloudDownload,
+  Wifi,
+  Mail,
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
@@ -104,9 +107,9 @@ import {
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { ZOOM_ENABLED } from "@/lib/channelAvailability";
 import {
   fetchSchedulerSettings,
-  fetchTeamsEligibility,
   updateSchedulerSettings,
   fetchScheduledMeetings,
   updateScheduledMeeting,
@@ -115,6 +118,8 @@ import {
   fetchBlockedRanges,
   addBlockedRange,
   deleteBlockedRange,
+  fetchO365CalendarStatus,
+  syncO365Calendar,
 } from "@/store/slices/schedulerSlice";
 import {
   fetchCalendarEvents,
@@ -134,11 +139,13 @@ import type {
   CalendarEvent,
   CalendarEventType,
   CreateCalendarEventRequest,
+  SchedulerBlockedRange,
 } from "@shared/api";
 import { useFormik } from "formik";
 import * as Yup from "yup";
 import { BrokerDatePicker } from "@/components/BrokerDatePicker";
 import { BrokerTimePicker } from "@/components/BrokerTimePicker";
+import { getSharedAblyClient } from "@/lib/ably-client";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -152,52 +159,6 @@ const DAY_NAMES = [
   "Saturday",
 ];
 const DAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
-
-const TIMEZONES = [
-  {
-    value: "America/New_York",
-    label: "Eastern Time",
-    cities: "New York, Miami, Atlanta",
-  },
-  {
-    value: "America/Chicago",
-    label: "Central Time",
-    cities: "Chicago, Dallas, Houston",
-  },
-  {
-    value: "America/Denver",
-    label: "Mountain Time",
-    cities: "Denver, Salt Lake City",
-  },
-  {
-    value: "America/Phoenix",
-    label: "Mountain (no DST)",
-    cities: "Phoenix, Tucson",
-  },
-  {
-    value: "America/Los_Angeles",
-    label: "Pacific Time",
-    cities: "Los Angeles, Seattle, Las Vegas",
-  },
-  {
-    value: "America/Anchorage",
-    label: "Alaska Time",
-    cities: "Anchorage, Fairbanks",
-  },
-  { value: "Pacific/Honolulu", label: "Hawaii Time", cities: "Honolulu, Maui" },
-];
-
-function tzOffset(tz: string): string {
-  try {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      timeZoneName: "shortOffset",
-    }).formatToParts(new Date());
-    return parts.find((p) => p.type === "timeZoneName")?.value ?? "";
-  } catch {
-    return "";
-  }
-}
 
 const STATUS_CONFIG: Record<
   MeetingStatus,
@@ -666,7 +627,7 @@ function MeetingCard({
               ) : (
                 <>
                   <Video className="h-3 w-3" />
-                  {meeting.meeting_type === "teams" ? "Teams" : "Video"}
+                  {"Video"}
                 </>
               )}
             </span>
@@ -696,8 +657,7 @@ function MeetingCard({
               "{meeting.notes}"
             </p>
           )}
-          {(meeting.meeting_type === "video" ||
-            meeting.meeting_type === "teams") &&
+          {meeting.meeting_type !== "phone" &&
             (meeting.teams_join_url || meeting.zoom_join_url) && (
               <a
                 href={meeting.teams_join_url || meeting.zoom_join_url || "#"}
@@ -707,7 +667,7 @@ function MeetingCard({
                 className="inline-flex items-center gap-1 mt-2 text-xs text-blue-500 hover:text-blue-400 font-medium"
               >
                 <Video className="h-3 w-3" />
-                {meeting.meeting_type === "teams" ? "Join Teams" : "Join Zoom"}
+                Join Meeting
               </a>
             )}
         </div>
@@ -811,6 +771,7 @@ function EventCard({
 function UnifiedCalendarView({
   meetings,
   events,
+  blockedRanges,
   onEditMeeting,
   onEditEvent,
   viewDate,
@@ -818,6 +779,7 @@ function UnifiedCalendarView({
 }: {
   meetings: ScheduledMeeting[];
   events: CalendarEvent[];
+  blockedRanges: SchedulerBlockedRange[];
   onEditMeeting: (m: ScheduledMeeting) => void;
   onEditEvent: (e: CalendarEvent) => void;
   viewDate: Date;
@@ -863,6 +825,13 @@ function UnifiedCalendarView({
     ? (meetingsByDate[selectedKey] ?? [])
     : [];
   const selectedEvents = selectedKey ? (eventsByDate[selectedKey] ?? []) : [];
+  const selectedBlocked = selectedKey
+    ? blockedRanges.filter(
+        (br) =>
+          selectedKey >= br.start_datetime.slice(0, 10) &&
+          selectedKey <= br.end_datetime.slice(0, 10),
+      )
+    : [];
 
   return (
     <div className="flex flex-col h-full gap-2 sm:gap-3">
@@ -906,7 +875,16 @@ function UnifiedCalendarView({
           const key = format(day, "yyyy-MM-dd");
           const dayMeetings = meetingsByDate[key] ?? [];
           const dayEvents = eventsByDate[key] ?? [];
-          const hasItems = dayMeetings.length > 0 || dayEvents.length > 0;
+          // Blocked ranges that overlap this calendar day (string comparison is safe for YYYY-MM-DD)
+          const dayBlocked = blockedRanges.filter(
+            (br) =>
+              key >= br.start_datetime.slice(0, 10) &&
+              key <= br.end_datetime.slice(0, 10),
+          );
+          const hasItems =
+            dayMeetings.length > 0 ||
+            dayEvents.length > 0 ||
+            dayBlocked.length > 0;
           const isSelected = selectedDay ? isSameDay(day, selectedDay) : false;
           const todayFlag = isToday(day);
 
@@ -960,9 +938,25 @@ function UnifiedCalendarView({
                         )}
                       />
                     ))}
-                    {dayMeetings.length + dayEvents.length > 5 && (
+                    {dayBlocked.slice(0, 1).map((br) => (
+                      <span
+                        key={`bl-${br.id}`}
+                        className={cn(
+                          "w-1.5 h-1.5 rounded-sm shrink-0",
+                          br.source === "o365"
+                            ? "bg-blue-400"
+                            : "bg-orange-400",
+                        )}
+                      />
+                    ))}
+                    {dayMeetings.length + dayEvents.length + dayBlocked.length >
+                      5 && (
                       <span className="text-[9px] text-muted-foreground leading-none">
-                        +{dayMeetings.length + dayEvents.length - 5}
+                        +
+                        {dayMeetings.length +
+                          dayEvents.length +
+                          dayBlocked.length -
+                          5}
                       </span>
                     )}
                   </div>
@@ -999,9 +993,36 @@ function UnifiedCalendarView({
                         </span>
                       );
                     })}
-                    {dayMeetings.length + dayEvents.length > 3 && (
+                    {dayBlocked.slice(0, 1).map((br) => (
+                      <span
+                        key={`bl-${br.id}`}
+                        className={cn(
+                          "flex items-center gap-1 text-[10px] leading-tight rounded-sm px-1 py-0.5 truncate w-full",
+                          br.source === "o365"
+                            ? "bg-blue-500/15 text-blue-400"
+                            : "bg-orange-500/15 text-orange-400",
+                        )}
+                      >
+                        {br.source === "o365" ? (
+                          <Mail className="h-2.5 w-2.5 shrink-0" />
+                        ) : (
+                          <Lock className="h-2.5 w-2.5 shrink-0" />
+                        )}
+                        <span className="truncate">
+                          {br.label ??
+                            (br.source === "o365" ? "Outlook" : "Blocked")}
+                        </span>
+                      </span>
+                    ))}
+                    {dayMeetings.length + dayEvents.length + dayBlocked.length >
+                      3 && (
                       <span className="text-[10px] text-muted-foreground pl-1">
-                        +{dayMeetings.length + dayEvents.length - 3} more
+                        +
+                        {dayMeetings.length +
+                          dayEvents.length +
+                          dayBlocked.length -
+                          3}{" "}
+                        more
                       </span>
                     )}
                   </div>
@@ -1016,6 +1037,12 @@ function UnifiedCalendarView({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 border-t border-border/20">
         <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
           <span className="w-2 h-2 rounded-full bg-primary" /> Meeting
+        </span>
+        <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          <span className="w-2 h-2 rounded-sm bg-blue-400" /> Outlook
+        </span>
+        <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          <span className="w-2 h-2 rounded-sm bg-orange-400" /> Blocked
         </span>
         {(
           Object.entries(EVENT_TYPE_CONFIG) as [
@@ -1036,16 +1063,27 @@ function UnifiedCalendarView({
       {/* Selected day detail — slides in below legend without disrupting the grid */}
       <AnimatePresence>
         {selectedDay &&
-          (selectedMeetings.length > 0 || selectedEvents.length > 0) && (
+          (selectedMeetings.length > 0 ||
+            selectedEvents.length > 0 ||
+            selectedBlocked.length > 0) && (
             <motion.div
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               className="rounded-xl border border-border/50 bg-muted/20 p-3 space-y-2"
             >
-              <h4 className="font-semibold text-foreground text-sm">
-                {format(selectedDay, "EEEE, MMMM d")}
-              </h4>
+              <div className="flex items-center justify-between">
+                <h4 className="font-semibold text-foreground text-sm">
+                  {format(selectedDay, "EEEE, MMMM d")}
+                </h4>
+                <button
+                  onClick={() => setSelectedDay(null)}
+                  className="p-1 rounded-md hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label="Close"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
               {selectedMeetings.map((m) => (
                 <div
                   key={`m-${m.id}`}
@@ -1062,14 +1100,9 @@ function UnifiedCalendarView({
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {formatTime(m.meeting_time)} ·{" "}
-                      {m.meeting_type === "phone"
-                        ? "Phone"
-                        : m.meeting_type === "teams"
-                          ? "Video (Teams)"
-                          : "Video (Zoom)"}
+                      {m.meeting_type === "phone" ? "Phone" : "Video"}
                     </p>
-                    {(m.meeting_type === "video" ||
-                      m.meeting_type === "teams") &&
+                    {m.meeting_type !== "phone" &&
                       (m.teams_join_url || m.zoom_join_url) && (
                         <a
                           href={m.teams_join_url || m.zoom_join_url || "#"}
@@ -1079,9 +1112,7 @@ function UnifiedCalendarView({
                           className="inline-flex items-center gap-1 text-xs text-blue-500 hover:text-blue-400 mt-0.5"
                         >
                           <Video className="h-3 w-3" />
-                          {m.meeting_type === "teams"
-                            ? "Join Teams"
-                            : "Join Zoom"}
+                          Join Meeting
                         </a>
                       )}
                   </div>
@@ -1132,13 +1163,78 @@ function UnifiedCalendarView({
                   </div>
                 );
               })}
+              {selectedBlocked.map((br) => {
+                const isO365 = br.source === "o365";
+                const startTime = br.start_datetime
+                  ? new Date(
+                      br.start_datetime.replace(" ", "T") +
+                        (br.start_datetime.endsWith("Z") ? "" : "Z"),
+                    ).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                  : null;
+                const endTime = br.end_datetime
+                  ? new Date(
+                      br.end_datetime.replace(" ", "T") +
+                        (br.end_datetime.endsWith("Z") ? "" : "Z"),
+                    ).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                  : null;
+                return (
+                  <div
+                    key={`bl-${br.id}`}
+                    className={cn(
+                      "flex items-center gap-2.5 p-2.5 rounded-lg border border-border/30",
+                      isO365
+                        ? "bg-blue-500/8 border-blue-500/20"
+                        : "bg-orange-500/8 border-orange-500/20",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "w-2 h-2 rounded-sm shrink-0",
+                        isO365 ? "bg-blue-400" : "bg-orange-400",
+                      )}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">
+                        {br.label ?? (isO365 ? "Outlook Event" : "Blocked")}
+                      </p>
+                      {startTime && endTime && (
+                        <p className="text-xs text-muted-foreground">
+                          {startTime} – {endTime}
+                        </p>
+                      )}
+                    </div>
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-semibold",
+                        isO365
+                          ? "bg-blue-500/15 text-blue-400 border-blue-500/30"
+                          : "bg-orange-500/15 text-orange-400 border-orange-500/30",
+                      )}
+                    >
+                      {isO365 ? (
+                        <Mail className="h-3 w-3" />
+                      ) : (
+                        <Lock className="h-3 w-3" />
+                      )}
+                      {isO365 ? "Outlook" : "Blocked"}
+                    </span>
+                  </div>
+                );
+              })}
             </motion.div>
           )}
       </AnimatePresence>
 
       {selectedDay &&
         selectedMeetings.length === 0 &&
-        selectedEvents.length === 0 && (
+        selectedEvents.length === 0 &&
+        selectedBlocked.length === 0 && (
           <motion.p
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -1211,8 +1307,7 @@ function EditMeetingDialog({
               {formatDate(meeting.meeting_date)} at{" "}
               {formatTime(meeting.meeting_time)}
             </p>
-            {(meeting.meeting_type === "video" ||
-              meeting.meeting_type === "teams") &&
+            {meeting.meeting_type !== "phone" &&
               (meeting.teams_join_url || meeting.zoom_join_url) && (
                 <a
                   href={meeting.teams_join_url || meeting.zoom_join_url || "#"}
@@ -1221,9 +1316,7 @@ function EditMeetingDialog({
                   className="inline-flex items-center gap-1.5 mt-2 text-xs text-blue-500 hover:text-blue-400 font-medium"
                 >
                   <Video className="h-3.5 w-3.5" />
-                  {meeting.meeting_type === "teams"
-                    ? "Join Teams Meeting"
-                    : "Join Zoom Meeting"}
+                  Join Meeting
                 </a>
               )}
           </div>
@@ -1256,16 +1349,25 @@ function EditMeetingDialog({
               Meeting Type
             </Label>
             <div className="grid grid-cols-2 gap-2">
-              {(["phone", "video", "teams"] as MeetingType[]).map((t) => {
+              {(["phone", "video"] as MeetingType[]).map((t) => {
+                const zoomDisabled = t === "video" && !ZOOM_ENABLED;
                 return (
                   <button
                     key={t}
-                    onClick={() => setMeetingType(t)}
+                    onClick={() => !zoomDisabled && setMeetingType(t)}
+                    disabled={zoomDisabled}
+                    title={
+                      zoomDisabled
+                        ? "Video (Zoom) is temporarily unavailable"
+                        : undefined
+                    }
                     className={cn(
                       "relative flex items-center gap-2 p-3 rounded-xl border transition-all text-sm font-medium",
-                      meetingType === t
-                        ? "border-primary bg-primary/15 text-foreground"
-                        : "border-border bg-muted/40 text-muted-foreground hover:border-border",
+                      zoomDisabled
+                        ? "opacity-50 cursor-not-allowed border-dashed border-border text-muted-foreground"
+                        : meetingType === t
+                          ? "border-primary bg-primary/15 text-foreground"
+                          : "border-border bg-muted/40 text-muted-foreground hover:border-border",
                     )}
                   >
                     {t === "phone" ? (
@@ -1273,11 +1375,8 @@ function EditMeetingDialog({
                     ) : (
                       <Video className="h-4 w-4" />
                     )}
-                    {t === "phone"
-                      ? "Phone"
-                      : t === "teams"
-                        ? "Video (Teams)"
-                        : "Video (Zoom)"}
+                    {t === "phone" ? "Phone" : "Video (Zoom)"}
+                    {zoomDisabled && <Lock className="h-3 w-3 ml-auto" />}
                   </button>
                 );
               })}
@@ -1690,7 +1789,7 @@ function EventFormDialog({
 const createMeetingSchema = Yup.object({
   meeting_date: Yup.string().required("Date required"),
   meeting_time: Yup.string().required("Time required"),
-  meeting_type: Yup.string().oneOf(["phone", "video", "teams"]).required(),
+  meeting_type: Yup.string().oneOf(["phone", "video"]).required(),
   notes: Yup.string(),
 });
 
@@ -1870,18 +1969,29 @@ function CreateMeetingDialog({
             <Label className="text-foreground/80 text-sm mb-1.5 block">
               Method *
             </Label>
-            <div className="grid grid-cols-3 gap-2">
-              {(["phone", "video", "teams"] as MeetingType[]).map((t) => {
+            <div className="grid grid-cols-2 gap-2">
+              {(["phone", "video"] as MeetingType[]).map((t) => {
+                const zoomDisabled = t === "video" && !ZOOM_ENABLED;
                 return (
                   <button
                     key={t}
                     type="button"
-                    onClick={() => formik.setFieldValue("meeting_type", t)}
+                    onClick={() =>
+                      !zoomDisabled && formik.setFieldValue("meeting_type", t)
+                    }
+                    disabled={zoomDisabled}
+                    title={
+                      zoomDisabled
+                        ? "Video (Zoom) is temporarily unavailable"
+                        : undefined
+                    }
                     className={cn(
                       "relative flex items-center gap-2 p-3 rounded-xl border transition-all text-sm font-medium",
-                      formik.values.meeting_type === t
-                        ? "border-primary bg-primary/15 text-foreground"
-                        : "border-border bg-muted/40 text-muted-foreground hover:border-border",
+                      zoomDisabled
+                        ? "opacity-50 cursor-not-allowed border-dashed border-border text-muted-foreground"
+                        : formik.values.meeting_type === t
+                          ? "border-primary bg-primary/15 text-foreground"
+                          : "border-border bg-muted/40 text-muted-foreground hover:border-border",
                     )}
                   >
                     {t === "phone" ? (
@@ -1889,11 +1999,8 @@ function CreateMeetingDialog({
                     ) : (
                       <Video className="h-4 w-4" />
                     )}
-                    {t === "phone"
-                      ? "Phone"
-                      : t === "teams"
-                        ? "Video (Teams)"
-                        : "Video (Zoom)"}
+                    {t === "phone" ? "Phone" : "Video (Zoom)"}
+                    {zoomDisabled && <Lock className="h-3 w-3 ml-auto" />}
                   </button>
                 );
               })}
@@ -1968,35 +2075,15 @@ function SettingsPanel() {
     blockedRanges,
     isLoadingBlockedRanges,
     isSavingBlockedRange,
+    o365Connected,
+    o365MailboxEmail,
+    o365SyncedCount,
+    o365LastSyncedAt,
+    isSyncingO365,
   } = useAppSelector((s) => s.scheduler);
   const { user: authUser } = useAppSelector((s) => s.brokerAuth);
   const roleLabel = authUser?.role === "admin" ? "Mortgage Banker" : "Partner";
 
-  const getFriendlyTeamsError = (message?: string): string => {
-    if (!message) {
-      return `${roleLabel} email is not eligible for Microsoft Teams meetings.`;
-    }
-
-    const normalized = message.toLowerCase();
-
-    if (normalized.includes("email is missing")) {
-      return `${roleLabel} email is missing. Add an email on your profile before enabling Teams.`;
-    }
-
-    if (normalized.includes("not a microsoft 365 user")) {
-      return `This ${roleLabel.toLowerCase()} email is not connected to your company Microsoft 365 account. Use a work Microsoft 365 email or ask your admin to set up Teams for you.`;
-    }
-
-    if (
-      normalized.includes("cannot verify teams eligibility") ||
-      normalized.includes("permissions are insufficient") ||
-      normalized.includes("directory read")
-    ) {
-      return `We could not verify this ${roleLabel.toLowerCase()} email for Teams yet. Please ask your admin to finish the Teams setup in Microsoft 365.`;
-    }
-
-    return message.replace(/broker/gi, roleLabel);
-  };
   const [localAvailability, setLocalAvailability] = useState<
     SchedulerAvailability[]
   >([]);
@@ -2004,13 +2091,6 @@ function SettingsPanel() {
   const [savedSection, setSavedSection] = useState<string | null>(null);
   const [availabilityDirty, setAvailabilityDirty] = useState(false);
   const [connectionMethodsDirty, setConnectionMethodsDirty] = useState(false);
-  const [isCheckingTeamsEligibility, setIsCheckingTeamsEligibility] =
-    useState(false);
-  const [teamsEligibilityResult, setTeamsEligibilityResult] = useState<{
-    eligible: boolean;
-    policyReady?: boolean;
-  } | null>(null);
-
   // Blocked range form state
   const [blockStart, setBlockStart] = useState("");
   const [blockEnd, setBlockEnd] = useState("");
@@ -2020,6 +2100,7 @@ function SettingsPanel() {
 
   useEffect(() => {
     dispatch(fetchBlockedRanges());
+    dispatch(fetchO365CalendarStatus());
   }, [dispatch]);
 
   useEffect(() => {
@@ -2037,11 +2118,8 @@ function SettingsPanel() {
       buffer_time_minutes: settings?.buffer_time_minutes ?? 15,
       advance_booking_days: settings?.advance_booking_days ?? 30,
       min_booking_hours: settings?.min_booking_hours ?? 2,
-      timezone:
-        settings?.timezone ?? authUser?.timezone ?? "America/Los_Angeles",
       allow_phone: settings?.allow_phone ?? true,
       allow_video: settings?.allow_video ?? true,
-      allow_teams: settings?.allow_teams ?? false,
     },
     enableReinitialize: true,
     onSubmit: async (values) => {
@@ -2112,9 +2190,7 @@ function SettingsPanel() {
       formik.initialValues.buffer_time_minutes ||
     formik.values.advance_booking_days !==
       formik.initialValues.advance_booking_days ||
-    formik.values.min_booking_hours !==
-      formik.initialValues.min_booking_hours ||
-    formik.values.timezone !== formik.initialValues.timezone;
+    formik.values.min_booking_hours !== formik.initialValues.min_booking_hours;
 
   const handleSectionSave = async (section: string) => {
     setSavingSection(section);
@@ -2317,67 +2393,18 @@ function SettingsPanel() {
             </div>
           ))}
         </div>
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <Label className="text-foreground/80 text-sm">Timezone</Label>
-            <button
-              type="button"
-              onClick={() => {
-                const detected =
-                  Intl.DateTimeFormat().resolvedOptions().timeZone;
-                const match = TIMEZONES.find((tz) => tz.value === detected);
-                if (match) formik.setFieldValue("timezone", detected);
-              }}
-              className="text-xs text-primary hover:underline flex items-center gap-1"
+        <div className="rounded-lg border border-border/60 bg-muted/30 px-4 py-3 flex items-start gap-2.5">
+          <MapPin className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Slot times use the timezone set in your{" "}
+            <a
+              href="/admin/profile"
+              className="text-primary font-medium hover:underline"
             >
-              <MapPin className="h-3 w-3" /> Detect my timezone
-            </button>
-          </div>
-          <Select
-            value={formik.values.timezone}
-            onValueChange={(v) => formik.setFieldValue("timezone", v)}
-          >
-            <SelectTrigger className="bg-muted/40 border-border text-foreground">
-              <SelectValue>
-                {(() => {
-                  const tz = TIMEZONES.find(
-                    (t) => t.value === formik.values.timezone,
-                  );
-                  return tz ? (
-                    <span>
-                      {tz.label}{" "}
-                      <span className="text-muted-foreground text-xs">
-                        ({tzOffset(tz.value)})
-                      </span>
-                    </span>
-                  ) : (
-                    formik.values.timezone
-                  );
-                })()}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent className="bg-popover border-border">
-              {TIMEZONES.map((tz) => (
-                <SelectItem
-                  key={tz.value}
-                  value={tz.value}
-                  className="text-foreground focus:bg-muted/50"
-                >
-                  <div className="flex flex-col py-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{tz.label}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {tzOffset(tz.value)}
-                      </span>
-                    </div>
-                    <span className="text-xs text-muted-foreground">
-                      {tz.cities}
-                    </span>
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+              Profile → Timezone
+            </a>
+            . Update it there to keep your scheduler accurate.
+          </p>
         </div>
 
         {/* Collapsible: how these settings affect client slot availability */}
@@ -2491,16 +2518,13 @@ function SettingsPanel() {
           {
             key: "allow_video",
             label: "Video Call (Zoom)",
-            sub: "Creates a Zoom meeting automatically",
+            sub: ZOOM_ENABLED
+              ? "Creates a Zoom meeting automatically"
+              : "Zoom temporarily unavailable",
             icon: <Video className="h-4 w-4 text-blue-400" />,
           },
-          {
-            key: "allow_teams",
-            label: "Video Call (Teams)",
-            sub: "Creates a Microsoft Teams meeting automatically",
-            icon: <Video className="h-4 w-4 text-indigo-400" />,
-          },
         ].map(({ key, label, sub, icon }, i) => {
+          const isZoomRow = key === "allow_video";
           return (
             <div
               key={key}
@@ -2517,57 +2541,9 @@ function SettingsPanel() {
                 </div>
               </div>
               <Switch
-                checked={(formik.values as any)[key]}
-                disabled={key === "allow_teams" && isCheckingTeamsEligibility}
-                onCheckedChange={async (v) => {
-                  if (key === "allow_teams" && !v) {
-                    formik.setFieldValue(key, false);
-                    setConnectionMethodsDirty(true);
-                    return;
-                  }
-
-                  if (key === "allow_teams" && v && !authUser?.email) {
-                    toast({
-                      title: "Cannot enable Teams",
-                      description: getFriendlyTeamsError("email is missing"),
-                      variant: "destructive",
-                    });
-                    return;
-                  }
-
-                  if (key === "allow_teams" && v) {
-                    setIsCheckingTeamsEligibility(true);
-                    try {
-                      const eligibility = await dispatch(
-                        fetchTeamsEligibility(),
-                      ).unwrap();
-                      if (!eligibility.eligible) {
-                        toast({
-                          title: "Cannot enable Teams",
-                          description: getFriendlyTeamsError(eligibility.error),
-                          variant: "destructive",
-                        });
-                        formik.setFieldValue(key, false);
-                        return;
-                      }
-                      setTeamsEligibilityResult(eligibility);
-                    } catch (err) {
-                      const message =
-                        typeof err === "string"
-                          ? err
-                          : "Unable to validate Teams eligibility right now.";
-                      toast({
-                        title: "Cannot enable Teams",
-                        description: getFriendlyTeamsError(message),
-                        variant: "destructive",
-                      });
-                      formik.setFieldValue(key, false);
-                      return;
-                    } finally {
-                      setIsCheckingTeamsEligibility(false);
-                    }
-                  }
-
+                checked={!isZoomRow && (formik.values as any)[key]}
+                disabled={isZoomRow}
+                onCheckedChange={(v) => {
                   formik.setFieldValue(key, v);
                   setConnectionMethodsDirty(true);
                 }}
@@ -2575,23 +2551,11 @@ function SettingsPanel() {
             </div>
           );
         })}
-        <div className="rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-          Turn this on only if this {roleLabel.toLowerCase()} uses a company
-          Microsoft 365 email. If this account was just added, Teams access can
-          take up to 24 hours to activate automatically.
-        </div>
-        {(formik.values as any).allow_teams &&
-          teamsEligibilityResult?.policyReady === false && (
-            <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-              <span className="mt-0.5 shrink-0">⏳</span>
-              <span>
-                <strong>Teams access is activating.</strong> The account was
-                verified but the meeting policy hasn&apos;t propagated yet —
-                this typically takes up to 1 hour. Bookings will work
-                automatically once active.
-              </span>
-            </div>
-          )}
+        {!ZOOM_ENABLED && (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700">
+            Video (Zoom) is temporarily disabled. Phone calls remain available.
+          </div>
+        )}
         <SectionSaveBar
           section="connection-methods"
           isDirty={connectionMethodsDirty}
@@ -2665,7 +2629,81 @@ function SettingsPanel() {
           commitments.
         </p>
 
-        {/* Add new block form */}
+        {/* ── Outlook Calendar Sync ─────────────────────────────────────── */}
+        {o365Connected && (
+          <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-4 mb-5 flex flex-col gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div className="h-10 w-10 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0">
+                  <Mail className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+                    Outlook Calendar Sync
+                    <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 rounded-full px-2 py-0.5">
+                      <Wifi className="h-2.5 w-2.5" /> Connected
+                    </span>
+                  </p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {o365MailboxEmail}
+                    {o365SyncedCount > 0 && (
+                      <span className="ml-2 text-blue-500 dark:text-blue-400">
+                        · {o365SyncedCount} event
+                        {o365SyncedCount !== 1 ? "s" : ""} synced
+                        {o365LastSyncedAt
+                          ? ` · Last synced ${format(parseISO(o365LastSyncedAt), "MMM d, h:mm a")}`
+                          : ""}
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={isSyncingO365}
+                className="shrink-0 border-blue-500/40 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10"
+                onClick={async () => {
+                  const result = await dispatch(syncO365Calendar());
+                  if (syncO365Calendar.fulfilled.match(result)) {
+                    toast({
+                      title: "Calendar synced",
+                      description: result.payload.message,
+                    });
+                    dispatch(fetchBlockedRanges());
+                    dispatch(fetchO365CalendarStatus());
+                  } else {
+                    toast({
+                      title: "Sync failed",
+                      description:
+                        (result.payload as string) ||
+                        "Could not sync Outlook calendar.",
+                      variant: "destructive",
+                    });
+                  }
+                }}
+              >
+                {isSyncingO365 ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <CloudDownload className="h-4 w-4 mr-2" />
+                )}
+                {isSyncingO365 ? "Syncing…" : "Sync Now"}
+              </Button>
+            </div>
+            <p className="text-[11px] text-blue-600/70 dark:text-blue-400/60 flex items-start gap-1.5 border-t border-blue-500/20 pt-2.5">
+              <Info className="h-3 w-3 shrink-0 mt-px" />
+              <span>
+                Busy &amp; tentative events are imported as blocked slots on
+                every sync — including time changes made in Outlook. Slot times
+                are interpreted using your{" "}
+                <span className="font-semibold">Profile → Timezone</span>{" "}
+                setting, so keep it accurate to your local time.
+              </span>
+            </p>
+          </div>
+        )}
         <div className="bg-muted/30 rounded-lg p-4 mb-4 space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
@@ -2730,10 +2768,12 @@ function SettingsPanel() {
                 return;
               }
               setBlockError(null);
+              // Convert datetime-local values (browser local time) to UTC ISO
+              // strings so all blocked ranges are stored consistently in UTC.
               await dispatch(
                 addBlockedRange({
-                  start_datetime: blockStart,
-                  end_datetime: blockEnd,
+                  start_datetime: new Date(blockStart).toISOString(),
+                  end_datetime: new Date(blockEnd).toISOString(),
                   label: blockLabel || undefined,
                 }),
               );
@@ -2765,13 +2805,27 @@ function SettingsPanel() {
             {blockedRanges.map((br) => (
               <div
                 key={br.id}
-                className="flex items-center justify-between bg-muted/20 border border-border/40 rounded-lg px-4 py-2.5 gap-3"
+                className={cn(
+                  "flex items-center justify-between border rounded-lg px-4 py-2.5 gap-3",
+                  br.source === "o365"
+                    ? "bg-blue-500/5 border-blue-500/20"
+                    : "bg-muted/20 border-border/40",
+                )}
               >
                 <div className="flex items-start gap-2 min-w-0">
-                  <Lock className="h-3.5 w-3.5 text-primary mt-0.5 shrink-0" />
+                  {br.source === "o365" ? (
+                    <Mail className="h-3.5 w-3.5 text-blue-500 mt-0.5 shrink-0" />
+                  ) : (
+                    <Lock className="h-3.5 w-3.5 text-primary mt-0.5 shrink-0" />
+                  )}
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">
+                    <p className="text-sm font-medium text-foreground truncate flex items-center gap-1.5">
                       {br.label || "Blocked"}
+                      {br.source === "o365" && (
+                        <span className="text-[10px] font-medium bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 rounded-full px-1.5 py-px">
+                          Outlook
+                        </span>
+                      )}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {format(
@@ -2783,14 +2837,16 @@ function SettingsPanel() {
                     </p>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => dispatch(deleteBlockedRange(br.id))}
-                  className="shrink-0 p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                  title="Remove block"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                {br.source !== "o365" && (
+                  <button
+                    type="button"
+                    onClick={() => dispatch(deleteBlockedRange(br.id))}
+                    className="shrink-0 p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                    title="Remove block"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -2885,6 +2941,7 @@ const AdminCalendar: React.FC = () => {
     isCreatingMeeting,
     settings: schedulerSettings,
     availability: schedulerAvailability,
+    blockedRanges,
   } = useAppSelector((s) => s.scheduler);
   const {
     events,
@@ -2896,7 +2953,7 @@ const AdminCalendar: React.FC = () => {
     pagination: eventsPagination,
     error: calendarError,
   } = useAppSelector((s) => s.calendarEvents);
-  const { user } = useAppSelector((s) => s.brokerAuth);
+  const { user, sessionToken } = useAppSelector((s) => s.brokerAuth);
   const { brokers: brokersList } = useAppSelector((s) => s.brokers);
 
   const isPartner = user?.role === "broker";
@@ -2977,9 +3034,39 @@ const AdminCalendar: React.FC = () => {
     dispatch(fetchSchedulerSettings());
     // Initial load: calendar tab is active, so fetch the current month
     doFetchCalendarView(new Date());
+    // Always load blocked ranges so Calendar tab shows them without needing to visit Settings
+    dispatch(fetchBlockedRanges());
     dispatch(fetchClients({ page: 1, limit: 200 }));
     if (isAdmin) dispatch(fetchBrokers({ page: 1, limit: 100 }));
   }, [dispatch]);
+
+  // Real-time Ably subscription: re-fetch blocked ranges whenever the cron or
+  // manual "Sync Now" publishes an o365_calendar_synced event on this broker's channel
+  useEffect(() => {
+    if (!sessionToken || !user?.id) return;
+    let channel: ReturnType<
+      Awaited<ReturnType<typeof getSharedAblyClient>>["channels"]["get"]
+    > | null = null;
+    let cancelled = false;
+
+    (async () => {
+      const client = await getSharedAblyClient(sessionToken);
+      if (cancelled || !client) return;
+      channel = client.channels.get(`broker-notifications:${user.id}`);
+      channel.subscribe("o365_calendar_synced", () => {
+        dispatch(fetchBlockedRanges());
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      try {
+        channel?.unsubscribe();
+      } catch {
+        /* noop */
+      }
+    };
+  }, [dispatch, sessionToken, user?.id]);
 
   // Re-fetch meetings whenever time filter or broker filter changes
   const refetchMeetings = useCallback(
@@ -3015,8 +3102,8 @@ const AdminCalendar: React.FC = () => {
       ? window.location.origin
       : `https://portal.themortgageprofessionals.net`;
 
-  const schedulerUrl = user?.public_token
-    ? `${portalOrigin}/scheduler/${user.public_token}`
+  const schedulerUrl = user
+    ? `${portalOrigin}/scheduler/${user.slug ?? user.public_token}`
     : `${portalOrigin}/scheduler`;
 
   const handleCopyUrl = () => {
@@ -3456,6 +3543,7 @@ const AdminCalendar: React.FC = () => {
                   <UnifiedCalendarView
                     meetings={ownershipScopedMeetings}
                     events={events}
+                    blockedRanges={blockedRanges}
                     onEditMeeting={setEditingMeeting}
                     onEditEvent={setEditingEvent}
                     viewDate={calendarViewDate}
@@ -3654,14 +3742,9 @@ const AdminCalendar: React.FC = () => {
                                 ) : (
                                   <Video className="h-3.5 w-3.5 text-green-400" />
                                 )}
-                                {m.meeting_type === "phone"
-                                  ? "Phone"
-                                  : m.meeting_type === "teams"
-                                    ? "Teams"
-                                    : "Video"}
+                                {m.meeting_type === "phone" ? "Phone" : "Video"}
                               </span>
-                              {(m.meeting_type === "video" ||
-                                m.meeting_type === "teams") &&
+                              {m.meeting_type !== "phone" &&
                                 (m.teams_join_url || m.zoom_join_url) && (
                                   <a
                                     href={
@@ -3673,9 +3756,7 @@ const AdminCalendar: React.FC = () => {
                                     className="inline-flex items-center gap-1 text-xs text-blue-500 hover:text-blue-400 mt-0.5"
                                   >
                                     <Video className="h-3 w-3" />
-                                    {m.meeting_type === "teams"
-                                      ? "Join Teams"
-                                      : "Join Zoom"}
+                                    Join Meeting
                                   </a>
                                 )}
                             </td>
@@ -3937,7 +4018,9 @@ const AdminCalendar: React.FC = () => {
         onClose={() => setShowCreateMeeting(false)}
         onCreated={handleCreateMeeting}
         isCreating={isCreatingMeeting}
-        brokerToken={user?.public_token ?? undefined}
+        brokerToken={
+          user ? (user.slug ?? user.public_token ?? undefined) : undefined
+        }
         schedulerSettings={schedulerSettings}
         schedulerAvailability={schedulerAvailability}
       />

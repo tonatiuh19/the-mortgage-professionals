@@ -34,6 +34,10 @@ import {
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 import { logger } from "@/lib/logger";
+import {
+  SMS_CHANNEL_ENABLED,
+  WHATSAPP_CHANNEL_ENABLED,
+} from "@/lib/channelAvailability";
 
 interface Template {
   id: number;
@@ -108,7 +112,7 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
   const [recipient, setRecipient] = useState<SelectedRecipient | null>(null);
 
   // ── Compose state ────────────────────────────────────────────────────────────
-  const [channel, setChannel] = useState<ChannelType>("sms");
+  const [channel, setChannel] = useState<ChannelType>("email");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
 
@@ -133,7 +137,7 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
       setSearch("");
       setDropdownOpen(false);
       setRecipient(null);
-      setChannel("sms");
+      setChannel("email");
       setSubject("");
       setBody("");
       setTemplateOpen(false);
@@ -145,7 +149,7 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
     if (!recipient) return;
     const avail = getAvailableChannels(recipient);
     if (!avail.includes(channel)) {
-      setChannel(avail[0] ?? "sms");
+      setChannel(avail[0] ?? "email");
     }
     setTimeout(() => textareaRef.current?.focus(), 80);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -155,18 +159,24 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
   const getAvailableChannels = (r: SelectedRecipient): ChannelType[] => {
     if (r.kind === "client") {
       const ch: ChannelType[] = [];
-      if (r.phone) ch.push("sms", "whatsapp");
+      if (r.phone && SMS_CHANNEL_ENABLED) ch.push("sms");
+      if (r.phone && WHATSAPP_CHANNEL_ENABLED) ch.push("whatsapp");
       if (r.email) ch.push("email");
-      return ch.length > 0 ? ch : ["sms"];
+      return ch;
     }
-    if (r.kind === "raw_phone") return ["sms", "whatsapp"];
+    if (r.kind === "raw_phone") {
+      const ch: ChannelType[] = [];
+      if (SMS_CHANNEL_ENABLED) ch.push("sms");
+      if (WHATSAPP_CHANNEL_ENABLED) ch.push("whatsapp");
+      return ch;
+    }
     if (r.kind === "raw_email") return ["email"];
-    return ["sms"];
+    return ["email"];
   };
 
   const availableChannels: ChannelType[] = recipient
     ? getAvailableChannels(recipient)
-    : (["sms", "whatsapp", "email"] as ChannelType[]);
+    : (["email"] as ChannelType[]);
 
   const filteredClients = clients
     .filter((c) => {
@@ -183,9 +193,13 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
 
   const isRawPhone = PHONE_RE.test(search.trim());
   const isRawEmail = EMAIL_RE.test(search.trim());
-  const canSendToRaw = isRawPhone || isRawEmail;
+  const canSendToRaw = isRawEmail;
 
-  const canSend = Boolean(recipient) && body.trim().length > 0 && !isSending;
+  const canSend =
+    Boolean(recipient) &&
+    availableChannels.includes(channel) &&
+    body.trim().length > 0 &&
+    !isSending;
 
   const getRecipientValue = (): {
     phone?: string;
@@ -220,7 +234,7 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
   const clearRecipient = () => {
     setRecipient(null);
     setSearch("");
-    setChannel("sms");
+    setChannel("email");
     setTimeout(() => searchInputRef.current?.focus(), 50);
   };
 

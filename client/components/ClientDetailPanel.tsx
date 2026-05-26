@@ -101,6 +101,11 @@ import {
 import { convertClientToBroker } from "@/store/slices/clientsSlice";
 import { useToast } from "@/hooks/use-toast";
 import { logger } from "@/lib/logger";
+import { stripHtml } from "@/lib/utils";
+import {
+  SMS_CHANNEL_ENABLED,
+  WHATSAPP_CHANNEL_ENABLED,
+} from "@/lib/channelAvailability";
 import {
   Dialog,
   DialogContent,
@@ -416,14 +421,25 @@ function ComposeBox({
         {(["sms", "email", "whatsapp"] as const).map((t) => {
           const unavailable =
             (t !== "email" && !hasPhone) || (t === "email" && !hasEmail);
-          const locked = t === "whatsapp";
+          const locked =
+            t === "whatsapp" ||
+            (t === "sms" && !SMS_CHANNEL_ENABLED) ||
+            (t === "whatsapp" && !WHATSAPP_CHANNEL_ENABLED);
           const disabled = unavailable || locked;
           return (
             <button
               key={t}
               disabled={disabled}
               onClick={() => !disabled && onTypeChange(t)}
-              title={locked ? "WhatsApp coming soon" : undefined}
+              title={
+                locked && t === "whatsapp" && SMS_CHANNEL_ENABLED
+                  ? "WhatsApp coming soon"
+                  : locked && t === "sms"
+                    ? "SMS temporarily unavailable"
+                    : locked
+                      ? "Temporarily unavailable"
+                      : undefined
+              }
               className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors font-medium ${
                 composeType === t && !locked
                   ? "bg-primary text-primary-foreground border-primary"
@@ -667,7 +683,7 @@ export default function ClientDetailPanel({
   const [loadingThread, setLoadingThread] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeType, setComposeType] = useState<"sms" | "email" | "whatsapp">(
-    "sms",
+    SMS_CHANNEL_ENABLED ? "sms" : "email",
   );
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
@@ -700,6 +716,24 @@ export default function ClientDetailPanel({
     if (!composeBody.trim() || !client) return;
     const recipientPhone = client.phone ?? undefined;
     const recipientEmail = client.email ?? undefined;
+
+    if (composeType === "sms" && !SMS_CHANNEL_ENABLED) {
+      toast({
+        title: "SMS unavailable",
+        description: "SMS messaging is temporarily disabled.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (composeType === "whatsapp" && !WHATSAPP_CHANNEL_ENABLED) {
+      toast({
+        title: "WhatsApp unavailable",
+        description: "WhatsApp messaging is temporarily disabled.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSendingMsg(true);
     try {
       const result = await dispatch(
@@ -1851,7 +1885,7 @@ export default function ClientDetailPanel({
                                   </div>
                                   {conv.last_message_preview && (
                                     <p className="text-xs text-muted-foreground truncate mt-0.5">
-                                      {conv.last_message_preview}
+                                      {stripHtml(conv.last_message_preview)}
                                     </p>
                                   )}
                                   <p className="text-[10px] text-muted-foreground mt-1">

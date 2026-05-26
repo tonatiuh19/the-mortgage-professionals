@@ -89,6 +89,10 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
   const deviceRef = useRef<Device | null>(null);
   const callRef = useRef<Call | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Prevents double-logging: when the broker clicks hang-up, handleHangUp calls
+  // logCall() AND callRef.current.disconnect(), which fires the "disconnect" event
+  // that would call logCall() a second time — resulting in two DB rows for one call.
+  const callAlreadyLoggedRef = useRef(false);
 
   const [callState, setCallState] = useState<CallState>(
     activeCall ? "in-call" : "idle",
@@ -397,6 +401,10 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
   // Log the call to the server after it ends
   const logCall = useCallback(
     async (status: string, durationSec: number, sid?: string | null) => {
+      // Guard: ensure we log exactly once per call regardless of how many
+      // events fire (handleHangUp + disconnect event both call logCall).
+      if (callAlreadyLoggedRef.current) return;
+      callAlreadyLoggedRef.current = true;
       try {
         await dispatch(
           logVoiceCall({
@@ -464,6 +472,8 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
   const initiateCall = useCallback(async () => {
     setCallState("initializing");
     setErrorMsg(null);
+    // Reset the log guard for the new call
+    callAlreadyLoggedRef.current = false;
 
     try {
       // 1. Fetch Access Token via Redux thunk
@@ -593,6 +603,7 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
   useEffect(() => {
     if (activeCall) {
       // Incoming call already accepted — wire up event listeners & start timer
+      callAlreadyLoggedRef.current = false; // Reset for this new call leg
       callRef.current = activeCall;
       setCallSid(activeCall.parameters?.CallSid ?? null);
       startTimer();

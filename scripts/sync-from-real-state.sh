@@ -56,6 +56,8 @@ FILES=(
   "client/components/NewLoanWizard.tsx"
   "client/components/NewConversationWizard.tsx"
   "client/components/BrokerWizard.tsx"
+  "client/components/BrokerSchedulerLinkModal.tsx"
+  "client/components/MortgiWidget.tsx"
   "client/components/PreApprovalLetterModal.tsx"
   "client/components/PDFSigningViewer.tsx"
   "client/components/PDFSignatureZoneEditor.tsx"
@@ -87,6 +89,7 @@ FILES=(
   "client/pages/admin/BrokerProfile.tsx"
   "client/pages/admin/ContactSubmissions.tsx"
   "client/pages/admin/ReminderFlows.tsx"
+  "client/pages/admin/Mortgi.tsx"
 
   # Pages – Client
   "client/pages/client/Dashboard.tsx"
@@ -108,6 +111,7 @@ FILES=(
   "client/pages/NotFound.tsx"
   "client/pages/Scheduler.tsx"
   "client/pages/SchedulerReschedule.tsx"
+  "client/pages/UnderConstruction.tsx"
   "client/pages/admin/Email.tsx"
 
   # Shared
@@ -134,7 +138,9 @@ FILES=(
   "client/store/slices/preApprovalSlice.ts"
   "client/store/slices/reminderFlowsSlice.ts"
   "client/store/slices/schedulerSlice.ts"
+  "client/store/slices/calendar.spec.ts"
   "client/store/slices/settingsSlice.ts"
+  "client/store/slices/mortgiSlice.ts"
   "client/store/slices/tasksSlice.ts"
   "client/store/slices/voiceSlice.ts"
 
@@ -147,6 +153,7 @@ FILES=(
   "client/lib/cdn-upload.ts"
   "client/lib/env.ts"
   "client/lib/notification-sound.ts"
+  "client/lib/utils.ts"
 
   # Swagger (kept in sync with api/index.ts)
   "api/swagger.yaml"
@@ -222,12 +229,19 @@ if $APPLY && [[ $CHANGED -gt 0 ]]; then
 
   # Fix req.params type casts in api/index.ts (string | string[] → string)
   perl -i -pe 's/parseInt\(req\.params\.(\w+),/parseInt(req.params.$1 as string,/g' "$DST/api/index.ts"
+  perl -i -pe 's/parseInt\(req\.params\.(\w+)\)/parseInt(req.params.$1 as string)/g' "$DST/api/index.ts"
   perl -i -pe 's/parseFloat\(req\.params\.(\w+)\)/parseFloat(req.params.$1 as string)/g' "$DST/api/index.ts"
+  perl -i -pe 's/const \{ token \} = req\.params;/const token = req.params.token as string;/g' "$DST/api/index.ts"
+  perl -i -pe 's/const \{ conversationId \} = req\.params;/const conversationId = req.params.conversationId as string;/g' "$DST/api/index.ts"
   echo "   → req.params casts applied to api/index.ts"
 
   # Ensure MORTGAGE_TENANT_ID is 2 (never 1)
   sed -i '' 's/MORTGAGE_TENANT_ID = 1/MORTGAGE_TENANT_ID = 2/g' "$DST/api/index.ts"
   echo "   → MORTGAGE_TENANT_ID = 2 enforced"
+
+  # Ensure deploy settings default targets tenant 2
+  sed -i '' 's/DEPLOY_SETTINGS_TENANT_ID ?? "1"/DEPLOY_SETTINGS_TENANT_ID ?? "2"/g' "$DST/scripts/deploy-prod.ts"
+  echo "   → deploy default tenant = 2 enforced"
 
   # Restore intentional ClientLogin SMS/Call button state (disabled)
   # (manual check recommended — verify BrokerLogin + ClientLogin SMS/Call are disabled)

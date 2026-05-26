@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   ChevronRight,
   CheckCircle,
@@ -16,10 +17,17 @@ import {
 } from "lucide-react";
 import Header from "../components/Header";
 import Footer from "../components/layout/Footer";
+import { useAppDispatch } from "@/store/hooks";
+import { submitContactForm } from "@/store/slices/contactSubmissionsSlice";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Index() {
+  const navigate = useNavigate();
+  const dispatch = useAppDispatch();
+  const { toast } = useToast();
   const [showLeadForm, setShowLeadForm] = useState(false);
   const [videoError, setVideoError] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isHeaderTransparent, setIsHeaderTransparent] = useState(true);
   const [formData, setFormData] = useState({
     name: "",
@@ -35,14 +43,34 @@ export default function Index() {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Form submitted:", formData);
-    alert(
-      `Thank you, ${formData.name}! We'll contact you shortly at ${formData.phone}.`,
+    setIsSubmitting(true);
+    const result = await dispatch(
+      submitContactForm({
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        subject: `Pre-Approval Request – ${formData.loanType.toUpperCase()} Loan`,
+        message: `I'm interested in a ${formData.loanType} loan and would like a free consultation. Please contact me at ${formData.phone}.`,
+      }),
     );
-    setFormData({ name: "", email: "", phone: "", loanType: "conventional" });
-    setShowLeadForm(false);
+    setIsSubmitting(false);
+    if (submitContactForm.fulfilled.match(result)) {
+      toast({
+        title: "Request received!",
+        description: `Thank you, ${formData.name}. We'll be in touch shortly.`,
+      });
+      setFormData({ name: "", email: "", phone: "", loanType: "conventional" });
+      setShowLeadForm(false);
+    } else {
+      toast({
+        title: "Submission failed",
+        description:
+          (result.payload as string) || "Please try again or call us directly.",
+        variant: "destructive",
+      });
+    }
   };
 
   // Scroll detection for header transparency
@@ -62,7 +90,7 @@ export default function Index() {
   return (
     <div className="min-h-screen bg-white">
       <Header
-        onGetPreApproved={() => setShowLeadForm(true)}
+        onGetPreApproved={() => navigate("/apply")}
         transparent={isHeaderTransparent}
       />
 
@@ -84,7 +112,7 @@ export default function Index() {
               type="video/mp4"
             />
             <source
-              src="hhttps://disruptinglabs.com/data/themortgageprofessionals/assets/videos/20660793-sd_640_360_30fps.mp4"
+              src="https://disruptinglabs.com/data/themortgageprofessionals/assets/videos/20660793-sd_640_360_30fps.mp4"
               type="video/mp4"
             />
           </video>
@@ -122,12 +150,15 @@ export default function Index() {
           {/* CTAs */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-10 animate-slide-up">
             <button
-              onClick={() => setShowLeadForm(true)}
+              onClick={() => navigate("/apply")}
               className="bg-amber-500 hover:bg-amber-600 text-white px-8 py-4 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 transform hover:scale-105 hover:shadow-2xl shadow-lg animate-glow-pulse"
             >
               Get Pre-Approved
             </button>
-            <button className="bg-primary hover:bg-primary-dark text-white px-8 py-4 rounded-lg font-semibold uppercase tracking-wider text-sm border border-white/40 transition-all duration-300 transform hover:scale-105">
+            <button
+              onClick={() => navigate("/mortgage-calculator")}
+              className="bg-primary hover:bg-primary-dark text-white px-8 py-4 rounded-lg font-semibold uppercase tracking-wider text-sm border border-white/40 transition-all duration-300 transform hover:scale-105"
+            >
               Calculate My Payment
             </button>
           </div>
@@ -194,29 +225,34 @@ export default function Index() {
                 icon: Home,
                 title: "Conventional",
                 description: "The most popular choice with competitive rates",
+                href: "/conventional-loan",
               },
               {
                 icon: Flag,
                 title: "FHA",
                 description: "Flexible terms perfect for first-time buyers",
+                href: "/fha-loan",
               },
               {
                 icon: Medal,
                 title: "VA",
                 description:
                   "Exclusive benefits for veterans and service members",
+                href: "/va-loan",
               },
               {
                 icon: Star,
                 title: "Non-QM",
                 description:
                   "Creative financing for unique financial situations",
+                href: "/contact-us",
               },
             ].map((program, idx) => {
               const IconComponent = program.icon;
               return (
                 <div
                   key={idx}
+                  onClick={() => navigate(program.href)}
                   className="group bg-white rounded-xl p-8 shadow-md hover:shadow-2xl transition-all duration-300 transform hover:scale-105 hover:border-amber-500 border-2 border-transparent cursor-pointer animate-slide-up"
                   style={{ animationDelay: `${idx * 100}ms` }}
                 >
@@ -331,7 +367,10 @@ export default function Index() {
                   </div>
                 ))}
               </div>
-              <button className="mt-8 bg-amber-500 hover:bg-amber-600 text-white px-8 py-3 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 transform hover:scale-105">
+              <button
+                onClick={() => navigate("/about-us")}
+                className="mt-8 bg-amber-500 hover:bg-amber-600 text-white px-8 py-3 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 transform hover:scale-105"
+              >
                 Learn More
               </button>
             </div>
@@ -385,6 +424,7 @@ export default function Index() {
             ].map((member, idx) => (
               <div
                 key={idx}
+                onClick={() => navigate("/our-team")}
                 className="text-center group cursor-pointer animate-slide-up"
                 style={{ animationDelay: `${idx * 100}ms` }}
               >
@@ -481,12 +521,15 @@ export default function Index() {
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <button
-              onClick={() => setShowLeadForm(true)}
+              onClick={() => navigate("/apply")}
               className="bg-amber-500 hover:bg-amber-600 text-white px-8 py-4 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-2xl animate-glow-pulse"
             >
               Apply Online Now
             </button>
-            <button className="bg-white/20 hover:bg-white/30 text-white px-8 py-4 rounded-lg font-semibold uppercase tracking-wider text-sm border border-white/40 transition-all duration-300 transform hover:scale-105">
+            <button
+              onClick={() => navigate("/contact-us")}
+              className="bg-white/20 hover:bg-white/30 text-white px-8 py-4 rounded-lg font-semibold uppercase tracking-wider text-sm border border-white/40 transition-all duration-300 transform hover:scale-105"
+            >
               Talk to an Expert
             </button>
           </div>
@@ -572,9 +615,10 @@ export default function Index() {
 
               <button
                 type="submit"
-                className="w-full bg-gradient-to-r from-[#0A2F52] to-[#135E99] hover:shadow-lg text-white px-8 py-4 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 transform hover:scale-105 mt-6"
+                disabled={isSubmitting}
+                className="w-full bg-gradient-to-r from-[#0A2F52] to-[#135E99] hover:shadow-lg text-white px-8 py-4 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 transform hover:scale-105 mt-6 disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                Get My Free Consultation
+                {isSubmitting ? "Sending…" : "Get My Free Consultation"}
               </button>
 
               <p className="text-center text-sm text-[#6B7280]">
@@ -590,7 +634,7 @@ export default function Index() {
       {/* Sticky Mobile CTA Button */}
       <div className="fixed bottom-0 left-0 right-0 md:hidden bg-white border-t border-gray-200 p-4 shadow-2xl z-40">
         <button
-          onClick={() => setShowLeadForm(true)}
+          onClick={() => navigate("/apply")}
           className="w-full bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 flex items-center justify-center gap-2"
         >
           Get Pre-Approved <ChevronRight size={18} />

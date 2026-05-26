@@ -55,6 +55,7 @@ import {
 } from "@/store/slices/documentsSlice";
 import { toast } from "@/hooks/use-toast";
 import { useSortableData } from "@/hooks/use-sortable-data";
+import { isAdminRole } from "@shared/api";
 
 const BASE_URL = "https://disruptinglabs.com/data/api";
 
@@ -67,7 +68,7 @@ const Documents = () => {
     useAppSelector((state) => state.documents);
   const { user } = useAppSelector((state) => state.brokerAuth);
 
-  const hasGlobalDocumentAccess = user?.role === "superadmin";
+  const hasGlobalDocumentAccess = isAdminRole(user?.role);
 
   useEffect(() => {
     dispatch(fetchAllDocuments());

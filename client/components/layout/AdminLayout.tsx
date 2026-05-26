@@ -48,6 +48,7 @@ import { IS_DEV } from "@/lib/env";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { logout, initAdminSession } from "@/store/slices/brokerAuthSlice";
 import { selectSectionControlsMap } from "@/store/slices/adminSectionControlsSlice";
+import { PARTNER_ROLES, ROLE_LABELS, type BrokerRole } from "@shared/api";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   AlertDialog,
@@ -104,7 +105,9 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
     navigate("/broker-login");
   };
 
-  const isPartner = user?.role === "broker";
+  const isPartner = PARTNER_ROLES.includes(user?.role as BrokerRole);
+  const isAdmin = user?.role === "admin";
+  const isStaff = !isAdmin && !isPartner; // loan_officer, loan_processor
 
   const menuItems = [
     {
@@ -159,35 +162,35 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
       label: "Reminder Flows",
       icon: <AlarmClock className="h-4 w-4" />,
       path: "/admin/reminder-flows",
-      hidden: isPartner,
+      hidden: isPartner || isStaff,
     },
     {
       id: "communication-templates",
       label: "Message Templates",
       icon: <FileText className="h-4 w-4" />,
       path: "/admin/communication-templates",
-      hidden: isPartner,
+      hidden: isPartner || isStaff,
     },
     {
       id: "reports",
       label: "Reports & Analytics",
       icon: <TrendingUp className="h-4 w-4" />,
       path: "/admin/reports",
-      hidden: isPartner,
+      hidden: isPartner || user?.role === "loan_processor",
     },
     {
       id: "brokers",
       label: "People Management",
       icon: <UserCog className="h-4 w-4" />,
       path: "/admin/brokers",
-      hidden: isPartner,
+      hidden: isPartner || isStaff,
     },
     {
       id: "contact-submissions",
       label: "Contact Messages",
       icon: <MessageSquare className="h-4 w-4" />,
       path: "/admin/contact-submissions",
-      hidden: isPartner,
+      hidden: isPartner || isStaff,
     },
     {
       id: "income-calculator",
@@ -200,7 +203,7 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
       label: "Settings",
       icon: <Settings className="h-4 w-4" />,
       path: "/admin/settings",
-      hidden: isPartner,
+      hidden: isPartner || isStaff,
     },
   ];
 
@@ -371,7 +374,7 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
                   {user ? `${user.first_name} ${user.last_name}` : "Admin User"}
                 </p>
                 <p className="text-xs text-muted-foreground capitalize">
-                  {user?.role === "admin" ? "Mortgage Banker" : "Partner"}
+                  {ROLE_LABELS[user?.role as BrokerRole] ?? "Partner"}
                 </p>
               </button>
               <Button
@@ -547,7 +550,7 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
                   {user ? `${user.first_name} ${user.last_name}` : "Admin User"}
                 </p>
                 <p className="text-xs text-muted-foreground capitalize">
-                  {user?.role === "admin" ? "Mortgage Banker" : "Partner"}
+                  {ROLE_LABELS[user?.role as BrokerRole] ?? "Partner"}
                 </p>
               </button>
               <Tooltip delayDuration={300}>
@@ -602,7 +605,7 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
                           : "Admin User"}
                       </p>
                       <p className="text-xs text-muted-foreground capitalize">
-                        {user?.role === "admin" ? "Mortgage Banker" : "Partner"}
+                        {ROLE_LABELS[user?.role as BrokerRole] ?? "Partner"}
                       </p>
                     </div>
                   </div>

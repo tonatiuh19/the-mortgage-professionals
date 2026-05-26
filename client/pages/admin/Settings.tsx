@@ -37,6 +37,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { logger } from "@/lib/logger";
+import { PHONE_DELIVERY_ENABLED } from "@/lib/channelAvailability";
+import { isAdminRole } from "@shared/api";
 
 // ─── Animation variants ───────────────────────────────────────────────────────
 
@@ -227,7 +229,7 @@ const Settings = () => {
     (state) => state.settings,
   );
   const { user } = useAppSelector((state) => state.brokerAuth);
-  const isAdmin = user?.role === "admin" || user?.role === "superadmin";
+  const isAdmin = isAdminRole(user?.role);
 
   // Pre-Approval Letter
   const [preApprovalRequireAllTasks, setPreApprovalRequireAllTasks] =
@@ -406,8 +408,14 @@ const Settings = () => {
                     hint="Send SMS alerts via configured provider"
                     checked={enableSms}
                     onCheckedChange={setEnableSms}
-                    disabled={!isAdmin}
+                    disabled={!isAdmin || !PHONE_DELIVERY_ENABLED}
                   />
+                  {!PHONE_DELIVERY_ENABLED && (
+                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      SMS and WhatsApp delivery is temporarily paused, so SMS
+                      notification settings are locked.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex justify-end pt-5 mt-5 border-t border-border/40">
@@ -447,7 +455,7 @@ const Settings = () => {
                     value={otpFromNumber}
                     onChange={setOtpFromNumber}
                     placeholder="+15623370000"
-                    disabled={!isAdmin}
+                    disabled={!isAdmin || !PHONE_DELIVERY_ENABLED}
                   />
 
                   <div className="flex items-start gap-3 p-4 rounded-xl border border-emerald-500/15 bg-emerald-50/40">
@@ -465,7 +473,7 @@ const Settings = () => {
                   <SaveButton
                     isSaving={isSaving}
                     saved={savedSections.has("phone")}
-                    disabled={!isAdmin}
+                    disabled={!isAdmin || !PHONE_DELIVERY_ENABLED}
                     onClick={() =>
                       handleSave("phone", [
                         {

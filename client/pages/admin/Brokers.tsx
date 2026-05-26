@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   fetchBrokers,
@@ -39,7 +39,8 @@ import {
   Link2,
   CalendarDays,
 } from "lucide-react";
-import type { Broker } from "@shared/api";
+import type { Broker, BrokerRole } from "@shared/api";
+import { ROLE_LABELS, PARTNER_ROLES } from "@shared/api";
 import { MetaHelmet } from "@/components/MetaHelmet";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { adminPageMeta } from "@/lib/seo-helpers";
@@ -58,6 +59,7 @@ export default function Brokers() {
   );
 
   const [searchQuery, setSearchQuery] = useState("");
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sortBy, setSortBy] = useState("first_name");
   const [sortDir, setSortDir] = useState<"ASC" | "DESC">("ASC");
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -113,7 +115,15 @@ export default function Brokers() {
 
   const handleSearch = (q: string) => {
     setSearchQuery(q);
-    doFetch({ page: 1, sortBy, sortOrder: sortDir, search: q || undefined });
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      doFetch({
+        page: 1,
+        sortBy,
+        sortOrder: sortDir,
+        search: q || undefined,
+      });
+    }, 350);
   };
 
   useEffect(() => {
@@ -125,6 +135,13 @@ export default function Brokers() {
   useEffect(() => {
     doFetch({ page: 1, sortBy, sortOrder: sortDir });
   }, [dispatch]);
+
+  // Cleanup debounce on unmount
+  useEffect(() => {
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, []);
 
   const handleCreateBroker = () => {
     setWizardMode("create");
@@ -320,9 +337,16 @@ export default function Brokers() {
   };
 
   const getRoleBadgeColor = (role: string) => {
-    return role === "admin"
-      ? "bg-purple-100 text-purple-800 hover:bg-purple-100"
-      : "bg-blue-100 text-blue-800 hover:bg-blue-100";
+    switch (role) {
+      case "admin":
+        return "bg-purple-100 text-purple-800 hover:bg-purple-100";
+      case "loan_officer":
+        return "bg-indigo-100 text-indigo-800 hover:bg-indigo-100";
+      case "loan_processor":
+        return "bg-cyan-100 text-cyan-800 hover:bg-cyan-100";
+      default:
+        return "bg-blue-100 text-blue-800 hover:bg-blue-100";
+    }
   };
 
   return (
@@ -350,15 +374,17 @@ export default function Brokers() {
           }
         />
 
-        {/* Search Bar */}
-        <div className="flex items-center gap-2 bg-white rounded-lg border p-3">
-          <Search className="h-4 w-4 text-gray-400" />
-          <Input
-            placeholder="Search realtors by name or email..."
-            value={searchQuery}
-            onChange={(e) => handleSearch(e.target.value)}
-            className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-          />
+        {/* Search Bar + Role Filter */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+          <div className="flex items-center gap-2 bg-white rounded-lg border p-3 flex-1">
+            <Search className="h-4 w-4 text-gray-400 flex-shrink-0" />
+            <Input
+              placeholder="Search realtors by name or email..."
+              value={searchQuery}
+              onChange={(e) => handleSearch(e.target.value)}
+              className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+            />
+          </div>
         </div>
 
         {/* Brokers Table */}
@@ -412,13 +438,14 @@ export default function Brokers() {
                 shrink: true,
                 render: (b) => {
                   const assignedMB =
-                    b.role === "broker" && b.created_by_broker_id
+                    PARTNER_ROLES.includes(b.role as BrokerRole) &&
+                    b.created_by_broker_id
                       ? brokers.find((mb) => mb.id === b.created_by_broker_id)
                       : null;
                   return (
                     <div className="space-y-1">
                       <Badge className={getRoleBadgeColor(b.role)}>
-                        {b.role === "admin" ? "Mortgage Banker" : "Partner"}
+                        {ROLE_LABELS[b.role as BrokerRole] ?? b.role}
                       </Badge>
                       {assignedMB && (
                         <p className="text-xs text-gray-500 whitespace-nowrap">
@@ -613,7 +640,7 @@ export default function Brokers() {
                   </div>
                   <div className="flex flex-col items-end gap-1">
                     <Badge className={getRoleBadgeColor(broker.role)}>
-                      {broker.role === "admin" ? "Mortgage Banker" : "Partner"}
+                      {ROLE_LABELS[broker.role as BrokerRole] ?? broker.role}
                     </Badge>
                     <Badge variant={getStatusBadgeVariant(broker.status)}>
                       {broker.status}

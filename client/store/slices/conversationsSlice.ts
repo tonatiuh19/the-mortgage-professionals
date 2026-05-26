@@ -88,6 +88,7 @@ interface ConversationsState {
 
   // Error handling
   error: string | null;
+  isDeletingMessageId: number | string | null;
 }
 
 const initialState: ConversationsState = {
@@ -143,6 +144,7 @@ const initialState: ConversationsState = {
   callHistoryPagination: { page: 1, limit: 50, total: 0, totalPages: 0 },
 
   error: null,
+  isDeletingMessageId: null,
 };
 
 // Async thunks
@@ -201,7 +203,9 @@ export const fetchConversationMessages = createAsyncThunk(
     {
       conversationId,
       page = 1,
-      limit = 50,
+      // Default 200 so the newest sent message is always in the first page
+      // (API returns DESC order which we reverse in the reducer — see below).
+      limit = 200,
     }: {
       conversationId: string;
       page?: number;
@@ -218,7 +222,9 @@ export const fetchConversationMessages = createAsyncThunk(
           params: { page, limit },
         },
       );
-      return data;
+      // Attach the requested conversationId so the fulfilled reducer can
+      // discard stale responses when the user has already switched threads.
+      return { ...data, _requestedConversationId: conversationId };
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.message ||
@@ -232,7 +238,7 @@ export const sendMessage = createAsyncThunk(
   "conversations/sendMessage",
   async (messageData: SendMessageRequest, { getState, rejectWithValue }) => {
     try {
-      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { sessionToken, user } = (getState() as RootState).brokerAuth;
       const { data } = await axios.post<SendMessageResponse>(
         "/api/conversations/send",
         messageData,
@@ -240,12 +246,14 @@ export const sendMessage = createAsyncThunk(
           headers: { Authorization: `Bearer ${sessionToken}` },
         },
       );
-      // Attach the outgoing body and media_url so the reducer can update the
-      // thread preview optimistically without waiting for a re-fetch.
+      // Attach the outgoing fields so the reducer can immediately append the
+      // confirmed message to state.messages — no separate fetch required.
       return {
         ...data,
         body: messageData.body ?? null,
         media_url: messageData.media_url ?? null,
+        communication_type: messageData.communication_type,
+        from_broker_id: user?.id ?? null,
       };
     } catch (error: any) {
       return rejectWithValue(
@@ -419,13 +427,11 @@ export const connectOffice365Mailbox = createAsyncThunk(
     {
       mailbox_email,
       display_name,
-      is_shared = true,
       target_broker_id,
       return_path,
     }: {
       mailbox_email: string;
       display_name?: string;
-      is_shared?: boolean;
       target_broker_id?: number;
       return_path?: string;
     },
@@ -438,7 +444,6 @@ export const connectOffice365Mailbox = createAsyncThunk(
         {
           mailbox_email,
           display_name,
-          is_shared,
           target_broker_id,
           return_path,
         },
@@ -495,12 +500,10 @@ export const assignConversationMailbox = createAsyncThunk(
     {
       mailboxId,
       assigned_broker_id,
-      is_shared,
       is_default,
     }: {
       mailboxId: number;
-      assigned_broker_id: number | null;
-      is_shared: boolean;
+      assigned_broker_id: number;
       is_default?: boolean;
     },
     { getState, rejectWithValue },
@@ -509,10 +512,10 @@ export const assignConversationMailbox = createAsyncThunk(
       const { sessionToken } = (getState() as RootState).brokerAuth;
       const { data } = await axios.patch<AssignConversationMailboxResponse>(
         `/api/conversations/mailboxes/${mailboxId}/assign`,
-        { assigned_broker_id, is_shared, is_default },
+        { assigned_broker_id, is_default },
         { headers: { Authorization: `Bearer ${sessionToken}` } },
       );
-      return { ...data, assigned_broker_id, is_shared, is_default, mailboxId };
+      return { ...data, assigned_broker_id, is_default, mailboxId };
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to assign mailbox",
@@ -674,8 +677,8 @@ const conversationsSlice = createSlice({
         state.currentThread &&
         message.conversation_id === state.currentThread.conversation_id
       ) {
-        // Add to the beginning since messages are sorted by newest first
-        state.messages.unshift(message);
+        // Append to the end — state.messages is sorted oldest-first (ASC)
+        state.messages.push(message);
       }
 
       // Update thread preview
@@ -843,16 +846,43 @@ const conversationsSlice = createSlice({
       })
       .addCase(fetchConversationMessages.fulfilled, (state, action) => {
         state.isLoadingMessages = false;
-        state.messages = action.payload.messages;
+
+        // ── Stale-fetch guard ────────────────────────────────────────────────
+        // If the user switched threads while this request was in-flight, the
+        // response belongs to a different conversation. Discard it so we never
+        // overwrite the current thread’s messages with stale data.
+        const requestedConvId =
+          (action.payload as any)._requestedConversationId ||
+          action.payload.thread?.conversation_id;
+        if (
+          state.currentThread?.conversation_id &&
+          requestedConvId &&
+          state.currentThread.conversation_id !== requestedConvId
+        ) {
+          return;
+        }
+
+        // The API returns messages DESC (newest first) so the newest message
+        // is always in the first page regardless of total count. Reverse to
+        // ASC before storing so the render loop (oldest-top, newest-bottom)
+        // works without a .reverse() in the component.
+        state.messages = action.payload.messages.slice().reverse();
+
         // Preserve the already-resolved client_name from the thread list if the
         // API somehow returns null for the same conversation (e.g. broker-phone
         // match timing gap). Only carry forward the name when conversation_id
-        // matches to avoid a race-condition where a different thread's name leaks.
+        // matches to avoid a race-condition where a different thread’s name leaks.
         const sameConversation =
           state.currentThread?.conversation_id ===
           action.payload.thread?.conversation_id;
         state.currentThread = {
           ...action.payload.thread,
+          // Always preserve conversation_id — if the API response somehow has it
+          // missing (empty threadInfo row), fall back to the existing value so the
+          // compose box can still thread messages correctly.
+          conversation_id:
+            action.payload.thread?.conversation_id ||
+            state.currentThread?.conversation_id,
           client_name:
             (sameConversation ? state.currentThread?.client_name : null) ||
             action.payload.thread?.client_name ||
@@ -923,19 +953,63 @@ const conversationsSlice = createSlice({
           };
           state.threads.unshift(placeholder);
         }
+
+        // ── Immediate message append ─────────────────────────────────────────
+        // Append the confirmed sent message directly to state.messages so it
+        // appears instantly regardless of total message count (no pagination
+        // gap). The Ably "new-message" event will trigger a real fetch shortly
+        // after, which replaces this synthetic entry with the full DB record.
+        if (
+          state.currentThread?.conversation_id === convId &&
+          action.payload.communication_id
+        ) {
+          const alreadyInState = state.messages.some(
+            (m) => m.id === action.payload.communication_id,
+          );
+          if (!alreadyInState) {
+            state.messages.push({
+              id: action.payload.communication_id,
+              conversation_id: convId,
+              communication_type:
+                (action.payload as any).communication_type ?? "sms",
+              direction: "outbound",
+              body: body ?? "",
+              status: "sent",
+              delivery_status: "sent",
+              from_broker_id: (action.payload as any).from_broker_id ?? null,
+              to_user_id: null,
+              from_user_id: null,
+              to_broker_id: null,
+              external_id: action.payload.external_id ?? null,
+              media_url: (action.payload as any).media_url ?? null,
+              message_type: "text",
+              created_at: now,
+              sent_at: now,
+            } as any);
+          }
+        }
       })
       .addCase(sendMessage.rejected, (state, action) => {
         state.isSendingMessage = false;
         state.error = action.payload as string;
       });
 
-    // Delete message
-    builder.addCase(deleteMessage.fulfilled, (state, action) => {
-      const { messageId } = action.payload;
-      state.messages = state.messages.filter(
-        (m) => String(m.id) !== String(messageId),
-      );
-    });
+    // Delete message — only remove from state on confirmed success
+    builder
+      .addCase(deleteMessage.pending, (state) => {
+        state.error = null;
+      })
+      .addCase(deleteMessage.fulfilled, (state, action) => {
+        const { messageId } = action.payload;
+        state.isDeletingMessageId = null;
+        state.messages = state.messages.filter(
+          (m) => String(m.id) !== String(messageId),
+        );
+      })
+      .addCase(deleteMessage.rejected, (state, action) => {
+        state.isDeletingMessageId = null;
+        state.error = action.payload as string;
+      });
 
     // Delete conversation (permanent)
     builder.addCase(deleteConversation.fulfilled, (state, action) => {
@@ -1112,7 +1186,6 @@ const conversationsSlice = createSlice({
         );
         if (mb) {
           mb.assigned_broker_id = action.payload.assigned_broker_id;
-          mb.is_shared = action.payload.is_shared;
           if (action.payload.is_default !== undefined) {
             // Clear previous default
             state.mailboxes.forEach((m) => (m.is_default = false));

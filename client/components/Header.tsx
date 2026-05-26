@@ -8,7 +8,10 @@ interface HeaderProps {
   transparent?: boolean;
 }
 
-export default function Header({ transparent = false }: HeaderProps) {
+export default function Header({
+  onGetPreApproved,
+  transparent = false,
+}: HeaderProps) {
   const [isOpen, setIsOpen] = useState(false);
   const navigate = useNavigate();
   const client = useAppSelector(selectClient);
@@ -85,6 +88,14 @@ export default function Header({ transparent = false }: HeaderProps) {
           >
             My Applications
           </button>
+          {onGetPreApproved && (
+            <button
+              onClick={onGetPreApproved}
+              className="hidden md:inline-flex bg-amber-500 hover:bg-amber-600 text-white px-5 py-2 rounded-lg font-semibold text-sm transition-all duration-300 transform hover:scale-105 shadow"
+            >
+              Get Pre-Approved
+            </button>
+          )}
 
           {/* Mobile Menu Button */}
           <button
@@ -154,7 +165,7 @@ export default function Header({ transparent = false }: HeaderProps) {
               Testimonials
             </a>
             <div
-              className={`pt-3 mt-3 ${
+              className={`pt-3 mt-3 flex flex-col gap-2 ${
                 transparent
                   ? "border-t border-white/20"
                   : "border-t border-gray-200"
@@ -173,6 +184,17 @@ export default function Header({ transparent = false }: HeaderProps) {
               >
                 My Applications
               </button>
+              {onGetPreApproved && (
+                <button
+                  onClick={() => {
+                    onGetPreApproved();
+                    setIsOpen(false);
+                  }}
+                  className="w-full bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg font-semibold text-sm transition-all duration-300"
+                >
+                  Get Pre-Approved
+                </button>
+              )}
             </div>
           </div>
         </nav>

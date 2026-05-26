@@ -395,6 +395,7 @@ const BrokerMetricsPanel: React.FC<BrokerMetricsPanelProps> = ({
     annualLoading,
   } = useAppSelector((state) => state.dashboard);
   const { brokers } = useAppSelector((state) => state.brokers);
+  const { sessionToken } = useAppSelector((state) => state.brokerAuth);
 
   const [selectedBrokerIds, setSelectedBrokerIds] = useState<number[]>([]);
   const [selectorOpen, setSelectorOpen] = useState(false);
@@ -416,9 +417,17 @@ const BrokerMetricsPanel: React.FC<BrokerMetricsPanelProps> = ({
   }, [isPartner, brokers.length, dispatch]);
 
   const load = useCallback(
-    (ids: number[]) => {
-      dispatch(fetchBrokerMetrics({ year, month, filterBrokerIds: ids }));
-      dispatch(fetchAnnualMetrics({ year, filterBrokerIds: ids }));
+    async (ids: number[]) => {
+      const [metricsResult, annualResult] = await Promise.all([
+        dispatch(fetchBrokerMetrics({ year, month, filterBrokerIds: ids })),
+        dispatch(fetchAnnualMetrics({ year, filterBrokerIds: ids })),
+      ]);
+      return (
+        (fetchBrokerMetrics.rejected.match(metricsResult) &&
+          metricsResult.payload === "UNAUTHORIZED") ||
+        (fetchAnnualMetrics.rejected.match(annualResult) &&
+          annualResult.payload === "UNAUTHORIZED")
+      );
     },
     [dispatch, year, month],
   );
@@ -428,16 +437,20 @@ const BrokerMetricsPanel: React.FC<BrokerMetricsPanelProps> = ({
     load(selectedBrokerIds);
   }, [load]);
 
-  // Auto-polling every 60s
+  // Auto-polling every 60s — stop immediately if session expires (401)
   useEffect(() => {
-    pollRef.current = setInterval(
-      () => load(selectedBrokerIds),
-      POLL_INTERVAL_MS,
-    );
+    if (!sessionToken) return;
+    pollRef.current = setInterval(async () => {
+      const isUnauthorized = await load(selectedBrokerIds);
+      if (isUnauthorized && pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    }, POLL_INTERVAL_MS);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [load, selectedBrokerIds]);
+  }, [load, selectedBrokerIds, sessionToken]);
 
   const save = useCallback(
     (patch: Partial<UpdateBrokerMetricsRequest>) => {

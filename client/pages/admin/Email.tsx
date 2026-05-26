@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useRef, useCallback } from "react";
-import * as AblyLib from "ably";
 import ReactQuill from "react-quill";
 import "react-quill/dist/quill.snow.css";
 import DOMPurify from "isomorphic-dompurify";
@@ -25,6 +24,17 @@ import {
   Maximize2,
   Minimize2,
   Users,
+  AlertTriangle,
+  Archive,
+  FileText,
+  Trash2,
+  ShieldAlert,
+  History,
+  ChevronDown,
+  Flag,
+  FolderInput,
+  MailCheck,
+  MailOpen as MailUnread,
 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
@@ -37,14 +47,29 @@ import {
   setEmailCurrentThread,
   setEmailSearch,
   setEmailFolder,
+  setActiveFolderId,
+  setActiveFolderMessage,
   emailMessageReceived,
+  fetchMailFolders,
+  fetchMailFolderMessages,
+  fetchMailFolderMessage,
+  fetchEmailSignatures,
+  fetchEmailDrafts,
+  emailThreadAction,
 } from "@/store/slices/emailSlice";
-import { fetchAblyToken } from "@/store/slices/voiceSlice";
 import { fetchClients } from "@/store/slices/clientsSlice";
+import { connectOffice365Mailbox } from "@/store/slices/conversationsSlice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -62,7 +87,8 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { cn } from "@/lib/utils";
+import { cn, stripHtml } from "@/lib/utils";
+import { getSharedAblyClient } from "@/lib/ably-client";
 import { MetaHelmet } from "@/components/MetaHelmet";
 import { adminPageMeta } from "@/lib/seo-helpers";
 import {
@@ -335,7 +361,13 @@ function ThreadItem({
               )}
             >
               {(thread.last_message_preview ?? "")
-                .replace(/<[^>]+>/g, " ")
+                .replace(/<style[\s\S]*?<\/style>/gi, " ")
+                .replace(/<script[\s\S]*?<\/script>/gi, " ")
+                .replace(/<!--[\s\S]*?-->/g, " ")
+                .replace(/<[^>]*>/g, " ")
+                .replace(/<[^>]*$/, " ")
+                .replace(/&nbsp;/gi, " ")
+                .replace(/&[a-z]{2,6};/gi, " ")
                 .replace(/\s+/g, " ")
                 .trim()}
             </p>
@@ -434,9 +466,7 @@ function MessageCard({
           )}
           {!open && (
             <p className="text-xs text-muted-foreground truncate mt-0.5 opacity-70">
-              {html
-                ? msg.body.replace(/<[^>]+>/g, " ").slice(0, 100)
-                : msg.body.slice(0, 100)}
+              {stripHtml(msg.body).slice(0, 100)}
             </p>
           )}
         </div>
@@ -457,40 +487,50 @@ function MessageCard({
       </div>
       {open && (
         <>
-          {/* Recipients row — shown when metadata is available */}
-          {(msg.metadata?.to_recipients?.length > 0 ||
-            msg.metadata?.cc_recipients?.length > 0 ||
-            msg.metadata?.from_email) && (
-            <div className="px-5 py-2.5 bg-muted/20 border-b border-border/40 space-y-1.5">
-              {msg.metadata?.from_email && !isOutbound && (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide shrink-0 w-5">
-                    Fr
-                  </span>
-                  <RecipientPill
-                    recipient={{
-                      email: msg.metadata.from_email,
-                      name: msg.metadata.from_name || null,
-                    }}
-                  />
-                </div>
-              )}
-              {msg.metadata?.to_recipients &&
-                msg.metadata.to_recipients.length > 0 && (
-                  <RecipientPillGroup
-                    recipients={msg.metadata.to_recipients}
-                    label="To"
-                  />
+          {/* Recipients row — normalise both old ({to, cc}) and new ({to_recipients, cc_recipients}) metadata formats */}
+          {(() => {
+            const meta = msg.metadata ?? {};
+            // New format: to_recipients / cc_recipients
+            // Old format: to (string) / cc (EmailRecipient[])
+            const toRecipients: { email: string; name?: string | null }[] =
+              meta.to_recipients?.length > 0
+                ? meta.to_recipients
+                : meta.to
+                  ? [{ email: meta.to as string, name: null }]
+                  : [];
+            const ccRecipients: { email: string; name?: string | null }[] =
+              meta.cc_recipients?.length > 0
+                ? meta.cc_recipients
+                : Array.isArray(meta.cc) && meta.cc.length > 0
+                  ? meta.cc
+                  : [];
+            const hasFromEmail = !!meta.from_email && !isOutbound;
+            if (!toRecipients.length && !ccRecipients.length && !hasFromEmail)
+              return null;
+            return (
+              <div className="px-5 py-2.5 bg-muted/20 border-b border-border/40 space-y-1.5">
+                {hasFromEmail && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide shrink-0 w-5">
+                      Fr
+                    </span>
+                    <RecipientPill
+                      recipient={{
+                        email: meta.from_email,
+                        name: meta.from_name || null,
+                      }}
+                    />
+                  </div>
                 )}
-              {msg.metadata?.cc_recipients &&
-                msg.metadata.cc_recipients.length > 0 && (
-                  <RecipientPillGroup
-                    recipients={msg.metadata.cc_recipients}
-                    label="CC"
-                  />
+                {toRecipients.length > 0 && (
+                  <RecipientPillGroup recipients={toRecipients} label="To" />
                 )}
-            </div>
-          )}
+                {ccRecipients.length > 0 && (
+                  <RecipientPillGroup recipients={ccRecipients} label="CC" />
+                )}
+              </div>
+            );
+          })()}
           <Separator />
           <div className="px-5 py-4">
             {html ? (
@@ -530,6 +570,191 @@ function NoMailboxScreen() {
         <ExternalLink className="h-4 w-4" />
         Go to Profile Settings
       </Button>
+    </div>
+  );
+}
+
+// ─── EmailActionToolbar ───────────────────────────────────────────────────────
+
+interface EmailActionToolbarProps {
+  thread: ConversationThread;
+  mailFolders: import("@shared/api").MailFolder[];
+  onAction: (
+    action: import("@/store/slices/emailSlice").EmailThreadActionType,
+    folderId?: string,
+  ) => void;
+}
+
+function EmailActionToolbar({
+  thread,
+  mailFolders,
+  onAction,
+}: EmailActionToolbarProps) {
+  const [showMoveMenu, setShowMoveMenu] = useState(false);
+  const moveRef = useRef<HTMLDivElement>(null);
+  const isUnread = (thread.unread_count ?? 0) > 0;
+  const isFlagged = thread.priority === "urgent";
+
+  // Close move menu on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (moveRef.current && !moveRef.current.contains(e.target as Node)) {
+        setShowMoveMenu(false);
+      }
+    };
+    if (showMoveMenu) document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showMoveMenu]);
+
+  const actionBtn =
+    "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors hover:bg-muted/70 active:scale-95 select-none cursor-pointer disabled:opacity-50";
+
+  return (
+    <div className="flex items-center gap-0.5 px-4 py-1.5 border-b border-border/60 bg-muted/20 overflow-x-auto no-scrollbar">
+      <TooltipProvider delayDuration={400}>
+        {/* Archive */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              className={cn(
+                actionBtn,
+                "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => onAction("archive")}
+            >
+              <Archive className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Archive</span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Archive thread</TooltipContent>
+        </Tooltip>
+
+        <div className="w-px h-4 bg-border/60 mx-0.5" />
+
+        {/* Delete */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              className={cn(
+                actionBtn,
+                "text-muted-foreground hover:text-destructive",
+              )}
+              onClick={() => onAction("delete")}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Delete</span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Move to trash</TooltipContent>
+        </Tooltip>
+
+        <div className="w-px h-4 bg-border/60 mx-0.5" />
+
+        {/* Mark Read / Unread toggle */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              className={cn(
+                actionBtn,
+                "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => onAction(isUnread ? "mark_read" : "mark_unread")}
+            >
+              {isUnread ? (
+                <MailCheck className="h-3.5 w-3.5" />
+              ) : (
+                <MailUnread className="h-3.5 w-3.5" />
+              )}
+              <span className="hidden sm:inline">
+                {isUnread ? "Mark Read" : "Mark Unread"}
+              </span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {isUnread ? "Mark as read" : "Mark as unread"}
+          </TooltipContent>
+        </Tooltip>
+
+        <div className="w-px h-4 bg-border/60 mx-0.5" />
+
+        {/* Flag / Unflag toggle */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              className={cn(
+                actionBtn,
+                isFlagged
+                  ? "text-amber-500 hover:text-amber-600"
+                  : "text-muted-foreground hover:text-amber-500",
+              )}
+              onClick={() => onAction(isFlagged ? "unflag" : "flag")}
+            >
+              <Flag
+                className={cn("h-3.5 w-3.5", isFlagged && "fill-amber-500")}
+              />
+              <span className="hidden sm:inline">
+                {isFlagged ? "Unflag" : "Flag"}
+              </span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {isFlagged ? "Remove flag" : "Flag as urgent"}
+          </TooltipContent>
+        </Tooltip>
+
+        {/* Move to folder — only show when mailFolders available */}
+        {mailFolders.length > 0 && (
+          <>
+            <div className="w-px h-4 bg-border/60 mx-0.5" />
+            <div className="relative" ref={moveRef}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    className={cn(
+                      actionBtn,
+                      "text-muted-foreground hover:text-foreground",
+                    )}
+                    onClick={() => setShowMoveMenu((v) => !v)}
+                  >
+                    <FolderInput className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Move</span>
+                    <ChevronDown className="h-3 w-3 opacity-60" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Move to folder</TooltipContent>
+              </Tooltip>
+
+              {showMoveMenu && (
+                <div className="absolute left-0 top-full mt-1 z-50 min-w-[180px] rounded-lg border border-border bg-popover shadow-xl overflow-hidden animate-in slide-in-from-top-1 fade-in-0 duration-150">
+                  <div className="px-3 py-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider border-b border-border/60">
+                    Move to
+                  </div>
+                  <div className="max-h-56 overflow-y-auto">
+                    {mailFolders.map((folder) => (
+                      <button
+                        key={folder.id}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-muted/60 transition-colors text-left"
+                        onClick={() => {
+                          onAction("move", folder.id);
+                          setShowMoveMenu(false);
+                        }}
+                      >
+                        <FolderOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        <span className="truncate">{folder.displayName}</span>
+                        {folder.unreadItemCount > 0 && (
+                          <span className="ml-auto text-[10px] font-medium text-primary">
+                            {folder.unreadItemCount}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </TooltipProvider>
     </div>
   );
 }
@@ -634,6 +859,7 @@ function ComposeDialog({
   defaultSubject,
   mailboxId,
   isMobile,
+  defaultSignatureHtml,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -642,6 +868,7 @@ function ComposeDialog({
   defaultSubject?: string;
   mailboxId?: number;
   isMobile?: boolean;
+  defaultSignatureHtml?: string;
 }) {
   const dispatch = useAppDispatch();
   const { toast } = useToast();
@@ -663,7 +890,12 @@ function ComposeDialog({
     if (open) {
       setTo(defaultReplyTo ?? "");
       setSubject(defaultSubject ?? "");
-      setBody("");
+      // Prepend signature separator + signature HTML when opening
+      setBody(
+        defaultSignatureHtml
+          ? `<p><br></p><p>--</p>${defaultSignatureHtml}`
+          : "",
+      );
       setCc([]);
       setBcc([]);
       setShowCc(false);
@@ -720,7 +952,7 @@ function ComposeDialog({
     if (sendEmailMessage.fulfilled.match(result)) {
       toast({ title: "Email sent" });
       onOpenChange(false);
-      dispatch(fetchEmailThreads());
+      dispatch(fetchEmailThreads(mailboxId));
     } else {
       toast({ title: "Failed to send", variant: "destructive" });
     }
@@ -905,6 +1137,7 @@ function ComposeDialog({
               placeholder="(no subject)"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
+              maxLength={512}
               className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/40 py-0.5"
             />
           </ComposeFieldRow>
@@ -1253,10 +1486,37 @@ const Email = () => {
     isLoadingMailboxes,
     search,
     folder,
+    mailFolders,
+    isLoadingMailFolders,
+    activeFolderId,
+    folderMessages,
+    isLoadingFolderMessages,
+    activeFolderMessage,
+    isLoadingFolderMessage,
+    signatures,
   } = useAppSelector((state) => state.email);
   const notifications = useAppSelector(selectNotifications);
+  const brokerId = useAppSelector((s) => s.brokerAuth.user?.id ?? null);
+  const sessionToken = useAppSelector((s) => s.brokerAuth.sessionToken);
 
   const activeMailbox = mailboxes.find((m) => m.status === "active");
+  const authRequiredMailbox =
+    !activeMailbox && mailboxes.find((m) => m.status === "auth_required");
+  // Use active mailbox if available, otherwise auth_required one for display
+  const displayMailbox = activeMailbox || authRequiredMailbox || null; // kept for legacy compat
+  void displayMailbox; // suppress unused warning — use selectedMailbox instead
+  const [selectedMailboxId, setSelectedMailboxId] = useState<number | null>(
+    null,
+  );
+  // The mailbox the user has explicitly selected (defaults to first active or first available)
+  const selectedMailbox =
+    mailboxes.find((m) => m.id === selectedMailboxId) ||
+    mailboxes.find((m) => m.status === "active") ||
+    mailboxes[0] ||
+    null;
+  const selectedAuthRequired =
+    selectedMailbox?.status === "auth_required" ? selectedMailbox : null;
+  const isSelectedMailboxActive = selectedMailbox?.status === "active";
   const [composeOpen, setComposeOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState<"list" | "thread">("list");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -1296,100 +1556,165 @@ const Email = () => {
 
   useEffect(() => {
     dispatch(fetchEmailMailboxes());
-    dispatch(fetchEmailThreads());
+    dispatch(fetchEmailSignatures());
+    dispatch(fetchEmailDrafts());
   }, [dispatch]);
 
-  // Re-fetch threads whenever the folder changes so the list updates
+  // Once mailboxes load, fetch threads scoped to the selected mailbox
   useEffect(() => {
-    dispatch(fetchEmailThreads());
-  }, [folder, dispatch]);
+    if (mailboxes.length > 0) {
+      dispatch(fetchEmailThreads(selectedMailbox?.id ?? undefined));
+    }
+  }, [mailboxes.length, selectedMailboxId, dispatch]);
+
+  // Load mail folders once we have a selected mailbox
+  useEffect(() => {
+    if (selectedMailbox) dispatch(fetchMailFolders(selectedMailbox.id));
+  }, [selectedMailbox?.id, dispatch]);
+
+  // Load folder messages when a custom folder is selected
+  useEffect(() => {
+    if (!activeFolderId) return;
+    if (!selectedMailbox) return;
+    dispatch(
+      fetchMailFolderMessages({
+        mailboxId: selectedMailbox.id,
+        folderId: activeFolderId,
+      }),
+    );
+  }, [activeFolderId, selectedMailbox?.id, dispatch]);
+
+  // Re-fetch threads whenever the folder or selected mailbox changes
+  useEffect(() => {
+    if (activeFolderId) return; // folder browser mode — don't hit DB
+    dispatch(fetchEmailThreads(selectedMailbox?.id ?? undefined));
+  }, [folder, activeFolderId, selectedMailbox?.id, dispatch]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!messagesEndRef.current) return;
+    // Radix UI ScrollArea uses a custom viewport; scrollIntoView targets the
+    // wrong scroll container. Directly set scrollTop on the viewport instead.
+    const viewport = messagesEndRef.current.closest(
+      "[data-radix-scroll-area-viewport]",
+    ) as HTMLElement | null;
+    if (viewport) {
+      viewport.scrollTop = viewport.scrollHeight;
+    } else {
+      messagesEndRef.current.scrollIntoView({ behavior: "instant" });
+    }
   }, [messages]);
 
-  // Auto-open a thread when navigating from a notification (?conversation=...)
-  // Runs whenever conversationParam or threads change — threads may be empty
-  // on first render so we wait until they load.
+  // ─── Auto-open from ?conversation= URL param ──────────────────────────────
+  // This param is set when the user clicks an email notification in the bell.
+  // Two separate effects with clear responsibilities:
+  //   1. Fetch fresh threads whenever the param appears (new notification click)
+  //   2. Open the matching thread once it exists in the loaded list
+  // No ref guard needed — after opening, setSearchParams removes the param so
+  // effect 2 stops running. Effect 1 re-triggers only when the param changes.
   const conversationParam = searchParams.get("conversation");
-  const didAutoOpenRef = useRef(false);
+
   useEffect(() => {
     if (!conversationParam) return;
-    if (threads.length === 0) return; // wait for threads to load
-    if (didAutoOpenRef.current) return; // already handled
+    // Refresh thread list so a just-arrived email is present before effect 2 runs.
+    dispatch(fetchEmailThreads(selectedMailbox?.id ?? undefined));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationParam]); // stable: dispatch never changes; selectedMailbox intentionally on-demand
+
+  useEffect(() => {
+    if (!conversationParam || threads.length === 0) return;
     const match = threads.find((t) => t.conversation_id === conversationParam);
-    if (match) {
-      didAutoOpenRef.current = true;
-      dispatch(setEmailCurrentThread(match));
-      dispatch(fetchEmailMessages({ conversationId: match.conversation_id }));
-      if (isMobile) setMobilePanel("thread");
-      setSearchParams(
-        (p) => {
-          p.delete("conversation");
-          return p;
-        },
-        { replace: true },
-      );
-    }
+    if (!match) return; // not loaded yet — wait for fetch above to settle
+    dispatch(setEmailCurrentThread(match));
+    dispatch(fetchEmailMessages({ conversationId: match.conversation_id }));
+    if (isMobile) setMobilePanel("thread");
+    // Remove the param so this effect doesn't re-run on unrelated thread refreshes.
+    setSearchParams(
+      (p) => {
+        p.delete("conversation");
+        return p;
+      },
+      { replace: true },
+    );
   }, [conversationParam, threads, dispatch, isMobile, setSearchParams]);
 
-  // Reset auto-open guard when the param changes (new notification click)
-  useEffect(() => {
-    didAutoOpenRef.current = false;
-  }, [conversationParam]);
+  // ─── Real-time Ably subscriptions ────────────────────────────────────────
+  // Uses the shared singleton client (one WebSocket per tab, same as the
+  // notification bell) instead of creating separate Realtime instances.
 
-  // Real-time: subscribe to conversations:all for thread list updates
+  // Subscription 1: thread list refresh
+  // Listens on two channels for belt-and-suspenders coverage:
+  //   • broker-notifications:{id} → "new"  (always fires for inbound emails)
+  //   • conversations:all → "thread-updated" (fires for SMS + after our fix)
   useEffect(() => {
-    let client: AblyLib.Realtime | null = null;
+    if (!sessionToken || !brokerId) return;
     let cancelled = false;
+    let cleanup: (() => void) | null = null;
+
     (async () => {
-      try {
-        const tokenRequest = await dispatch(fetchAblyToken()).unwrap();
-        if (cancelled) return;
-        client = new AblyLib.Realtime({
-          authCallback: (_p, cb) => cb(null, tokenRequest),
-        });
-        const ch = client.channels.get("conversations:all");
-        ch.subscribe("thread-updated", () => {
-          dispatch(fetchEmailThreads());
-        });
-      } catch {
-        /* graceful degradation */
-      }
+      const client = await getSharedAblyClient(sessionToken);
+      if (cancelled || !client) return;
+
+      const notifCh = client.channels.get(`broker-notifications:${brokerId}`);
+      const convsCh = client.channels.get("conversations:all");
+
+      const refreshThreads = () => {
+        dispatch(fetchEmailThreads(undefined));
+      };
+
+      notifCh.subscribe("new", refreshThreads);
+      convsCh.subscribe("thread-updated", refreshThreads);
+
+      cleanup = () => {
+        try {
+          notifCh.unsubscribe("new", refreshThreads);
+        } catch {
+          /* noop */
+        }
+        try {
+          convsCh.unsubscribe("thread-updated", refreshThreads);
+        } catch {
+          /* noop */
+        }
+      };
     })();
+
     return () => {
       cancelled = true;
-      client?.close();
+      cleanup?.();
     };
-  }, [dispatch]);
+  }, [dispatch, sessionToken, brokerId]);
 
-  // Real-time: subscribe to per-conversation channel when thread is open
+  // Subscription 2: live message updates inside the open thread
   useEffect(() => {
-    if (!currentThread?.conversation_id) return;
-    const convId = currentThread.conversation_id;
-    let client: AblyLib.Realtime | null = null;
+    const convId = currentThread?.conversation_id;
+    if (!convId || !sessionToken) return;
     let cancelled = false;
+    let cleanup: (() => void) | null = null;
+
     (async () => {
-      try {
-        const tokenRequest = await dispatch(fetchAblyToken()).unwrap();
-        if (cancelled) return;
-        client = new AblyLib.Realtime({
-          authCallback: (_p, cb) => cb(null, tokenRequest),
-        });
-        const ch = client.channels.get(`conversation:${convId}`);
-        ch.subscribe("new-message", () => {
-          dispatch(fetchEmailMessages({ conversationId: convId }));
-          dispatch(fetchEmailThreads());
-        });
-      } catch {
-        /* graceful degradation */
-      }
+      const client = await getSharedAblyClient(sessionToken);
+      if (cancelled || !client) return;
+
+      const ch = client.channels.get(`conversation:${convId}`);
+      const handler = () => {
+        dispatch(fetchEmailMessages({ conversationId: convId }));
+        dispatch(fetchEmailThreads(undefined));
+      };
+      ch.subscribe("new-message", handler);
+      cleanup = () => {
+        try {
+          ch.unsubscribe("new-message", handler);
+        } catch {
+          /* noop */
+        }
+      };
     })();
+
     return () => {
       cancelled = true;
-      client?.close();
+      cleanup?.();
     };
-  }, [currentThread?.conversation_id, dispatch]);
+  }, [currentThread?.conversation_id, dispatch, sessionToken]);
 
   // Mark related notifications as read when a thread is opened
   useEffect(() => {
@@ -1413,6 +1738,26 @@ const Email = () => {
     );
   });
 
+  const SKIP_FOLDERS = new Set(["inbox", "sent items"]);
+  const FOLDER_ICONS: Record<
+    string,
+    React.ComponentType<{ className?: string }>
+  > = {
+    archive: Archive,
+    drafts: FileText,
+    "deleted items": Trash2,
+    "junk email": ShieldAlert,
+    outbox: Send,
+    "conversation history": History,
+  };
+  const sidebarSystemFolders = mailFolders.filter(
+    (f) =>
+      f.isSystemFolder &&
+      !SKIP_FOLDERS.has(f.displayName?.toLowerCase() ?? "") &&
+      !f.parentId,
+  );
+  const sidebarCustomFolders = mailFolders.filter((f) => !f.isSystemFolder);
+
   const handleSelectThread = (thread: ConversationThread) => {
     dispatch(setEmailCurrentThread(thread));
     dispatch(fetchEmailMessages({ conversationId: thread.conversation_id }));
@@ -1420,14 +1765,25 @@ const Email = () => {
   };
 
   const handleSync = async () => {
-    if (!activeMailbox) return;
-    const result = await dispatch(syncEmailMailbox(activeMailbox.id));
+    if (!selectedMailbox || !isSelectedMailboxActive) return;
+    const result = await dispatch(syncEmailMailbox(selectedMailbox.id));
     if (syncEmailMailbox.fulfilled.match(result)) {
       toast({ title: "Inbox synced" });
-      dispatch(fetchEmailThreads());
+      dispatch(fetchEmailThreads(selectedMailbox.id));
     } else {
       toast({ title: "Sync failed", variant: "destructive" });
     }
+  };
+
+  const handleReconnect = async () => {
+    const mailbox = selectedAuthRequired || selectedMailbox;
+    if (!mailbox) return;
+    const result = await dispatch(
+      connectOffice365Mailbox({
+        mailbox_email: mailbox.mailbox_email,
+      }),
+    ).unwrap();
+    if (result.auth_url) window.location.href = result.auth_url;
   };
 
   const handleReplySent = useCallback(() => {
@@ -1435,9 +1791,9 @@ const Email = () => {
       dispatch(
         fetchEmailMessages({ conversationId: currentThread.conversation_id }),
       );
-      dispatch(fetchEmailThreads());
+      dispatch(fetchEmailThreads(selectedMailbox?.id ?? undefined));
     }
-  }, [currentThread, dispatch]);
+  }, [currentThread, selectedMailbox?.id, dispatch]);
 
   const totalUnread = threads.reduce(
     (acc, t) => acc + (t.unread_count || 0),
@@ -1477,16 +1833,43 @@ const Email = () => {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold truncate">Email</p>
-                {activeMailbox && (
-                  <p className="text-[10px] text-muted-foreground truncate">
-                    {activeMailbox.mailbox_email}
-                  </p>
+                {mailboxes.length > 1 ? (
+                  <Select
+                    value={String(selectedMailbox?.id ?? "")}
+                    onValueChange={(val) => setSelectedMailboxId(Number(val))}
+                  >
+                    <SelectTrigger className="h-5 text-[10px] border-0 p-0 shadow-none bg-transparent text-muted-foreground hover:text-foreground focus:ring-0 gap-0.5 [&>svg]:w-3 [&>svg]:h-3">
+                      <SelectValue placeholder="Select mailbox" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {mailboxes.map((mb) => (
+                        <SelectItem
+                          key={mb.id}
+                          value={String(mb.id)}
+                          className="text-xs"
+                        >
+                          {mb.mailbox_email}
+                          {mb.status !== "active" && (
+                            <span className="ml-1 text-amber-500">
+                              (reconnect)
+                            </span>
+                          )}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  selectedMailbox && (
+                    <p className="text-[10px] text-muted-foreground truncate">
+                      {selectedMailbox.mailbox_email}
+                    </p>
+                  )
                 )}
               </div>
             </div>
           </div>
 
-          {activeMailbox && (
+          {isSelectedMailboxActive && (
             <div className="px-3 pb-3">
               <Button
                 className="w-full gap-2 justify-start"
@@ -1499,16 +1882,33 @@ const Email = () => {
             </div>
           )}
 
+          {selectedAuthRequired && (
+            <div className="px-3 pb-3">
+              <Button
+                variant="outline"
+                className="w-full gap-2 justify-start text-amber-600 border-amber-500/40 hover:bg-amber-500/10 text-xs"
+                size="sm"
+                onClick={handleReconnect}
+              >
+                <AlertTriangle className="h-3.5 w-3.5" />
+                Reconnect
+              </Button>
+            </div>
+          )}
+
           <Separator />
 
           <nav className="flex flex-col gap-0.5 px-2 py-2">
             {FOLDERS.map((f) => (
               <button
                 key={f.key}
-                onClick={() => dispatch(setEmailFolder(f.key))}
+                onClick={() => {
+                  dispatch(setActiveFolderId(null));
+                  dispatch(setEmailFolder(f.key));
+                }}
                 className={cn(
                   "flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors",
-                  folder === f.key
+                  folder === f.key && !activeFolderId
                     ? "bg-primary/10 text-primary font-medium"
                     : "text-foreground/70 hover:bg-muted hover:text-foreground",
                 )}
@@ -1526,7 +1926,90 @@ const Email = () => {
 
           <Separator className="my-2" />
 
-          {activeMailbox && (
+          {/* Dynamic Outlook Folders */}
+          {(mailFolders.length > 0 || isLoadingMailFolders) && (
+            <div className="flex-1 overflow-y-auto px-2 pb-2 min-h-0">
+              {isLoadingMailFolders ? (
+                <div className="flex justify-center py-3">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                </div>
+              ) : (
+                <>
+                  {sidebarSystemFolders.length > 0 && (
+                    <>
+                      <p className="px-3 pt-1 pb-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                        System
+                      </p>
+                      {sidebarSystemFolders.map((f) => {
+                        const IconComp =
+                          FOLDER_ICONS[f.displayName?.toLowerCase() ?? ""] ??
+                          FolderOpen;
+                        return (
+                          <button
+                            key={f.id}
+                            onClick={() => dispatch(setActiveFolderId(f.id))}
+                            className={cn(
+                              "w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-sm transition-colors",
+                              activeFolderId === f.id
+                                ? "bg-primary/10 text-primary font-medium"
+                                : "text-foreground/70 hover:bg-muted hover:text-foreground",
+                            )}
+                          >
+                            <IconComp className="h-3.5 w-3.5 shrink-0" />
+                            <span className="flex-1 text-left truncate text-xs">
+                              {f.displayName}
+                            </span>
+                            {f.unreadItemCount > 0 && (
+                              <Badge
+                                variant="secondary"
+                                className="h-4 min-w-4 px-1 text-[10px] rounded-full ml-auto shrink-0"
+                              >
+                                {f.unreadItemCount}
+                              </Badge>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </>
+                  )}
+                  {sidebarCustomFolders.length > 0 && (
+                    <>
+                      <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                        Folders
+                      </p>
+                      {sidebarCustomFolders.map((f) => (
+                        <button
+                          key={f.id}
+                          onClick={() => dispatch(setActiveFolderId(f.id))}
+                          className={cn(
+                            "w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-sm transition-colors",
+                            activeFolderId === f.id
+                              ? "bg-primary/10 text-primary font-medium"
+                              : "text-foreground/70 hover:bg-muted hover:text-foreground",
+                          )}
+                        >
+                          <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+                          <span className="flex-1 text-left truncate text-xs">
+                            {f.displayName}
+                          </span>
+                          {f.unreadItemCount > 0 && (
+                            <Badge
+                              variant="secondary"
+                              className="h-4 min-w-4 px-1 text-[10px] rounded-full ml-auto shrink-0"
+                            >
+                              {f.unreadItemCount}
+                            </Badge>
+                          )}
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {selectedMailbox && (
             <div className="px-3 mt-auto pb-4">
               <TooltipProvider>
                 <Tooltip>
@@ -1536,7 +2019,7 @@ const Email = () => {
                       size="sm"
                       className="w-full gap-2 justify-start text-muted-foreground hover:text-foreground text-xs"
                       onClick={handleSync}
-                      disabled={isSyncingMailbox}
+                      disabled={isSyncingMailbox || !isSelectedMailboxActive}
                     >
                       <RefreshCw
                         className={cn(
@@ -1548,8 +2031,8 @@ const Email = () => {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="right" className="text-xs">
-                    {activeMailbox.last_sync_at
-                      ? `Last synced ${formatRelativeTime(activeMailbox.last_sync_at)}`
+                    {selectedMailbox?.last_sync_at
+                      ? `Last synced ${formatRelativeTime(selectedMailbox.last_sync_at)}`
                       : "Never synced"}
                   </TooltipContent>
                 </Tooltip>
@@ -1574,10 +2057,33 @@ const Email = () => {
             <div className="flex-1 flex items-center justify-center">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
-          ) : !activeMailbox ? (
+          ) : !selectedMailbox ? (
             <NoMailboxScreen />
           ) : (
             <>
+              {/* Auth-required reconnect banner */}
+              {selectedAuthRequired && (
+                <div className="mx-3 mt-3 flex items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
+                  <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                      Reconnect required
+                    </p>
+                    <p className="text-[10px] text-amber-600/80 dark:text-amber-500/80 mt-0.5">
+                      Your mailbox session expired. Re-authorize to resume email
+                      sync.
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="mt-2 h-6 text-[10px] border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20"
+                      onClick={handleReconnect}
+                    >
+                      Reconnect Office 365
+                    </Button>
+                  </div>
+                </div>
+              )}
               {/* Mobile: branding header with sync button */}
               {isMobile && (
                 <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-card/60">
@@ -1586,13 +2092,13 @@ const Email = () => {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold leading-none">Email</p>
-                    {activeMailbox && (
+                    {selectedMailbox && (
                       <p className="text-[10px] text-muted-foreground truncate mt-0.5">
-                        {activeMailbox.mailbox_email}
+                        {selectedMailbox.mailbox_email}
                       </p>
                     )}
                   </div>
-                  {activeMailbox && (
+                  {isSelectedMailboxActive && (
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -1612,8 +2118,8 @@ const Email = () => {
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent side="bottom" className="text-xs">
-                          {activeMailbox.last_sync_at
-                            ? `Last synced ${formatRelativeTime(activeMailbox.last_sync_at)}`
+                          {selectedMailbox?.last_sync_at
+                            ? `Last synced ${formatRelativeTime(selectedMailbox.last_sync_at)}`
                             : "Sync inbox"}
                         </TooltipContent>
                       </Tooltip>
@@ -1644,13 +2150,18 @@ const Email = () => {
 
               <div className="px-4 py-2 flex items-center justify-between">
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  {FOLDERS.find((f) => f.key === folder)?.label ?? "Inbox"}
+                  {activeFolderId
+                    ? (mailFolders.find((f) => f.id === activeFolderId)
+                        ?.displayName ?? "Folder")
+                    : (FOLDERS.find((f) => f.key === folder)?.label ?? "Inbox")}
                 </span>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-muted-foreground">
-                    {filteredThreads.length}
+                    {activeFolderId
+                      ? folderMessages.length
+                      : filteredThreads.length}
                   </span>
-                  {activeMailbox && (
+                  {isSelectedMailboxActive && !activeFolderId && (
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -1677,8 +2188,8 @@ const Email = () => {
                         <TooltipContent side="bottom" className="text-xs">
                           {isSyncingMailbox
                             ? "Syncing…"
-                            : activeMailbox.last_sync_at
-                              ? `Last synced ${formatRelativeTime(activeMailbox.last_sync_at)}`
+                            : selectedMailbox?.last_sync_at
+                              ? `Last synced ${formatRelativeTime(selectedMailbox.last_sync_at)}`
                               : "Sync inbox"}
                         </TooltipContent>
                       </Tooltip>
@@ -1688,7 +2199,93 @@ const Email = () => {
               </div>
 
               <ScrollArea className="flex-1">
-                {isLoadingThreads ? (
+                {activeFolderId ? (
+                  /* ── Custom folder messages (live from Graph API) ── */
+                  isLoadingFolderMessages ? (
+                    <div className="flex items-center justify-center py-16">
+                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : folderMessages.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-16 gap-3 text-center px-6">
+                      <FolderOpen className="h-10 w-10 text-muted-foreground/30" />
+                      <p className="text-sm font-medium text-muted-foreground">
+                        This folder is empty
+                      </p>
+                    </div>
+                  ) : (
+                    folderMessages.map((msg) => {
+                      const isSelected = activeFolderMessage?.id === msg.id;
+                      return (
+                        <button
+                          key={msg.id}
+                          onClick={() => {
+                            const mailbox = selectedMailbox;
+                            if (!mailbox || !activeFolderId) return;
+                            dispatch(
+                              fetchMailFolderMessage({
+                                mailboxId: mailbox.id,
+                                folderId: activeFolderId,
+                                messageId: msg.id,
+                              }),
+                            );
+                            if (isMobile) setMobilePanel("thread");
+                          }}
+                          className={cn(
+                            "w-full text-left px-4 py-3 border-b border-border/50 transition-all duration-150 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary",
+                            isSelected &&
+                              "bg-primary/5 border-l-[3px] border-l-primary pl-[13px]",
+                          )}
+                        >
+                          <div className="flex items-start gap-3">
+                            <Avatar className="h-8 w-8 shrink-0 mt-0.5">
+                              <AvatarFallback
+                                className={cn(
+                                  "text-xs font-semibold",
+                                  isSelected
+                                    ? "bg-primary text-primary-foreground"
+                                    : "bg-primary/10 text-primary",
+                                )}
+                              >
+                                {getInitials(msg.from.name || msg.from.email)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-2">
+                                <span
+                                  className={cn(
+                                    "text-sm truncate",
+                                    !msg.isRead
+                                      ? "font-bold text-foreground"
+                                      : "font-medium text-foreground/80",
+                                  )}
+                                >
+                                  {msg.from.name || msg.from.email}
+                                </span>
+                                <span className="text-[11px] text-muted-foreground shrink-0">
+                                  {formatRelativeTime(msg.receivedDateTime)}
+                                </span>
+                              </div>
+                              <p className="text-xs font-medium text-foreground/70 truncate mt-0.5">
+                                {msg.subject}
+                              </p>
+                              <p
+                                className={cn(
+                                  "text-xs truncate mt-0.5",
+                                  msg.isRead
+                                    ? "text-muted-foreground"
+                                    : "text-foreground/70",
+                                )}
+                              >
+                                {msg.bodyPreview}
+                              </p>
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })
+                  )
+                ) : /* ── Synced DB threads (inbox / sent) ── */
+                isLoadingThreads ? (
                   <div className="flex items-center justify-center py-16">
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                   </div>
@@ -1732,7 +2329,7 @@ const Email = () => {
         </div>
 
         {/* ─── Drag-to-resize handle ─────────────────────────────────────── */}
-        {!isMobile && activeMailbox && (
+        {!isMobile && isSelectedMailboxActive && (
           <div
             onPointerDown={handleResizerPointerDown}
             className="group relative w-1.5 shrink-0 cursor-col-resize select-none z-20"
@@ -1752,7 +2349,7 @@ const Email = () => {
         )}
 
         {/* Thread Detail */}
-        {activeMailbox && (
+        {selectedMailbox && (
           <div
             className={cn(
               "flex flex-col flex-1 min-w-0 bg-background",
@@ -1760,16 +2357,96 @@ const Email = () => {
               isMobile && mobilePanel === "thread" && "thread-panel-slide-in",
             )}
           >
-            {!currentThread ? (
+            {activeFolderMessage ? (
+              /* ── Folder message detail view ── */
+              <div className="flex flex-col h-full min-h-0">
+                <div className="px-5 py-4 border-b border-border flex items-start gap-3 bg-card/50 shrink-0">
+                  {isMobile && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 mt-0.5"
+                      onClick={() => {
+                        dispatch(setActiveFolderMessage(null));
+                        setMobilePanel("list");
+                      }}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <h2 className="font-semibold text-base truncate">
+                      {activeFolderMessage.subject}
+                    </h2>
+                    <div className="flex items-center gap-2 flex-wrap mt-1">
+                      <span className="text-xs text-muted-foreground">
+                        From:{" "}
+                        {activeFolderMessage.from?.name ||
+                          activeFolderMessage.from?.email}
+                      </span>
+                      {activeFolderMessage.from?.email &&
+                        activeFolderMessage.from?.name && (
+                          <span className="text-xs text-muted-foreground/60">
+                            &lt;{activeFolderMessage.from.email}&gt;
+                          </span>
+                        )}
+                      <span className="text-xs text-muted-foreground/50 ml-auto shrink-0">
+                        {activeFolderMessage.receivedDateTime
+                          ? formatRelativeTime(
+                              activeFolderMessage.receivedDateTime,
+                            )
+                          : ""}
+                      </span>
+                    </div>
+                    {activeFolderMessage.to?.length > 0 && (
+                      <p className="text-xs text-muted-foreground/60 mt-0.5 truncate">
+                        To:{" "}
+                        {activeFolderMessage.to
+                          .map((r: any) => r.name || r.email)
+                          .join(", ")}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <ScrollArea className="flex-1">
+                  {isLoadingFolderMessage ? (
+                    <div className="flex items-center justify-center py-16">
+                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : (
+                    <div className="p-5">
+                      {activeFolderMessage.bodyType === "html" ? (
+                        <div
+                          className="email-body prose prose-sm max-w-none dark:prose-invert"
+                          dangerouslySetInnerHTML={{
+                            __html: DOMPurify.sanitize(
+                              activeFolderMessage.body || "",
+                            ),
+                          }}
+                        />
+                      ) : (
+                        <pre className="whitespace-pre-wrap text-sm text-foreground/80 font-sans leading-relaxed">
+                          {activeFolderMessage.body}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+                </ScrollArea>
+              </div>
+            ) : !currentThread ? (
               <div className="flex-1 flex flex-col items-center justify-center gap-4 text-muted-foreground">
                 <div className="h-16 w-16 rounded-2xl bg-muted/60 flex items-center justify-center">
                   <Mail className="h-8 w-8 opacity-30" />
                 </div>
                 <div className="text-center">
                   <p className="font-medium text-foreground/60">
-                    Select a conversation
+                    {activeFolderId
+                      ? "Select a message"
+                      : "Select a conversation"}
                   </p>
-                  <p className="text-sm">Pick an email thread to read it</p>
+                  <p className="text-sm">
+                    Pick an email{activeFolderId ? "" : " thread"} to read it
+                  </p>
                 </div>
               </div>
             ) : (
@@ -1814,6 +2491,21 @@ const Email = () => {
                   </div>
                 </div>
 
+                {/* Action toolbar — mirrors Outlook-style email toolbar */}
+                <EmailActionToolbar
+                  thread={currentThread}
+                  mailFolders={mailFolders}
+                  onAction={(action, folderId) => {
+                    dispatch(
+                      emailThreadAction({
+                        conversationId: currentThread.conversation_id,
+                        action,
+                        folderId,
+                      }),
+                    );
+                  }}
+                />
+
                 {/* Messages */}
                 <ScrollArea className="flex-1 px-5 py-4">
                   {isLoadingMessages ? (
@@ -1841,13 +2533,25 @@ const Email = () => {
 
                 {/* Reply box */}
                 <div className="border-t border-border/50 bg-card/30">
-                  <ReplyBox
-                    thread={currentThread}
-                    mailboxId={activeMailbox?.id}
-                    mailboxEmail={activeMailbox?.mailbox_email}
-                    messages={messages}
-                    onSent={handleReplySent}
-                  />
+                  {(() => {
+                    // When replying, use the mailbox the email arrived on (from the thread),
+                    // falling back to the currently selected mailbox.
+                    const replyMailbox =
+                      mailboxes.find(
+                        (m) => m.id === currentThread?.mailbox_id,
+                      ) ||
+                      selectedMailbox ||
+                      null;
+                    return (
+                      <ReplyBox
+                        thread={currentThread}
+                        mailboxId={replyMailbox?.id}
+                        mailboxEmail={replyMailbox?.mailbox_email}
+                        messages={messages}
+                        onSent={handleReplySent}
+                      />
+                    );
+                  })()}
                 </div>
               </div>
             )}
@@ -1856,11 +2560,11 @@ const Email = () => {
       </div>
 
       {/* Mobile: Compose FAB — floats above bottom nav */}
-      {isMobile && mobilePanel === "list" && activeMailbox && (
+      {isMobile && mobilePanel === "list" && isSelectedMailboxActive && (
         <button
           onClick={() => setComposeOpen(true)}
           aria-label="Compose new email"
-          className="fixed bottom-20 right-5 z-50 h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-xl shadow-primary/30 flex items-center justify-center active:scale-95 transition-all duration-150 hover:bg-primary/90"
+          className="fixed bottom-36 right-5 z-50 h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-xl shadow-primary/30 flex items-center justify-center active:scale-95 transition-all duration-150 hover:bg-primary/90"
         >
           <Pencil className="h-5 w-5" />
         </button>
@@ -1878,9 +2582,10 @@ const Email = () => {
       <ComposeDialog
         open={composeOpen}
         onOpenChange={setComposeOpen}
-        mailboxEmail={activeMailbox?.mailbox_email}
-        mailboxId={activeMailbox?.id}
+        mailboxEmail={selectedMailbox?.mailbox_email}
+        mailboxId={selectedMailbox?.id}
         isMobile={isMobile}
+        defaultSignatureHtml={signatures.find((s) => s.is_default)?.html}
         defaultReplyTo={
           composeOpen && currentThread
             ? (currentThread.client_email ?? undefined)

@@ -5,6 +5,7 @@ import {
 } from "@reduxjs/toolkit";
 import axios from "axios";
 import type { RootState } from "../index";
+import { disconnectConversationMailbox } from "./conversationsSlice";
 import type {
   SchedulerSettings,
   SchedulerAvailability,
@@ -24,6 +25,8 @@ import type {
   GetTeamsEligibilityResponse,
   AvailableSlot,
   PublicSchedulerBrokerInfo,
+  SyncO365CalendarResponse,
+  GetO365CalendarStatusResponse,
 } from "@shared/api";
 
 interface SchedulerState {
@@ -43,6 +46,14 @@ interface SchedulerState {
   blockedRanges: SchedulerBlockedRange[];
   isLoadingBlockedRanges: boolean;
   isSavingBlockedRange: boolean;
+
+  // O365 calendar sync
+  o365Connected: boolean;
+  o365MailboxEmail: string | null;
+  o365SyncedCount: number;
+  o365LastSyncedAt: string | null;
+  isSyncingO365: boolean;
+  isLoadingO365Status: boolean;
 
   // Public booking flow
   publicBroker: PublicSchedulerBrokerInfo | null;
@@ -71,6 +82,13 @@ const initialState: SchedulerState = {
   blockedRanges: [],
   isLoadingBlockedRanges: false,
   isSavingBlockedRange: false,
+
+  o365Connected: false,
+  o365MailboxEmail: null,
+  o365SyncedCount: 0,
+  o365LastSyncedAt: null,
+  isSyncingO365: false,
+  isLoadingO365Status: false,
 
   publicBroker: null,
   availableDates: [],
@@ -567,6 +585,43 @@ const schedulerSlice = createSlice({
         (r) => r.id !== action.payload,
       );
     });
+
+    // fetchO365CalendarStatus
+    builder
+      .addCase(fetchO365CalendarStatus.pending, (state) => {
+        state.isLoadingO365Status = true;
+      })
+      .addCase(fetchO365CalendarStatus.fulfilled, (state, action) => {
+        state.isLoadingO365Status = false;
+        state.o365Connected = action.payload.connected;
+        state.o365MailboxEmail = action.payload.mailbox_email;
+        state.o365SyncedCount = action.payload.synced_count;
+        state.o365LastSyncedAt = action.payload.last_synced_at;
+      })
+      .addCase(fetchO365CalendarStatus.rejected, (state) => {
+        state.isLoadingO365Status = false;
+      });
+
+    // syncO365Calendar
+    builder
+      .addCase(syncO365Calendar.pending, (state) => {
+        state.isSyncingO365 = true;
+      })
+      .addCase(syncO365Calendar.fulfilled, (state) => {
+        state.isSyncingO365 = false;
+        // blockedRanges will be refreshed by the UI after sync
+      })
+      .addCase(syncO365Calendar.rejected, (state) => {
+        state.isSyncingO365 = false;
+      });
+
+    // When a mailbox is disconnected elsewhere, immediately clear O365 calendar state
+    builder.addCase(disconnectConversationMailbox.fulfilled, (state) => {
+      state.o365Connected = false;
+      state.o365MailboxEmail = null;
+      state.o365SyncedCount = 0;
+      state.o365LastSyncedAt = null;
+    });
   },
 });
 
@@ -630,6 +685,94 @@ export const deleteBlockedRange = createAsyncThunk(
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.error || "Failed to delete blocked range",
+      );
+    }
+  },
+);
+
+// ---------------------------------------------------------------
+// O365 Calendar Sync thunks
+// ---------------------------------------------------------------
+
+export const fetchO365CalendarStatus = createAsyncThunk(
+  "scheduler/fetchO365CalendarStatus",
+  async (_: void, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.get<GetO365CalendarStatusResponse>(
+        "/api/scheduler/calendar-sync/status",
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return data;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to fetch calendar sync status",
+      );
+    }
+  },
+);
+
+export const syncO365Calendar = createAsyncThunk(
+  "scheduler/syncO365Calendar",
+  async (_: void, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.post<SyncO365CalendarResponse>(
+        "/api/scheduler/calendar-sync",
+        {},
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return data;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to sync calendar",
+      );
+    }
+  },
+);
+
+// ── Slug management ───────────────────────────────────────────────────────────
+
+/**
+ * Check whether a proposed slug is available for the authenticated broker.
+ * Returns { available: boolean, slug: string }.
+ */
+export const checkSlug = createAsyncThunk(
+  "scheduler/checkSlug",
+  async (slug: string, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.get<{ available: boolean; slug: string }>(
+        `/api/broker/slug/check?slug=${encodeURIComponent(slug)}`,
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return data;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to check slug availability",
+      );
+    }
+  },
+);
+
+/**
+ * Update the authenticated broker's slug.
+ * Returns { success: boolean, slug: string }.
+ */
+export const updateSlug = createAsyncThunk(
+  "scheduler/updateSlug",
+  async (slug: string, { getState, rejectWithValue }) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.put<{ success: boolean; slug: string }>(
+        "/api/broker/slug",
+        { slug },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return data;
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to update slug",
       );
     }
   },

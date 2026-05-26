@@ -116,7 +116,7 @@ CREATE TABLE `brokers` (
   `first_name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
   `last_name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
   `phone` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `role` enum('broker','admin') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'broker',
+  `role` enum('broker','admin','loan_officer','loan_processor','realtor','buyers_agent','listing_agent') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'broker',
   `status` enum('active','inactive','suspended') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
   `email_verified` tinyint(1) DEFAULT '0',
   `last_login` datetime DEFAULT NULL,

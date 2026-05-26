@@ -1,6 +1,14 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { Mail, Phone, MapPin, Instagram, Facebook, LogIn } from "lucide-react";
+import {
+  Mail,
+  Phone,
+  MapPin,
+  Twitter,
+  Linkedin,
+  Facebook,
+  LogIn,
+} from "lucide-react";
 
 const Footer = () => {
   return (
@@ -16,26 +24,27 @@ const Footer = () => {
               />
             </Link>
             <p className="text-sm text-muted-foreground leading-relaxed">
-              We are The Mortgage Professionals, Inc. We help families with
-              purchase and refinance solutions through clear communication and
-              trusted guidance.
+              Your trusted partner in personalized mortgage solutions. Making
+              homeownership dreams come true.
             </p>
             <div className="flex space-x-4">
               <a
-                href="https://www.facebook.com/osegueragroup"
-                target="_blank"
-                rel="noopener noreferrer"
+                href="#"
+                className="text-muted-foreground hover:text-primary transition-colors"
+              >
+                <Twitter className="h-5 w-5" />
+              </a>
+              <a
+                href="#"
+                className="text-muted-foreground hover:text-primary transition-colors"
+              >
+                <Linkedin className="h-5 w-5" />
+              </a>
+              <a
+                href="#"
                 className="text-muted-foreground hover:text-primary transition-colors"
               >
                 <Facebook className="h-5 w-5" />
-              </a>
-              <a
-                href="https://www.instagram.com/theosegueragroup/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-muted-foreground hover:text-primary transition-colors"
-              >
-                <Instagram className="h-5 w-5" />
               </a>
             </div>
           </div>
@@ -47,54 +56,26 @@ const Footer = () => {
             <ul className="space-y-2 text-sm">
               <li>
                 <Link
-                  to="/"
+                  to="/wizard"
                   className="text-muted-foreground hover:text-primary transition-colors"
                 >
-                  Home
+                  Apply Now
                 </Link>
               </li>
               <li>
                 <Link
-                  to="/conventional-loan"
+                  to="/client-login"
                   className="text-muted-foreground hover:text-primary transition-colors"
                 >
-                  Mortgage Programs
+                  Track Application
                 </Link>
               </li>
               <li>
                 <Link
-                  to="/mortgage-calculator"
+                  to="/#loans"
                   className="text-muted-foreground hover:text-primary transition-colors"
                 >
-                  Mortgage Calculator
-                </Link>
-              </li>
-              <li>
-                <a
-                  href="https://2302276.my1003app.com/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-muted-foreground hover:text-primary transition-colors"
-                >
-                  Apply Online
-                </a>
-              </li>
-              <li>
-                <a
-                  href="https://intranet.themortgageprofessionals.net/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-muted-foreground hover:text-primary transition-colors"
-                >
-                  Staff Portal
-                </a>
-              </li>
-              <li>
-                <Link
-                  to="/privacy-policy"
-                  className="text-muted-foreground hover:text-primary transition-colors"
-                >
-                  Privacy Policy
+                  Loan Options
                 </Link>
               </li>
             </ul>
@@ -107,34 +88,34 @@ const Footer = () => {
             <ul className="space-y-2 text-sm">
               <li>
                 <Link
-                  to="/about-us"
+                  to="/#loans"
                   className="text-muted-foreground hover:text-primary transition-colors"
                 >
-                  About Us
+                  Loan Options
                 </Link>
               </li>
               <li>
                 <Link
-                  to="/our-team"
+                  to="/faq"
                   className="text-muted-foreground hover:text-primary transition-colors"
                 >
-                  Our Team
+                  FAQ
                 </Link>
               </li>
               <li>
                 <Link
-                  to="/contact-us"
+                  to="/#about"
+                  className="text-muted-foreground hover:text-primary transition-colors"
+                >
+                  Our Story
+                </Link>
+              </li>
+              <li>
+                <Link
+                  to="/#contact"
                   className="text-muted-foreground hover:text-primary transition-colors"
                 >
                   Contact Us
-                </Link>
-              </li>
-              <li>
-                <Link
-                  to="/privacy-policy"
-                  className="text-muted-foreground hover:text-primary transition-colors"
-                >
-                  Privacy Policy
                 </Link>
               </li>
             </ul>
@@ -147,33 +128,31 @@ const Footer = () => {
             <ul className="space-y-3 text-sm">
               <li className="flex items-center space-x-2 text-muted-foreground">
                 <Mail className="h-4 w-4" />
-                <span>raul@theosegueragroup.com</span>
+                <span>info@themortgageprofessionals.net</span>
               </li>
               <li className="flex items-center space-x-2 text-muted-foreground">
                 <Phone className="h-4 w-4" />
-                <span>(562) 665-4132</span>
+                <span>(562) 337-0000</span>
               </li>
               <li className="flex items-center space-x-2 text-muted-foreground text-pretty">
                 <MapPin className="h-4 w-4 shrink-0" />
-                <span>16901 Bellflower Blvd, Bellflower, CA 90706</span>
+                <span>Serving clients nationwide</span>
               </li>
             </ul>
           </div>
         </div>
         <div className="mt-12 border-t pt-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-muted-foreground">
           <p>
-            © {new Date().getFullYear()} The Mortgage Professionals. All rights
-            reserved. NMLS #2302276
+            © {new Date().getFullYear()} The Mortgage Professionals. All rights reserved.
+            NMLS #1105497
           </p>
-          <a
-            href="https://intranet.themortgageprofessionals.net/"
-            target="_blank"
-            rel="noopener noreferrer"
+          <Link
+            to="/broker-login"
             className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background px-3 py-1 text-xs font-medium text-muted-foreground hover:border-primary/40 hover:text-primary hover:bg-primary/5 transition-all"
           >
             <LogIn className="h-3 w-3" />
-            Staff Portal
-          </a>
+            Broker Portal
+          </Link>
         </div>
       </div>
     </footer>

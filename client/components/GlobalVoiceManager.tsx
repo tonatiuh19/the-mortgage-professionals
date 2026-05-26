@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from "react";
 import { Device, Call } from "@twilio/voice-sdk";
 import * as AblyLib from "ably";
+import { getSharedAblyClient } from "@/lib/ably-client";
 import { Phone, PhoneOff, PhoneIncoming } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
@@ -9,7 +10,6 @@ import {
   endOutboundCall,
   resolveOutboundCallName,
   fetchVoiceToken,
-  fetchAblyToken,
   updateVoiceAvailability,
   lookupContact,
 } from "@/store/slices/voiceSlice";
@@ -149,14 +149,40 @@ const GlobalVoiceManager: React.FC = () => {
 
       device.on("tokenAboutToExpire", async () => {
         logger.log("[GlobalVoiceManager] Token about to expire — refreshing");
-        const newToken = await fetchToken();
-        if (newToken) device?.updateToken(newToken);
+        try {
+          const newToken = await fetchToken();
+          if (newToken) {
+            device?.updateToken(newToken);
+          } else {
+            logger.error("[GlobalVoiceManager] Token refresh returned null");
+          }
+        } catch (err) {
+          logger.error(
+            "[GlobalVoiceManager] tokenAboutToExpire refresh failed:",
+            err,
+          );
+        }
       });
 
       device.on("tokenExpired", async () => {
         logger.warn("[GlobalVoiceManager] Token expired — refreshing");
-        const newToken = await fetchToken();
-        if (newToken) device?.updateToken(newToken);
+        try {
+          const newToken = await fetchToken();
+          if (newToken) {
+            device?.updateToken(newToken);
+          } else {
+            logger.error(
+              "[GlobalVoiceManager] Token refresh returned null after expiry — voice calls may fail",
+            );
+            dispatch(setDeviceStatus("error"));
+          }
+        } catch (err) {
+          logger.error(
+            "[GlobalVoiceManager] tokenExpired refresh failed:",
+            err,
+          );
+          dispatch(setDeviceStatus("error"));
+        }
       });
 
       // ── Incoming call ─────────────────────────────────────────────
@@ -274,19 +300,15 @@ const GlobalVoiceManager: React.FC = () => {
   // without waiting for the Twilio SDK cancel event (which may lag under load).
   useEffect(() => {
     if (!sessionToken) return;
-    let ablyClient: AblyLib.Realtime | null = null;
+    let channel: AblyLib.RealtimeChannel | null = null;
 
     const connect = async () => {
       try {
-        const tokenRequest = await dispatch(fetchAblyToken()).unwrap();
+        const ablyClient = await getSharedAblyClient(sessionToken);
+        if (!ablyClient) return;
 
-        ablyClient = new AblyLib.Realtime({
-          authCallback: (_tokenParams, callback) =>
-            callback(null, tokenRequest),
-        });
-
-        const channel = ablyClient.channels.get("voice:incoming");
-        channel.subscribe("call-answered", (msg) => {
+        channel = ablyClient.channels.get("voice:incoming");
+        await channel.subscribe("call-answered", (msg) => {
           const { callSid } = (msg.data ?? {}) as { callSid?: string };
           // Only act if we're currently showing a ringing notification AND
           // the announced SID matches our ringing call (or no SID to match against).
@@ -315,7 +337,8 @@ const GlobalVoiceManager: React.FC = () => {
     connect();
 
     return () => {
-      ablyClient?.close();
+      // Detach only our subscription — do NOT close the shared singleton
+      channel?.unsubscribe("call-answered");
     };
   }, [sessionToken]);
 

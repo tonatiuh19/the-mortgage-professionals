@@ -102,6 +102,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { logger } from "@/lib/logger";
 import { cn } from "@/lib/utils";
+import { SMS_CHANNEL_ENABLED } from "@/lib/channelAvailability";
 import ImageCropUploader from "@/components/ImageCropUploader";
 import {
   FaLinkedin,
@@ -210,7 +211,7 @@ export default function BrokerDetailPanel({
   // ── compose ─────────────────────────────────────────────────────────────────
   const [composing, setComposing] = useState(false);
   const [composeType, setComposeType] = useState<"sms" | "email" | "whatsapp">(
-    "sms",
+    SMS_CHANNEL_ENABLED ? "sms" : "email",
   );
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
@@ -355,6 +356,15 @@ export default function BrokerDetailPanel({
     const email = selectedBrokerProfile.email;
     const conversationId = `conv_broker_${brokerId}`;
 
+    if (composeType === "sms" && !SMS_CHANNEL_ENABLED) {
+      toast({
+        title: "SMS unavailable",
+        description: "SMS messaging is temporarily disabled.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setSendingMsg(true);
     try {
       await dispatch(
@@ -486,7 +496,7 @@ export default function BrokerDetailPanel({
 
                   {/* action buttons row: SMS · Email · Convert · Edit */}
                   <div className="flex items-center gap-2 mt-2 flex-wrap">
-                    {profile.phone && (
+                    {profile.phone && SMS_CHANNEL_ENABLED && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -579,7 +589,12 @@ export default function BrokerDetailPanel({
           {composing && (
             <div className="border-b bg-card px-5 py-3 space-y-2 flex-shrink-0">
               <div className="flex items-center gap-2 flex-wrap">
-                {(["sms", "email"] as const).map((t) => {
+                {(
+                  [...(SMS_CHANNEL_ENABLED ? ["sms"] : []), "email"] as (
+                    | "sms"
+                    | "email"
+                  )[]
+                ).map((t) => {
                   const unavailable =
                     (t === "sms" && !profile?.phone) ||
                     (t === "email" && !profile?.email);

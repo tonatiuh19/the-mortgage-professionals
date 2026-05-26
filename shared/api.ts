@@ -4,6 +4,78 @@
  * and/or small pure JS functions that can be used on both client and server
  */
 
+// ---------------------------------------------------------------------------
+// Broker Role System
+// ---------------------------------------------------------------------------
+
+/** All possible broker/staff/partner roles in the system */
+export type BrokerRole =
+  | "admin"
+  | "loan_officer"
+  | "loan_processor"
+  | "realtor"
+  | "buyers_agent"
+  | "listing_agent"
+  | "broker";
+
+/** Tier 1 — Full system access */
+export const ADMIN_ROLES: readonly BrokerRole[] = ["admin"] as const;
+
+/** Tier 2 — Operational staff (most features, no user/system management) */
+export const STAFF_ROLES: readonly BrokerRole[] = [
+  "loan_officer",
+  "loan_processor",
+] as const;
+
+/** Tier 3 — External partners (limited view: pipeline, clients, calendar, calculator) */
+export const PARTNER_ROLES: readonly BrokerRole[] = [
+  "broker",
+  "realtor",
+  "buyers_agent",
+  "listing_agent",
+] as const;
+
+/** Admin + Staff — full operational access */
+export const OPERATIONAL_ROLES: readonly BrokerRole[] = [
+  ...ADMIN_ROLES,
+  ...STAFF_ROLES,
+] as const;
+
+/** Roles that see Reports */
+export const REPORTING_ROLES: readonly BrokerRole[] = [
+  "admin",
+  "loan_officer",
+] as const;
+
+/** Display label for each role */
+export const ROLE_LABELS: Record<BrokerRole, string> = {
+  admin: "Admin",
+  loan_officer: "Loan Officer",
+  loan_processor: "Loan Processor",
+  realtor: "Realtor",
+  buyers_agent: "Buyer's Agent",
+  listing_agent: "Listing Agent",
+  broker: "Partner",
+};
+
+/** Returns true when role belongs to admin tier */
+export const isAdminRole = (role: string): boolean =>
+  (ADMIN_ROLES as readonly string[]).includes(role);
+
+/** Returns true when role belongs to staff tier */
+export const isStaffRole = (role: string): boolean =>
+  (STAFF_ROLES as readonly string[]).includes(role);
+
+/** Returns true when role belongs to partner tier (external, limited access) */
+export const isPartnerRole = (role: string): boolean =>
+  (PARTNER_ROLES as readonly string[]).includes(role);
+
+/** Returns true when role has full operational access (admin or staff) */
+export const isOperationalRole = (role: string): boolean =>
+  (OPERATIONAL_ROLES as readonly string[]).includes(role);
+
+// ---------------------------------------------------------------------------
+
 /**
  * Example response type for /api/demo
  */
@@ -645,13 +717,14 @@ export interface Broker {
   first_name: string;
   last_name: string;
   phone: string | null;
-  role: "broker" | "admin";
+  role: BrokerRole;
   status: "active" | "inactive" | "suspended";
   email_verified: boolean;
   last_login: string | null;
   license_number: string | null;
   specializations: string[] | null;
   public_token?: string | null;
+  slug?: string | null;
   created_by_broker_id?: number | null;
   created_at?: string;
 }
@@ -667,7 +740,7 @@ export interface CreateBrokerRequest {
   first_name: string;
   last_name: string;
   phone?: string;
-  role?: "broker" | "admin";
+  role?: BrokerRole;
   license_number?: string;
   specializations?: string[];
 }
@@ -677,7 +750,7 @@ export interface UpdateBrokerRequest {
   last_name?: string;
   email?: string;
   phone?: string;
-  role?: "broker" | "admin";
+  role?: BrokerRole;
   status?: "active" | "inactive" | "suspended";
   license_number?: string;
   specializations?: string[];
@@ -1364,10 +1437,9 @@ export interface ConversationMailbox {
   provider: "office365" | "imap";
   mailbox_email: string;
   display_name?: string | null;
-  is_shared: boolean;
-  assigned_broker_id?: number | null;
+  assigned_broker_id: number;
   assigned_broker_name?: string | null;
-  status: "pending" | "active" | "disabled" | "error";
+  status: "pending" | "active" | "disabled" | "error" | "auth_required";
   is_default: boolean;
   last_sync_at?: string | null;
   last_sync_status?: "ok" | "error" | null;
@@ -1377,8 +1449,7 @@ export interface ConversationMailbox {
 }
 
 export interface AssignConversationMailboxRequest {
-  assigned_broker_id: number | null;
-  is_shared: boolean;
+  assigned_broker_id: number;
   is_default?: boolean;
 }
 
@@ -1395,9 +1466,9 @@ export interface GetConversationMailboxesResponse {
 export interface ConnectOffice365MailboxRequest {
   mailbox_email: string;
   display_name?: string;
-  is_shared?: boolean;
   /** Admin only — assign mailbox to a different broker */
   target_broker_id?: number;
+  return_path?: string;
 }
 
 export interface ConnectOffice365MailboxResponse {
@@ -1411,6 +1482,127 @@ export interface SyncConversationMailboxResponse {
   mailbox_id: number;
   processed: number;
   errors: number;
+}
+
+export interface MailFolder {
+  id: string;
+  displayName: string;
+  totalItemCount: number;
+  unreadItemCount: number;
+  childFolderCount: number;
+  parentId: string | null;
+  isSystemFolder: boolean;
+}
+
+export interface GetMailFoldersResponse {
+  success: boolean;
+  folders: MailFolder[];
+}
+
+export interface MailFolderMessage {
+  id: string;
+  subject: string;
+  from: { name: string; email: string };
+  receivedDateTime: string;
+  bodyPreview: string;
+  isRead: boolean;
+  hasAttachments: boolean;
+}
+
+export interface GetMailFolderMessagesResponse {
+  success: boolean;
+  messages: MailFolderMessage[];
+  nextPageToken?: string | null;
+}
+
+// ─── Email Drafts ─────────────────────────────────────────────────────────────
+
+export interface EmailRecipientEntry {
+  email: string;
+  name?: string;
+}
+
+export interface EmailDraft {
+  id: number;
+  mailbox_id: number;
+  broker_id: number;
+  subject: string | null;
+  body_html: string | null;
+  to_emails: EmailRecipientEntry[] | null;
+  cc_emails: EmailRecipientEntry[] | null;
+  bcc_emails: EmailRecipientEntry[] | null;
+  reply_to_comm_id: number | null;
+  conversation_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SaveEmailDraftRequest {
+  mailbox_id: number;
+  subject?: string;
+  body_html?: string;
+  to_emails?: EmailRecipientEntry[];
+  cc_emails?: EmailRecipientEntry[];
+  bcc_emails?: EmailRecipientEntry[];
+  reply_to_comm_id?: number;
+  conversation_id?: string;
+}
+
+export interface SaveEmailDraftResponse {
+  success: boolean;
+  draft: EmailDraft;
+}
+
+export interface GetEmailDraftsResponse {
+  success: boolean;
+  drafts: EmailDraft[];
+}
+
+// ─── Email Signatures ─────────────────────────────────────────────────────────
+
+export interface EmailSignature {
+  id: number;
+  broker_id: number;
+  name: string;
+  html: string;
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SaveEmailSignatureRequest {
+  name: string;
+  html: string;
+  is_default?: boolean;
+}
+
+export interface SaveEmailSignatureResponse {
+  success: boolean;
+  signature: EmailSignature;
+}
+
+export interface GetEmailSignaturesResponse {
+  success: boolean;
+  signatures: EmailSignature[];
+}
+
+// ─── Email Sync Log ───────────────────────────────────────────────────────────
+
+export interface EmailSyncLogEntry {
+  id: number;
+  mailbox_id: number;
+  trigger: "cron" | "manual";
+  started_at: string;
+  finished_at: string | null;
+  messages_synced: number;
+  errors: number;
+  status: "running" | "ok" | "error" | "partial";
+  error_detail: string | null;
+}
+
+export interface GetEmailSyncLogResponse {
+  success: boolean;
+  logs: EmailSyncLogEntry[];
 }
 
 export interface UpdateConversationRequest {
@@ -1561,7 +1753,7 @@ export interface BrokerPublicProfile {
   last_name: string;
   email: string;
   phone: string | null;
-  role: "broker" | "admin";
+  role: BrokerRole;
   license_number: string | null;
   specializations: string[] | null;
   public_token: string;
@@ -1593,12 +1785,14 @@ export interface BrokerPublicInfoResponse {
 export interface MyShareLinkResponse {
   success: boolean;
   public_token: string;
+  slug: string | null;
   share_url: string;
 }
 
 export interface RegenerateShareLinkResponse {
   success: boolean;
   public_token: string;
+  slug: string | null;
   share_url: string;
   message: string;
 }
@@ -1709,6 +1903,7 @@ export interface ConvertBrokerToClientResponse {
 export interface AdminBrokerShareLinkResponse {
   success: boolean;
   public_token: string;
+  slug: string | null;
   share_url: string;
 }
 
@@ -2354,7 +2549,23 @@ export interface SchedulerBlockedRange {
   start_datetime: string; // ISO string "YYYY-MM-DDTHH:MM:SS"
   end_datetime: string;
   label: string | null;
+  source: "manual" | "o365";
+  external_id?: string | null;
   created_at: string;
+}
+
+export interface SyncO365CalendarResponse {
+  success: boolean;
+  synced_count: number;
+  message: string;
+}
+
+export interface GetO365CalendarStatusResponse {
+  success: boolean;
+  connected: boolean;
+  mailbox_email: string | null;
+  synced_count: number;
+  last_synced_at: string | null;
 }
 
 export interface GetSchedulerSettingsResponse {
@@ -2592,4 +2803,92 @@ export interface UpdateRealtorProspectResponse {
 export interface DeleteRealtorProspectResponse {
   success: boolean;
   message?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mortgi AI Assistant
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type MortgiUserType = "broker" | "client";
+
+export interface MortgiMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
+export interface MortgiChatRequest {
+  message: string;
+  session_key: string;
+  /** Passed by the server based on verified JWT — not provided by client */
+  user_type?: MortgiUserType;
+}
+
+export interface MortgiChatResponse {
+  success: boolean;
+  reply: string;
+  session_key: string;
+  tokens_used?: number;
+}
+
+export interface MortgiConfig {
+  mortgi_enabled: boolean;
+  mortgi_client_enabled: boolean;
+  mortgi_broker_enabled: boolean;
+  mortgi_system_prompt: string;
+  mortgi_daily_message_limit: number;
+  mortgi_broker_tools: string[];
+  mortgi_client_tools: string[];
+  mortgi_quota_exceeded: boolean;
+  mortgi_quota_exceeded_at: string;
+}
+
+export interface GetMortgiConfigResponse {
+  success: boolean;
+  config: MortgiConfig;
+}
+
+export interface UpdateMortgiConfigRequest {
+  mortgi_enabled?: boolean;
+  mortgi_client_enabled?: boolean;
+  mortgi_broker_enabled?: boolean;
+  mortgi_system_prompt?: string;
+  mortgi_daily_message_limit?: number;
+  mortgi_broker_tools?: string[];
+  mortgi_client_tools?: string[];
+}
+
+export interface UpdateMortgiConfigResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface MortgiChatHistoryEntry {
+  id: number;
+  user_type: MortgiUserType;
+  user_id: number;
+  user_name: string;
+  messages_count: number;
+  tokens_used: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GetMortgiHistoryResponse {
+  success: boolean;
+  sessions: MortgiChatHistoryEntry[];
+  total: number;
+}
+
+export interface MortgiUsage {
+  tokens_total: number;
+  tokens_today: number;
+  sessions_total: number;
+  sessions_today: number;
+}
+
+export interface GetMortgiUsageResponse {
+  success: boolean;
+  usage: MortgiUsage;
+  quota_exceeded: boolean;
+  quota_exceeded_at: string;
 }

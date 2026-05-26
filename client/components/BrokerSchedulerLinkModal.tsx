@@ -36,8 +36,8 @@ export default function BrokerSchedulerLinkModal({
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
 
-  const schedulerUrl = broker?.public_token
-    ? `${window.location.origin}/scheduler/${broker.public_token}`
+  const schedulerUrl = broker
+    ? `${window.location.origin}/scheduler/${broker.slug ?? broker.public_token}`
     : null;
 
   const brokerName = broker

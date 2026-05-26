@@ -115,6 +115,10 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import {
+  SMS_CHANNEL_ENABLED,
+  WHATSAPP_CHANNEL_ENABLED,
+} from "@/lib/channelAvailability";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   fetchReminderFlows,
@@ -300,6 +304,12 @@ const STEP_TYPES: StepMeta[] = [
     description: "End of flow",
   },
 ];
+
+const AVAILABLE_STEP_TYPES = STEP_TYPES.filter((step) => {
+  if (step.type === "send_sms") return SMS_CHANNEL_ENABLED;
+  if (step.type === "send_whatsapp") return WHATSAPP_CHANNEL_ENABLED;
+  return true;
+});
 
 const getStepMeta = (type: ReminderStepType): StepMeta =>
   STEP_TYPES.find((s) => s.type === type) ?? STEP_TYPES[0];
@@ -1456,7 +1466,7 @@ function HowToUseModal({ open, onClose }: HowToUseModalProps) {
             Step Types Reference
           </p>
           <div className="grid grid-cols-2 gap-1.5">
-            {STEP_TYPES.map((s) => (
+            {AVAILABLE_STEP_TYPES.map((s) => (
               <div
                 key={s.type}
                 className={cn(
@@ -2076,7 +2086,7 @@ function FlowCanvasInner({ flow, onBack, onSaved }: FlowCanvasProps) {
             </p>
           </div>
           <div className="p-2 space-y-1.5">
-            {STEP_TYPES.map((s) => (
+            {AVAILABLE_STEP_TYPES.map((s) => (
               <div
                 key={s.type}
                 draggable

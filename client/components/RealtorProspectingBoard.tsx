@@ -76,6 +76,7 @@ import type {
   RealtorProspectStage,
   CreateRealtorProspectRequest,
 } from "@shared/api";
+import { isAdminRole } from "@shared/api";
 
 // ─── Stage Configuration ─────────────────────────────────────────────────────
 
@@ -250,9 +251,7 @@ function OpportunityForm({
           tags: [],
           notes: "",
           owner_broker_id:
-            user?.role === "admin" || user?.role === "superadmin"
-              ? user.id
-              : null,
+            user?.role === "admin" || isAdminRole(user?.role) ? user.id : null,
           followers: [],
           progress_report: null,
           add_to_refi_rates_dropped: false,

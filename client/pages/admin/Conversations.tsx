@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import * as AblyLib from "ably";
+import { getSharedAblyClient } from "@/lib/ably-client";
 import { useFormik } from "formik";
 import * as Yup from "yup";
 import { useLocation } from "react-router-dom";
@@ -64,6 +65,7 @@ import {
 } from "lucide-react";
 import { FaWhatsapp } from "react-icons/fa";
 import { uploadMMSMedia } from "@/lib/cdn-upload";
+import { logger } from "@/lib/logger";
 import { MetaHelmet } from "@/components/MetaHelmet";
 import ClientDetailPanel from "@/components/ClientDetailPanel";
 import BrokerDetailPanel from "@/components/BrokerDetailPanel";
@@ -148,9 +150,9 @@ import {
   fetchConversationStats,
   fetchCallHistory,
   setCurrentThread,
+  clearCurrentThread,
   setThreadsFilters,
   markConversationAsRead,
-  checkWhatsAppAvailability,
   removeThread,
   threadUpdatedRealtime,
   threadReadRealtime,
@@ -167,7 +169,11 @@ import {
   checkRecordingUrl,
 } from "@/store/slices/voiceSlice";
 import type { DeviceStatus } from "@/store/slices/voiceSlice";
-import { cn } from "@/lib/utils";
+import { cn, stripHtml } from "@/lib/utils";
+import {
+  SMS_CHANNEL_ENABLED,
+  WHATSAPP_CHANNEL_ENABLED,
+} from "@/lib/channelAvailability";
 import type {
   ConversationThread,
   Communication,
@@ -175,14 +181,15 @@ import type {
   Broker,
 } from "@shared/api";
 
-type ChannelFilter = "all" | "sms" | "whatsapp" | "calls";
+type ChannelFilter = "all" | "calls";
 
 const CHANNEL_TABS: { key: ChannelFilter; label: string }[] = [
   { key: "all", label: "All" },
-  { key: "sms", label: "SMS" },
-  { key: "whatsapp", label: "WhatsApp" },
   { key: "calls", label: "Calls" },
 ];
+
+const MESSAGE_CHANNELS_ENABLED =
+  SMS_CHANNEL_ENABLED || WHATSAPP_CHANNEL_ENABLED;
 
 const Conversations = () => {
   const dispatch = useAppDispatch();
@@ -196,8 +203,6 @@ const Conversations = () => {
     isLoadingThreads,
     isLoadingMessages,
     isSendingMessage,
-    isCheckingWhatsApp,
-    whatsappAvailability,
     threadsFilters,
     callHistory,
     isLoadingCallHistory,
@@ -206,13 +211,6 @@ const Conversations = () => {
   const brokerList = useAppSelector((state) =>
     (state.brokers.brokers as Broker[]).filter((b) => b.status === "active"),
   );
-
-  const currentPhone = currentThread?.client_phone ?? null;
-  const whatsappStatus: boolean | null = currentPhone
-    ? (whatsappAvailability[currentPhone] ?? null)
-    : null;
-  const whatsappAvailable =
-    whatsappStatus === null ? false : whatsappStatus === true;
 
   const { toast } = useToast();
   const isMobile = useIsMobile();
@@ -297,6 +295,9 @@ const Conversations = () => {
   // Track whether this thread has had its messages loaded at least once
   // so background refreshes don't flash the full-area spinner.
   const initialLoadedThreadRef = useRef<string | null>(null);
+  // Tracks phone numbers we've already dispatched a WhatsApp availability check
+  // for. Without this guard, rapid thread switches re-dispatch the same check
+  // while the first promise is still in-flight (multiple identical API calls).
 
   // Save unknown contact state
   const [isSaveContactOpen, setIsSaveContactOpen] = useState(false);
@@ -501,21 +502,17 @@ const Conversations = () => {
 
   // Real-time updates via Ably
   useEffect(() => {
-    let realtimeClient: AblyLib.Realtime | null = null;
+    let allChannel: AblyLib.RealtimeChannel | null = null;
 
     const connect = async () => {
       try {
-        const tokenRequest = await dispatch(fetchAblyToken()).unwrap();
-
-        realtimeClient = new AblyLib.Realtime({
-          authCallback: (_tokenParams, callback) =>
-            callback(null, tokenRequest),
-        });
+        const ablyClient = await getSharedAblyClient(sessionToken);
+        if (!ablyClient) return;
 
         // Subscribe to thread-list changes so the sidebar stays fresh.
         // Apply patches in-place — no full refetch — to keep the UI feeling
         // smooth and instant (WhatsApp/Telegram-style).
-        const allChannel = realtimeClient.channels.get("conversations:all");
+        allChannel = ablyClient.channels.get("conversations:all");
         allChannel.subscribe("thread-updated", (msg) => {
           const { conversationId, thread } = (msg.data ?? {}) as {
             conversationId?: string;
@@ -566,28 +563,31 @@ const Conversations = () => {
     connect();
 
     return () => {
-      realtimeClient?.close();
+      // Only detach event listeners — keep the shared connection alive
+      allChannel?.unsubscribe();
     };
-  }, [dispatch]);
+  }, [dispatch, sessionToken]);
 
-  // Re-subscribe to per-conversation channel when the active thread changes
+  // Re-subscribe to per-conversation channel when the active thread changes.
+  // Uses the shared Ably singleton — only the channel subscription changes,
+  // not the underlying WebSocket connection. This prevents a new TCP handshake
+  // on every conversation click (which was the prior behaviour).
   useEffect(() => {
     if (!currentThread?.conversation_id) return;
 
-    let realtimeClient: AblyLib.Realtime | null = null;
+    let convChannel: AblyLib.RealtimeChannel | null = null;
+    let mounted = true; // Guard: detect if cleanup ran before async subscribe completed
     const convId = currentThread.conversation_id;
 
     const subscribe = async () => {
       try {
-        const tokenRequest = await dispatch(fetchAblyToken()).unwrap();
+        const ablyClient = await getSharedAblyClient(sessionToken);
+        // If cleanup already ran (user switched threads before await resolved),
+        // do NOT register a subscription — it would be uncleanable.
+        if (!mounted || !ablyClient) return;
 
-        realtimeClient = new AblyLib.Realtime({
-          authCallback: (_tokenParams, callback) =>
-            callback(null, tokenRequest),
-        });
-
-        const channel = realtimeClient.channels.get(`conversation:${convId}`);
-        channel.subscribe("new-message", () => {
+        convChannel = ablyClient.channels.get(`conversation:${convId}`);
+        await convChannel.subscribe("new-message", () => {
           dispatch(fetchConversationMessages({ conversationId: convId }));
         });
       } catch {
@@ -598,9 +598,11 @@ const Conversations = () => {
     subscribe();
 
     return () => {
-      realtimeClient?.close();
+      mounted = false;
+      // Detach only this channel subscription — keep the shared client open
+      convChannel?.unsubscribe("new-message");
     };
-  }, [currentThread?.conversation_id, dispatch]);
+  }, [currentThread?.conversation_id, dispatch, sessionToken]);
 
   // Poll for recording URLs on call messages that are still processing.
   // Twilio takes ~30s–2min after a call ends to transcode and deliver the recording.
@@ -678,17 +680,6 @@ const Conversations = () => {
 
     if (thread.unread_count > 0) {
       dispatch(markConversationAsRead(thread.conversation_id));
-    }
-
-    if (
-      thread.client_phone &&
-      whatsappAvailability[thread.client_phone] === undefined
-    ) {
-      dispatch(checkWhatsAppAvailability(thread.client_phone));
-    }
-
-    if (messageType === "whatsapp") {
-      setMessageType("sms");
     }
   };
 
@@ -811,6 +802,15 @@ const Conversations = () => {
   };
 
   const handleSendMessage = async () => {
+    if (!MESSAGE_CHANNELS_ENABLED) {
+      toast({
+        title: "Messaging paused",
+        description: "SMS and WhatsApp sending are temporarily disabled.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const text = messageText.trim();
     if (!text && !mmsAttachment) return;
 
@@ -819,19 +819,41 @@ const Conversations = () => {
         ? parseInt(selectedTemplate)
         : null;
 
+    logger.group("[SMS Trace] handleSendMessage");
+    logger.log(
+      "[SMS Trace] 1/7 — type:",
+      messageType,
+      "| thread:",
+      currentThread?.conversation_id,
+      "| phone:",
+      currentThread?.client_phone,
+      "| text length:",
+      text.length,
+      "| template_id:",
+      sentTemplateId ?? "none",
+    );
+
     // 1. Upload MMS attachment first if present (so we have the public URL)
     let uploadedMediaUrl: string | undefined;
     if (mmsAttachment && messageType === "sms") {
       setIsUploadingMMS(true);
+      logger.log(
+        "[SMS Trace] 2/7 — uploading MMS attachment:",
+        mmsAttachment.file.name,
+        mmsAttachment.contentType,
+      );
       try {
         const result = await uploadMMSMedia(
           mmsAttachment.file,
           sessionToken ?? "",
         );
         uploadedMediaUrl = result.url;
+        logger.log("[SMS Trace] 2/7 — MMS upload OK, url:", uploadedMediaUrl);
       } catch (err) {
+        logger.error("[SMS Trace] 2/7 — MMS upload FAILED:", err);
         setIsUploadingMMS(false);
         setFailedText(text || null);
+        logger.groupEnd();
         return;
       }
       setIsUploadingMMS(false);
@@ -861,21 +883,27 @@ const Conversations = () => {
       setRecentTemplateIds(getRecentTemplateIds());
     }
 
+    const payload = {
+      conversation_id: currentThread?.conversation_id,
+      application_id: currentThread?.application_id || undefined,
+      client_id: currentThread?.client_id || undefined,
+      communication_type: messageType,
+      recipient_phone: currentThread?.client_phone || undefined,
+      recipient_email: currentThread?.client_email || undefined,
+      body: text,
+      message_type: (sentTemplateId ? "template" : "text") as
+        | "template"
+        | "text",
+      template_id: sentTemplateId ?? undefined,
+      media_url: uploadedMediaUrl,
+    };
+
+    logger.log("[SMS Trace] 3/7 — dispatching sendMessage payload:", payload);
+
     try {
-      const result = await dispatch(
-        sendMessage({
-          conversation_id: currentThread?.conversation_id,
-          application_id: currentThread?.application_id || undefined,
-          client_id: currentThread?.client_id || undefined,
-          communication_type: messageType,
-          recipient_phone: currentThread?.client_phone || undefined,
-          recipient_email: currentThread?.client_email || undefined,
-          body: text,
-          message_type: sentTemplateId ? "template" : "text",
-          template_id: sentTemplateId ?? undefined,
-          media_url: uploadedMediaUrl,
-        }),
-      ).unwrap();
+      const result = await dispatch(sendMessage(payload)).unwrap();
+
+      logger.log("[SMS Trace] 4/7 — sendMessage API response:", result);
 
       // 3. Mark as sent and store the real DB id so we can suppress the
       //    optimistic bubble the moment the real message arrives in Redux state.
@@ -887,15 +915,33 @@ const Conversations = () => {
         ),
       );
 
-      if (currentThread) {
+      // Always use the conversation_id confirmed by the API response.
+      // currentThread.conversation_id can be undefined if the thread was loaded
+      // from a stale state — the API is the source of truth.
+      const confirmedConvId =
+        result.conversation_id || currentThread?.conversation_id;
+
+      logger.log(
+        "[SMS Trace] 5/7 — fetching updated messages for conv:",
+        confirmedConvId,
+        "(currentThread had:",
+        currentThread?.conversation_id,
+        ")",
+      );
+
+      if (confirmedConvId) {
         dispatch(
           fetchConversationMessages({
-            conversationId: currentThread.conversation_id,
+            conversationId: confirmedConvId,
           }),
         ).finally(() => {
           // Remove only after the real message is in Redux state.
           // The render-time deduplication below (communicationId check) prevents
           // the double-flash; this is just a cleanup step.
+          logger.log(
+            "[SMS Trace] 6/7 — messages refetch done, removing optimistic msg:",
+            tempId,
+          );
           setOptimisticMessages((prev) =>
             prev.filter((m) => m.tempId !== tempId),
           );
@@ -916,9 +962,14 @@ const Conversations = () => {
           description: "This conversation is now active again.",
         });
       } else {
+        logger.log("[SMS Trace] 7/7 — refreshing thread list");
         dispatch(fetchConversationThreads(threadsFilters));
       }
+
+      logger.groupEnd();
     } catch (error: any) {
+      logger.error("[SMS Trace] FAILED — sendMessage threw:", error);
+      logger.groupEnd();
       // 5. Mark as failed and restore the text so the user can retry
       setOptimisticMessages((prev) =>
         prev.map((m) => (m.tempId === tempId ? { ...m, status: "failed" } : m)),
@@ -1294,7 +1345,11 @@ const Conversations = () => {
                       onClick={() => {
                         if (locked) return;
                         setChannelFilter(key);
-                        if (key !== "calls") setSelectedCall(null);
+                        if (key === "calls") {
+                          dispatch(clearCurrentThread());
+                        } else {
+                          setSelectedCall(null);
+                        }
                       }}
                       disabled={locked}
                       title={locked ? "WhatsApp coming soon" : undefined}
@@ -1707,8 +1762,9 @@ const Conversations = () => {
                                   )}
                                 </span>
                                 <p className="text-xs text-muted-foreground line-clamp-1 flex-1 leading-snug">
-                                  {thread.last_message_preview ||
-                                    "No messages yet"}
+                                  {stripHtml(
+                                    thread.last_message_preview || "",
+                                  ) || "No messages yet"}
                                 </p>
                               </div>
                               {/* Row 3: timestamp */}
@@ -1760,7 +1816,7 @@ const Conversations = () => {
             mobilePanel === "list" ? "hidden md:flex" : "flex",
           )}
         >
-          {currentThread ? (
+          {currentThread && channelFilter !== "calls" ? (
             <>
               {/* Chat header */}
               <div className="px-4 py-3 border-b border-border bg-card flex-shrink-0">
@@ -1896,334 +1952,331 @@ const Conversations = () => {
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    {[...filteredMessages]
-                      .reverse()
-                      .map((message, index, arr) => {
-                        const msgDate = message.sent_at || message.created_at;
-                        const prevMsg = arr[index - 1];
-                        const prevDate = prevMsg
-                          ? prevMsg.sent_at || prevMsg.created_at
-                          : null;
-                        const showDateSep =
-                          msgDate &&
-                          (!prevDate ||
-                            new Date(msgDate).toDateString() !==
-                              new Date(prevDate).toDateString());
-                        const isOutbound = message.direction === "outbound";
+                    {[...filteredMessages].map((message, index, arr) => {
+                      const msgDate = message.sent_at || message.created_at;
+                      const prevMsg = arr[index - 1];
+                      const prevDate = prevMsg
+                        ? prevMsg.sent_at || prevMsg.created_at
+                        : null;
+                      const showDateSep =
+                        msgDate &&
+                        (!prevDate ||
+                          new Date(msgDate).toDateString() !==
+                            new Date(prevDate).toDateString());
+                      const isOutbound = message.direction === "outbound";
 
-                        return (
-                          <React.Fragment key={message.id}>
-                            {showDateSep && msgDate && (
-                              <div className="flex items-center gap-3 py-3">
-                                <div className="flex-1 h-px bg-border" />
-                                <span className="text-xs text-muted-foreground font-medium px-2 bg-background">
-                                  {getDateLabel(msgDate)}
-                                </span>
-                                <div className="flex-1 h-px bg-border" />
-                              </div>
+                      return (
+                        <React.Fragment key={message.id}>
+                          {showDateSep && msgDate && (
+                            <div className="flex items-center gap-3 py-3">
+                              <div className="flex-1 h-px bg-border" />
+                              <span className="text-xs text-muted-foreground font-medium px-2 bg-background">
+                                {getDateLabel(msgDate)}
+                              </span>
+                              <div className="flex-1 h-px bg-border" />
+                            </div>
+                          )}
+                          <div
+                            className={cn(
+                              "flex flex-col mb-2 group",
+                              isOutbound ? "items-end" : "items-start",
                             )}
+                          >
                             <div
                               className={cn(
-                                "flex flex-col mb-2 group",
-                                isOutbound ? "items-end" : "items-start",
+                                "flex items-end gap-1",
+                                isOutbound ? "justify-end" : "justify-start",
+                                "w-full",
                               )}
                             >
+                              {isOutbound && (
+                                <button
+                                  onClick={() =>
+                                    handleDeleteMessage(message.id)
+                                  }
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity mr-0.5 self-center p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                                  title="Delete message"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
                               <div
                                 className={cn(
-                                  "flex items-end gap-1",
-                                  isOutbound ? "justify-end" : "justify-start",
-                                  "w-full",
+                                  "max-w-[72%] px-3.5 py-2.5 rounded-2xl text-sm shadow-sm cursor-default select-text",
+                                  isOutbound
+                                    ? "bg-slate-800 text-white rounded-br-sm"
+                                    : "bg-muted text-foreground rounded-bl-sm border border-border",
                                 )}
                               >
-                                {isOutbound && (
-                                  <button
-                                    onClick={() =>
-                                      handleDeleteMessage(message.id)
-                                    }
-                                    className="opacity-0 group-hover:opacity-100 transition-opacity mr-0.5 self-center p-1 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                                    title="Delete message"
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </button>
+                                {message.subject && (
+                                  <p className="font-semibold text-xs mb-1 opacity-90">
+                                    {message.subject}
+                                  </p>
                                 )}
-                                <div
-                                  className={cn(
-                                    "max-w-[72%] px-3.5 py-2.5 rounded-2xl text-sm shadow-sm cursor-default select-text",
-                                    isOutbound
-                                      ? "bg-slate-800 text-white rounded-br-sm"
-                                      : "bg-muted text-foreground rounded-bl-sm border border-border",
-                                  )}
-                                >
-                                  {message.subject && (
-                                    <p className="font-semibold text-xs mb-1 opacity-90">
-                                      {message.subject}
-                                    </p>
-                                  )}
-                                  {/* Call recordings get an inline audio player + download */}
-                                  {message.communication_type === "call" &&
-                                  message.recording_url &&
-                                  message.external_id ? (
-                                    /* ✅ Recording is ready */
-                                    <div className="flex flex-col gap-2 min-w-[240px]">
-                                      {(message as any).is_voicemail ? (
-                                        <div
-                                          className={cn(
-                                            "inline-flex items-center gap-1.5 self-start text-[10px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5",
-                                            isOutbound
-                                              ? "bg-amber-400/20 text-amber-200"
-                                              : "bg-amber-100 text-amber-700",
-                                          )}
-                                        >
-                                          <Voicemail className="h-3 w-3" />
-                                          Voicemail
-                                        </div>
-                                      ) : null}
-                                      <p className="leading-relaxed text-sm">
-                                        {message.body}
-                                      </p>
-                                      {(message as any).is_voicemail &&
-                                      (message as any)
-                                        .voicemail_transcription ? (
-                                        <div
-                                          className={cn(
-                                            "rounded-lg px-2.5 py-2 text-xs italic leading-relaxed",
-                                            isOutbound
-                                              ? "bg-white/10 text-white/85"
-                                              : "bg-amber-50 text-amber-900 border border-amber-200",
-                                          )}
-                                        >
-                                          “
-                                          {
-                                            (message as any)
-                                              .voicemail_transcription
-                                          }
-                                          ”
-                                        </div>
-                                      ) : (message as any).is_voicemail ? (
-                                        <div
-                                          className={cn(
-                                            "text-[11px] italic",
-                                            isOutbound
-                                              ? "text-white/60"
-                                              : "text-muted-foreground",
-                                          )}
-                                        >
-                                          Transcription pending…
-                                        </div>
-                                      ) : null}
-                                      {/* token query param required — <audio> can't send Authorization header */}
-                                      <audio
-                                        controls
-                                        preload="metadata"
-                                        className="w-full h-8 rounded"
-                                        style={{
-                                          colorScheme: isOutbound
-                                            ? "dark"
-                                            : "light",
-                                        }}
-                                        src={`/api/voice/recording/${message.external_id}?token=${encodeURIComponent(sessionToken ?? "")}`}
-                                      />
-                                      <a
-                                        href={`/api/voice/recording/${message.external_id}?download=1&token=${encodeURIComponent(sessionToken ?? "")}`}
-                                        download={`${(message as any).is_voicemail ? "voicemail" : "call"}-${message.external_id}.mp3`}
-                                        className={cn(
-                                          "flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5 font-medium transition-colors",
-                                          isOutbound
-                                            ? "bg-white/10 text-white/80 hover:bg-white/20"
-                                            : "bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20",
-                                        )}
-                                      >
-                                        <Download className="h-3.5 w-3.5" />
-                                        Download{" "}
-                                        {(message as any).is_voicemail
-                                          ? "voicemail"
-                                          : "recording"}
-                                      </a>
-                                    </div>
-                                  ) : message.communication_type === "call" &&
-                                    message.external_id &&
-                                    !(message as any).recording_url ? (
-                                    /* ⏳ Call ended but recording still processing */
-                                    <div className="flex flex-col gap-1.5 min-w-[200px]">
-                                      <p className="leading-relaxed text-sm">
-                                        {message.body}
-                                      </p>
+                                {/* Call recordings get an inline audio player + download */}
+                                {message.communication_type === "call" &&
+                                message.recording_url &&
+                                message.external_id ? (
+                                  /* ✅ Recording is ready */
+                                  <div className="flex flex-col gap-2 min-w-[240px]">
+                                    {(message as any).is_voicemail ? (
                                       <div
                                         className={cn(
-                                          "flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5",
+                                          "inline-flex items-center gap-1.5 self-start text-[10px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5",
                                           isOutbound
-                                            ? "bg-white/10 text-white/50"
-                                            : "bg-muted-foreground/10 text-muted-foreground",
+                                            ? "bg-amber-400/20 text-amber-200"
+                                            : "bg-amber-100 text-amber-700",
                                         )}
                                       >
-                                        <Loader2 className="h-3 w-3 animate-spin" />
-                                        Recording processing…
+                                        <Voicemail className="h-3 w-3" />
+                                        Voicemail
                                       </div>
+                                    ) : null}
+                                    <p className="leading-relaxed text-sm">
+                                      {message.body}
+                                    </p>
+                                    {(message as any).is_voicemail &&
+                                    (message as any).voicemail_transcription ? (
+                                      <div
+                                        className={cn(
+                                          "rounded-lg px-2.5 py-2 text-xs italic leading-relaxed",
+                                          isOutbound
+                                            ? "bg-white/10 text-white/85"
+                                            : "bg-amber-50 text-amber-900 border border-amber-200",
+                                        )}
+                                      >
+                                        “
+                                        {
+                                          (message as any)
+                                            .voicemail_transcription
+                                        }
+                                        ”
+                                      </div>
+                                    ) : (message as any).is_voicemail ? (
+                                      <div
+                                        className={cn(
+                                          "text-[11px] italic",
+                                          isOutbound
+                                            ? "text-white/60"
+                                            : "text-muted-foreground",
+                                        )}
+                                      >
+                                        Transcription pending…
+                                      </div>
+                                    ) : null}
+                                    {/* token query param required — <audio> can't send Authorization header */}
+                                    <audio
+                                      controls
+                                      preload="metadata"
+                                      className="w-full h-8 rounded"
+                                      style={{
+                                        colorScheme: isOutbound
+                                          ? "dark"
+                                          : "light",
+                                      }}
+                                      src={`/api/voice/recording/${message.external_id}?token=${encodeURIComponent(sessionToken ?? "")}`}
+                                    />
+                                    <a
+                                      href={`/api/voice/recording/${message.external_id}?download=1&token=${encodeURIComponent(sessionToken ?? "")}`}
+                                      download={`${(message as any).is_voicemail ? "voicemail" : "call"}-${message.external_id}.mp3`}
+                                      className={cn(
+                                        "flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5 font-medium transition-colors",
+                                        isOutbound
+                                          ? "bg-white/10 text-white/80 hover:bg-white/20"
+                                          : "bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20",
+                                      )}
+                                    >
+                                      <Download className="h-3.5 w-3.5" />
+                                      Download{" "}
+                                      {(message as any).is_voicemail
+                                        ? "voicemail"
+                                        : "recording"}
+                                    </a>
+                                  </div>
+                                ) : message.communication_type === "call" &&
+                                  message.external_id &&
+                                  !(message as any).recording_url &&
+                                  (message as any).delivery_status !==
+                                    "failed" ? (
+                                  /* ⏳ Call ended but recording still processing */
+                                  <div className="flex flex-col gap-1.5 min-w-[200px]">
+                                    <p className="leading-relaxed text-sm">
+                                      {message.body}
+                                    </p>
+                                    <div
+                                      className={cn(
+                                        "flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5",
+                                        isOutbound
+                                          ? "bg-white/10 text-white/50"
+                                          : "bg-muted-foreground/10 text-muted-foreground",
+                                      )}
+                                    >
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                      Recording processing…
                                     </div>
-                                  ) : (
-                                    <div className="flex flex-col gap-2">
-                                      {/* MMS media attachment */}
-                                      {(message as any).media_url &&
-                                        (() => {
-                                          const rawUrl: string = (
-                                            message as any
-                                          ).media_url;
-                                          const contentType: string =
-                                            (message as any)
-                                              .media_content_type ?? "";
-                                          // Support JSON array (multiple attachments) or single URL
-                                          let urls: string[];
-                                          try {
-                                            urls = JSON.parse(rawUrl);
-                                          } catch {
-                                            urls = [rawUrl];
-                                          }
-                                          const proxyUrl = (u: string) =>
-                                            // CDN URLs are already public — serve directly
-                                            // Twilio media URLs need our auth proxy
-                                            u.startsWith(
-                                              "https://disruptinglabs.com/",
-                                            )
-                                              ? u
-                                              : `/api/sms/media?url=${encodeURIComponent(u)}&token=${encodeURIComponent(sessionToken ?? "")}`;
-                                          return urls.map((u, i) => {
-                                            const ct =
-                                              i === 0 ? contentType : "";
-                                            if (
-                                              ct.startsWith("image/") ||
-                                              (!ct &&
-                                                /\.(jpe?g|png|gif|webp|heic)$/i.test(
-                                                  u,
-                                                ))
-                                            ) {
-                                              return (
-                                                <a
-                                                  key={i}
-                                                  href={proxyUrl(u)}
-                                                  target="_blank"
-                                                  rel="noopener noreferrer"
-                                                >
-                                                  <img
-                                                    src={proxyUrl(u)}
-                                                    alt="MMS attachment"
-                                                    className="rounded-xl max-w-[260px] max-h-[320px] object-cover border border-white/10 cursor-pointer hover:opacity-90 transition-opacity"
-                                                    loading="lazy"
-                                                  />
-                                                </a>
-                                              );
-                                            }
-                                            if (ct.startsWith("video/")) {
-                                              return (
-                                                <video
-                                                  key={i}
-                                                  controls
-                                                  className="rounded-xl max-w-[260px]"
-                                                  preload="metadata"
-                                                >
-                                                  <source
-                                                    src={proxyUrl(u)}
-                                                    type={ct}
-                                                  />
-                                                </video>
-                                              );
-                                            }
-                                            if (ct.startsWith("audio/")) {
-                                              return (
-                                                <audio
-                                                  key={i}
-                                                  controls
-                                                  preload="metadata"
-                                                  className="w-full h-8 rounded"
-                                                >
-                                                  <source
-                                                    src={proxyUrl(u)}
-                                                    type={ct}
-                                                  />
-                                                </audio>
-                                              );
-                                            }
+                                  </div>
+                                ) : (
+                                  <div className="flex flex-col gap-2">
+                                    {/* MMS media attachment */}
+                                    {(message as any).media_url &&
+                                      (() => {
+                                        const rawUrl: string = (message as any)
+                                          .media_url;
+                                        const contentType: string =
+                                          (message as any).media_content_type ??
+                                          "";
+                                        // Support JSON array (multiple attachments) or single URL
+                                        let urls: string[];
+                                        try {
+                                          urls = JSON.parse(rawUrl);
+                                        } catch {
+                                          urls = [rawUrl];
+                                        }
+                                        const proxyUrl = (u: string) =>
+                                          // CDN URLs are already public — serve directly
+                                          // Twilio media URLs need our auth proxy
+                                          u.startsWith(
+                                            "https://disruptinglabs.com/",
+                                          )
+                                            ? u
+                                            : `/api/sms/media?url=${encodeURIComponent(u)}&token=${encodeURIComponent(sessionToken ?? "")}`;
+                                        return urls.map((u, i) => {
+                                          const ct = i === 0 ? contentType : "";
+                                          if (
+                                            ct.startsWith("image/") ||
+                                            (!ct &&
+                                              /\.(jpe?g|png|gif|webp|heic)$/i.test(
+                                                u,
+                                              ))
+                                          ) {
                                             return (
                                               <a
                                                 key={i}
                                                 href={proxyUrl(u)}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className={cn(
-                                                  "flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5 font-medium transition-colors",
-                                                  isOutbound
-                                                    ? "bg-white/10 text-white/80 hover:bg-white/20"
-                                                    : "bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20",
-                                                )}
                                               >
-                                                <Download className="h-3.5 w-3.5" />
-                                                Download attachment
+                                                <img
+                                                  src={proxyUrl(u)}
+                                                  alt="MMS attachment"
+                                                  className="rounded-xl max-w-[260px] max-h-[320px] object-cover border border-white/10 cursor-pointer hover:opacity-90 transition-opacity"
+                                                  loading="lazy"
+                                                />
                                               </a>
                                             );
-                                          });
-                                        })()}
-                                      {/* Text body (may be empty for image-only MMS) */}
-                                      {message.body ? (
-                                        <p className="leading-relaxed">
-                                          {message.body}
-                                        </p>
-                                      ) : null}
-                                    </div>
-                                  )}
-                                </div>
+                                          }
+                                          if (ct.startsWith("video/")) {
+                                            return (
+                                              <video
+                                                key={i}
+                                                controls
+                                                className="rounded-xl max-w-[260px]"
+                                                preload="metadata"
+                                              >
+                                                <source
+                                                  src={proxyUrl(u)}
+                                                  type={ct}
+                                                />
+                                              </video>
+                                            );
+                                          }
+                                          if (ct.startsWith("audio/")) {
+                                            return (
+                                              <audio
+                                                key={i}
+                                                controls
+                                                preload="metadata"
+                                                className="w-full h-8 rounded"
+                                              >
+                                                <source
+                                                  src={proxyUrl(u)}
+                                                  type={ct}
+                                                />
+                                              </audio>
+                                            );
+                                          }
+                                          return (
+                                            <a
+                                              key={i}
+                                              href={proxyUrl(u)}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className={cn(
+                                                "flex items-center gap-1.5 text-xs rounded-lg px-2.5 py-1.5 font-medium transition-colors",
+                                                isOutbound
+                                                  ? "bg-white/10 text-white/80 hover:bg-white/20"
+                                                  : "bg-muted-foreground/10 text-muted-foreground hover:bg-muted-foreground/20",
+                                              )}
+                                            >
+                                              <Download className="h-3.5 w-3.5" />
+                                              Download attachment
+                                            </a>
+                                          );
+                                        });
+                                      })()}
+                                    {/* Text body (may be empty for image-only MMS) */}
+                                    {message.body ? (
+                                      <p className="leading-relaxed">
+                                        {message.body}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                )}
                               </div>
-                              {/* Timestamp — always visible short time, full date on hover */}
-                              {msgDate && (
-                                <Tooltip delayDuration={300}>
-                                  <TooltipTrigger asChild>
-                                    <div className="flex items-center gap-1 mt-0.5 cursor-default">
-                                      <span
-                                        className={cn(
-                                          "shrink-0",
-                                          isOutbound
-                                            ? "text-muted-foreground/50"
-                                            : getChannelColor(
-                                                message.communication_type,
-                                              ),
-                                        )}
-                                      >
-                                        {getChannelIcon(
-                                          message.communication_type,
-                                          "h-2.5 w-2.5",
-                                        )}
-                                      </span>
-                                      <span className="text-[10px] text-muted-foreground/60 tabular-nums">
-                                        {formatTime(msgDate)}
-                                      </span>
-                                    </div>
-                                  </TooltipTrigger>
-                                  <TooltipContent
-                                    side={isOutbound ? "left" : "right"}
-                                    className="text-xs font-medium"
-                                  >
-                                    {new Date(
-                                      /[Zz+\-]\d{2}:?\d{2}$/.test(msgDate) ||
-                                        msgDate.endsWith("Z")
-                                        ? msgDate
-                                        : msgDate.replace(" ", "T") + "Z",
-                                    ).toLocaleString("en-US", {
-                                      weekday: "short",
-                                      month: "short",
-                                      day: "numeric",
-                                      year: "numeric",
-                                      hour: "numeric",
-                                      minute: "2-digit",
-                                      second: "2-digit",
-                                      hour12: true,
-                                      timeZone:
-                                        currentUser?.timezone || undefined,
-                                    })}
-                                  </TooltipContent>
-                                </Tooltip>
-                              )}
                             </div>
-                          </React.Fragment>
-                        );
-                      })}
+                            {/* Timestamp — always visible short time, full date on hover */}
+                            {msgDate && (
+                              <Tooltip delayDuration={300}>
+                                <TooltipTrigger asChild>
+                                  <div className="flex items-center gap-1 mt-0.5 cursor-default">
+                                    <span
+                                      className={cn(
+                                        "shrink-0",
+                                        isOutbound
+                                          ? "text-muted-foreground/50"
+                                          : getChannelColor(
+                                              message.communication_type,
+                                            ),
+                                      )}
+                                    >
+                                      {getChannelIcon(
+                                        message.communication_type,
+                                        "h-2.5 w-2.5",
+                                      )}
+                                    </span>
+                                    <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+                                      {formatTime(msgDate)}
+                                    </span>
+                                  </div>
+                                </TooltipTrigger>
+                                <TooltipContent
+                                  side={isOutbound ? "left" : "right"}
+                                  className="text-xs font-medium"
+                                >
+                                  {new Date(
+                                    /[Zz+\-]\d{2}:?\d{2}$/.test(msgDate) ||
+                                      msgDate.endsWith("Z")
+                                      ? msgDate
+                                      : msgDate.replace(" ", "T") + "Z",
+                                  ).toLocaleString("en-US", {
+                                    weekday: "short",
+                                    month: "short",
+                                    day: "numeric",
+                                    year: "numeric",
+                                    hour: "numeric",
+                                    minute: "2-digit",
+                                    second: "2-digit",
+                                    hour12: true,
+                                    timeZone:
+                                      currentUser?.timezone || undefined,
+                                  })}
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
+                        </React.Fragment>
+                      );
+                    })}
 
                     {/* Optimistic (in-flight / just-sent) bubbles.
                          Skip any whose real message has already arrived in Redux
@@ -2280,6 +2333,15 @@ const Conversations = () => {
 
               {/* Composer */}
               <div className="p-3 border-t border-border bg-card flex-shrink-0">
+                {!MESSAGE_CHANNELS_ENABLED && (
+                  <div className="mb-2.5 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-700" />
+                    <p className="text-[11px] text-amber-900 leading-snug">
+                      SMS and WhatsApp sending are temporarily disabled across
+                      the platform.
+                    </p>
+                  </div>
+                )}
                 {/* Unassigned claim notice */}
                 {!currentThread.broker_id && (
                   <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 px-3 py-2 mb-2.5">
@@ -2295,52 +2357,15 @@ const Conversations = () => {
                 )}
                 {/* Row 1: Channel + Smart Template picker */}
                 <div className="flex items-center gap-2 mb-2">
-                  <Select
-                    value={messageType}
-                    onValueChange={(v: any) => setMessageType(v)}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 w-36 justify-start gap-2"
+                    disabled
                   >
-                    <SelectTrigger className="w-36 h-8 text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="sms">
-                        <div className="flex items-center gap-2">
-                          <MessageSquare className="h-3.5 w-3.5 text-primary" />
-                          SMS
-                        </div>
-                      </SelectItem>
-                      <SelectItem
-                        value="whatsapp"
-                        disabled={!whatsappAvailable}
-                      >
-                        <div className="flex items-center gap-2">
-                          <FaWhatsapp
-                            className={cn(
-                              "h-3.5 w-3.5",
-                              whatsappAvailable
-                                ? "text-[#25D366]"
-                                : "opacity-40",
-                            )}
-                          />
-                          <span
-                            className={cn(!whatsappAvailable && "opacity-40")}
-                          >
-                            WhatsApp
-                          </span>
-                          {isCheckingWhatsApp && currentPhone && (
-                            <span className="text-xs text-muted-foreground ml-1">
-                              checking…
-                            </span>
-                          )}
-                          {!isCheckingWhatsApp && whatsappStatus === false && (
-                            <span className="text-xs text-muted-foreground ml-1">
-                              unavailable
-                            </span>
-                          )}
-                        </div>
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
+                    <Lock className="h-3.5 w-3.5" />
+                    Messaging paused
+                  </Button>
 
                   {/* Smart template picker */}
                   <Popover
@@ -2607,52 +2632,54 @@ const Conversations = () => {
                 {/* Textarea + send button */}
                 <div className="flex flex-col gap-2">
                   {/* MMS attachment preview (SMS only) */}
-                  {messageType === "sms" && mmsAttachment && (
-                    <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
-                      {mmsAttachment.contentType.startsWith("image/") ? (
-                        <img
-                          src={mmsAttachment.previewUrl}
-                          alt="attachment"
-                          className="h-12 w-12 rounded object-cover border border-border"
-                        />
-                      ) : mmsAttachment.contentType.startsWith("video/") ? (
-                        <div className="flex h-12 w-12 items-center justify-center rounded border border-border bg-muted">
-                          <Film className="h-5 w-5 text-muted-foreground" />
+                  {MESSAGE_CHANNELS_ENABLED &&
+                    messageType === "sms" &&
+                    mmsAttachment && (
+                      <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
+                        {mmsAttachment.contentType.startsWith("image/") ? (
+                          <img
+                            src={mmsAttachment.previewUrl}
+                            alt="attachment"
+                            className="h-12 w-12 rounded object-cover border border-border"
+                          />
+                        ) : mmsAttachment.contentType.startsWith("video/") ? (
+                          <div className="flex h-12 w-12 items-center justify-center rounded border border-border bg-muted">
+                            <Film className="h-5 w-5 text-muted-foreground" />
+                          </div>
+                        ) : mmsAttachment.contentType.startsWith("audio/") ? (
+                          <div className="flex h-12 w-12 items-center justify-center rounded border border-border bg-muted">
+                            <FileAudio className="h-5 w-5 text-muted-foreground" />
+                          </div>
+                        ) : (
+                          <div className="flex h-12 w-12 items-center justify-center rounded border border-border bg-muted">
+                            <FileText className="h-5 w-5 text-muted-foreground" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium truncate">
+                            {mmsAttachment.file.name}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {(mmsAttachment.file.size / 1024).toFixed(0)} KB
+                          </p>
                         </div>
-                      ) : mmsAttachment.contentType.startsWith("audio/") ? (
-                        <div className="flex h-12 w-12 items-center justify-center rounded border border-border bg-muted">
-                          <FileAudio className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                      ) : (
-                        <div className="flex h-12 w-12 items-center justify-center rounded border border-border bg-muted">
-                          <FileText className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium truncate">
-                          {mmsAttachment.file.name}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground">
-                          {(mmsAttachment.file.size / 1024).toFixed(0)} KB
-                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            URL.revokeObjectURL(mmsAttachment.previewUrl);
+                            setMmsAttachment(null);
+                          }}
+                          className="shrink-0 rounded-full p-0.5 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                          aria-label="Remove attachment"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          URL.revokeObjectURL(mmsAttachment.previewUrl);
-                          setMmsAttachment(null);
-                        }}
-                        className="shrink-0 rounded-full p-0.5 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                        aria-label="Remove attachment"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  )}
+                    )}
 
                   <div className="flex items-end gap-2">
                     {/* Hidden file input */}
-                    {messageType === "sms" && (
+                    {MESSAGE_CHANNELS_ENABLED && messageType === "sms" && (
                       <input
                         ref={mmsFileInputRef}
                         type="file"
@@ -2674,7 +2701,7 @@ const Conversations = () => {
                       />
                     )}
                     {/* Paperclip button — SMS only */}
-                    {messageType === "sms" && (
+                    {MESSAGE_CHANNELS_ENABLED && messageType === "sms" && (
                       <button
                         type="button"
                         onClick={() => mmsFileInputRef.current?.click()}
@@ -2739,6 +2766,7 @@ const Conversations = () => {
                     <Button
                       onClick={handleSendMessage}
                       disabled={
+                        !MESSAGE_CHANNELS_ENABLED ||
                         (!messageText.trim() && !mmsAttachment) ||
                         isUploadingMMS
                       }
@@ -3276,8 +3304,8 @@ const Conversations = () => {
 
       {/* ── Schedule Meeting dialog ── */}
       {(() => {
-        const schedulerUrl = currentUser?.public_token
-          ? `${window.location.origin}/scheduler/${currentUser.public_token}`
+        const schedulerUrl = currentUser
+          ? `${window.location.origin}/scheduler/${currentUser.slug ?? currentUser.public_token}`
           : null;
         return (
           <Dialog

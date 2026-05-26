@@ -59,11 +59,9 @@ import {
   createEmailTemplate,
   updateEmailTemplate,
   deleteEmailTemplate,
-  fetchSmsTemplates,
   createSmsTemplate,
   updateSmsTemplate,
   deleteSmsTemplate,
-  fetchWhatsappTemplates,
   createWhatsappTemplate,
   updateWhatsappTemplate,
   deleteWhatsappTemplate,
@@ -86,18 +84,6 @@ const CHANNELS: {
     label: "Email",
     icon: <Mail className="h-4 w-4" />,
     color: "text-blue-500",
-  },
-  {
-    value: "sms",
-    label: "SMS",
-    icon: <MessageSquare className="h-4 w-4" />,
-    color: "text-purple-500",
-  },
-  {
-    value: "whatsapp",
-    label: "WhatsApp",
-    icon: <FaWhatsapp className="h-4 w-4" />,
-    color: "text-green-500",
   },
 ];
 
@@ -149,8 +135,6 @@ const CommunicationTemplates = () => {
 
   useEffect(() => {
     dispatch(fetchEmailTemplates());
-    dispatch(fetchSmsTemplates());
-    dispatch(fetchWhatsappTemplates());
   }, [dispatch]);
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -332,7 +316,7 @@ const CommunicationTemplates = () => {
         {templates.map((template) => (
           <Card
             key={template.id}
-            className="group hover:shadow-lg transition-all duration-200"
+            className="group h-full hover:shadow-lg transition-all duration-200"
           >
             <CardHeader className="pb-3">
               <div className="flex items-start justify-between">
@@ -354,7 +338,7 @@ const CommunicationTemplates = () => {
                 </Badge>
               </div>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="space-y-3 flex flex-col">
               <div className="text-xs text-muted-foreground">
                 Type: {formatLabel(template.template_type || "")}
               </div>
@@ -363,11 +347,11 @@ const CommunicationTemplates = () => {
                   {template[bodyKey]}
                 </div>
               )}
-              <div className="flex gap-2">
+              <div className="grid grid-cols-[1fr_1fr_auto] gap-2 mt-auto">
                 <Button
                   variant="outline"
                   size="sm"
-                  className="flex-1"
+                  className="w-full min-w-0"
                   onClick={() => {
                     setPreviewContent(template[bodyKey]);
                     setIsPreviewOpen(true);
@@ -379,7 +363,7 @@ const CommunicationTemplates = () => {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="flex-1"
+                  className="w-full min-w-0"
                   onClick={() => openEditor(type, template)}
                 >
                   <Pencil className="h-3 w-3 mr-1" />
@@ -388,6 +372,7 @@ const CommunicationTemplates = () => {
                 <Button
                   variant="outline"
                   size="sm"
+                  className="shrink-0 px-3"
                   onClick={() => handleDelete(template.id, template.name, type)}
                 >
                   <Trash2 className="h-3 w-3 text-destructive" />
@@ -417,6 +402,13 @@ const CommunicationTemplates = () => {
           description="Manage message templates and automate communications across the loan pipeline"
         />
 
+        <Card className="mb-6 border-amber-200 bg-amber-50/70">
+          <CardContent className="py-3 text-sm text-amber-900">
+            SMS and WhatsApp templates are temporarily disabled across the
+            platform.
+          </CardContent>
+        </Card>
+
         {/* ── Templates ────────────────────────────────────────────────────── */}
         <Tabs
           value={channelTab}
@@ -427,14 +419,6 @@ const CommunicationTemplates = () => {
               <TabsTrigger value="email" className="gap-2">
                 <Mail className="h-4 w-4" />
                 Email ({emailTemplates.length})
-              </TabsTrigger>
-              <TabsTrigger value="sms" className="gap-2">
-                <MessageSquare className="h-4 w-4" />
-                SMS ({smsTemplates.length})
-              </TabsTrigger>
-              <TabsTrigger value="whatsapp" className="gap-2">
-                <FaWhatsapp className="h-4 w-4" />
-                WhatsApp ({whatsappTemplates.length})
               </TabsTrigger>
             </TabsList>
             <Button onClick={() => openEditor(channelTab)} className="gap-2">
@@ -455,31 +439,6 @@ const CommunicationTemplates = () => {
                 "body_html",
                 (t) => t.subject,
               )
-            )}
-          </TabsContent>
-
-          <TabsContent value="sms" className="mt-0">
-            {isLoading ? (
-              <div className="text-center py-12 text-muted-foreground">
-                Loading SMS templates…
-              </div>
-            ) : (
-              renderTemplateCards(
-                smsTemplates,
-                "sms",
-                "body",
-                (t) => `${t.body.length} / 1600 chars`,
-              )
-            )}
-          </TabsContent>
-
-          <TabsContent value="whatsapp" className="mt-0">
-            {isLoading ? (
-              <div className="text-center py-12 text-muted-foreground">
-                Loading WhatsApp templates…
-              </div>
-            ) : (
-              renderTemplateCards(whatsappTemplates, "whatsapp", "body")
             )}
           </TabsContent>
         </Tabs>

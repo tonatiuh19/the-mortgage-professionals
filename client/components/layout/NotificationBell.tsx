@@ -19,7 +19,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, stripHtml } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -188,7 +188,7 @@ const NotificationBell: React.FC<NotificationBellProps> = ({
     const latest = fresh[0];
     toast({
       title: latest.title,
-      description: latest.message,
+      description: stripHtml(latest.message ?? ""),
     });
 
     // Acknowledge so we don't toast again next poll
@@ -424,7 +424,7 @@ const NotificationItem: React.FC<{
           )}
         </div>
         <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
-          {notification.message}
+          {stripHtml(notification.message ?? "")}
         </p>
         <p className="text-[10px] text-muted-foreground/70 mt-1">
           {timeAgo(notification.created_at)}

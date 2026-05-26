@@ -119,6 +119,7 @@ import { toast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { logger } from "@/lib/logger";
+import { isAdminRole } from "@shared/api";
 
 interface LoanOverlayProps {
   isOpen: boolean;
@@ -2269,12 +2270,12 @@ export function LoanOverlay({
               </Card>
 
               {/* Broker Assignment */}
-              {(user?.role === "admin" || user?.role === "superadmin") && (
+              {isAdminRole(user?.role) && (
                 <Card className="border-gray-200 shadow-sm">
                   <CardHeader className="pb-3 border-b border-gray-100">
                     <CardTitle className="text-lg flex items-center gap-2 text-gray-900">
                       <UserPlus className="h-5 w-5 text-blue-600" />
-                      Assigned Mortgage Banker
+                      Assigned Loan Officer
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="pt-4">
@@ -2294,7 +2295,7 @@ export function LoanOverlay({
                           <p className="text-xs text-gray-500">
                             {selectedLoan.broker_user_id
                               ? "Currently assigned"
-                              : "Via partner assignment"}
+                              : "Via partner lookup"}
                           </p>
                         </div>
                       </div>
@@ -2320,21 +2321,25 @@ export function LoanOverlay({
                       disabled={isAssigning}
                     >
                       <SelectTrigger className="h-9 text-sm">
-                        <SelectValue placeholder="Select mortgage banker..." />
+                        <SelectValue placeholder="Select loan officer..." />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="unassigned">Unassigned</SelectItem>
                         {brokers
                           .filter(
-                            (b) => b.status === "active" && b.role === "admin",
+                            (b) =>
+                              b.status === "active" &&
+                              (b.role === "admin" || b.role === "loan_officer"),
                           )
                           .map((broker) => (
                             <SelectItem
                               key={broker.id}
                               value={String(broker.id)}
                             >
-                              {broker.first_name} {broker.last_name} (Mortgage
-                              Banker)
+                              {broker.first_name} {broker.last_name}{" "}
+                              {broker.role === "admin"
+                                ? "(Admin)"
+                                : "(Loan Officer)"}
                             </SelectItem>
                           ))}
                       </SelectContent>
@@ -2344,7 +2349,7 @@ export function LoanOverlay({
               )}
 
               {/* Partner Assignment */}
-              {(user?.role === "admin" || user?.role === "superadmin") && (
+              {isAdminRole(user?.role) && (
                 <Card className="border-gray-200 shadow-sm">
                   <CardHeader className="pb-3 border-b border-gray-100">
                     <CardTitle className="text-lg flex items-center gap-2 text-gray-900">
@@ -2410,7 +2415,7 @@ export function LoanOverlay({
               )}
 
               {/* Pipeline Status — admin/mortgage banker only */}
-              {(user?.role === "admin" || user?.role === "superadmin") && (
+              {isAdminRole(user?.role) && (
                 <Card className="border-gray-200 shadow-sm">
                   <CardHeader className="pb-3 border-b border-gray-100">
                     <CardTitle className="text-lg flex items-center gap-2 text-gray-900">

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { Users, Search, Phone, Trash2, Plus } from "lucide-react";
 import PhoneLink from "@/components/PhoneLink";
 import EmailLink from "@/components/EmailLink";
@@ -52,6 +52,7 @@ const Clients = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("first_name");
   const [sortDir, setSortDir] = useState<"ASC" | "DESC">("ASC");
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [detailClientId, setDetailClientId] = useState<number | null>(null);
 
@@ -74,6 +75,9 @@ const Clients = () => {
       sortOrder: sortDir,
       search: searchQuery || undefined,
     });
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
   }, [dispatch]);
 
   const handleSort = (field: string) => {
@@ -90,7 +94,15 @@ const Clients = () => {
 
   const handleSearch = (q: string) => {
     setSearchQuery(q);
-    doFetch({ page: 1, sortBy, sortOrder: sortDir, search: q || undefined });
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      doFetch({
+        page: 1,
+        sortBy,
+        sortOrder: sortDir,
+        search: q || undefined,
+      });
+    }, 350);
   };
 
   const getInitials = (firstName: string, lastName: string) => {
@@ -241,7 +253,7 @@ const Clients = () => {
                     handleDeleteClick(client);
                   }}
                   disabled={isDeleting}
-                  className="h-7 text-xs gap-1 border-red-500 text-red-600 hover:bg-red-50"
+                  className="h-7 text-xs gap-1 text-destructive border-destructive/40 hover:bg-destructive/10"
                 >
                   <Trash2 className="h-3 w-3" />
                   Delete
@@ -401,7 +413,7 @@ const Clients = () => {
                             size="sm"
                             onClick={() => handleDeleteClick(client)}
                             disabled={isDeleting}
-                            className="h-7 text-xs gap-1 border-red-500 text-red-600 hover:bg-red-50"
+                            className="h-7 text-xs gap-1 text-destructive border-destructive/40 hover:bg-destructive/10"
                           >
                             <Trash2 className="h-3 w-3" /> Delete
                           </Button>

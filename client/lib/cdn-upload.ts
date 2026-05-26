@@ -9,7 +9,7 @@ export async function uploadAvatarToCDN(
   brokerId: number,
 ): Promise<string> {
   const formData = new FormData();
-  formData.append("main_folder", "encore-profiles");
+  formData.append("main_folder", "tmp-profiles");
   formData.append("id", `profile-${brokerId}`);
   formData.append("main_image", file);
 
@@ -76,7 +76,7 @@ export async function uploadPdfToCDN(
   uploadId: number,
 ): Promise<{ url: string; originalName: string }> {
   const formData = new FormData();
-  formData.append("main_folder", "encore-sign-templates");
+  formData.append("main_folder", "tmp-sign-templates");
   formData.append("id", String(uploadId));
   formData.append("pdfs[]", file);
 

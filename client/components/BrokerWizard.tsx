@@ -31,6 +31,7 @@ import {
   Globe,
   Share2,
   Building2,
+  CheckCircle2,
 } from "lucide-react";
 import {
   FaFacebook,
@@ -39,7 +40,8 @@ import {
   FaXTwitter,
   FaYoutube,
 } from "react-icons/fa6";
-import type { Broker } from "@shared/api";
+import type { Broker, BrokerRole } from "@shared/api";
+import { ROLE_LABELS, PARTNER_ROLES } from "@shared/api";
 import { logger } from "@/lib/logger";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
@@ -66,10 +68,10 @@ export interface BrokerFormValues {
   first_name: string;
   last_name: string;
   phone: string;
-  role: "broker" | "admin";
+  role: BrokerRole;
   license_number: string;
   specializations: string[];
-  /** Assigned Mortgage Banker (only for role=broker) */
+  /** Assigned Manager (admin or loan_officer) — only for partner-tier roles */
   created_by_broker_id: number | null;
   // Profile fields
   bio: string;
@@ -98,7 +100,16 @@ const validationSchema = Yup.object({
   phone: Yup.string()
     .matches(/^[\d\s\-\+\(\)]+$/, "Invalid phone number")
     .optional(),
-  role: Yup.string().oneOf(["broker", "admin"]).required("Required"),
+  role: Yup.string()
+    .oneOf([
+      "admin",
+      "loan_officer",
+      "loan_processor",
+      "realtor",
+      "buyers_agent",
+      "listing_agent",
+    ])
+    .required("Required"),
   license_number: Yup.string().optional(),
   specializations: Yup.array().of(Yup.string()).optional(),
   created_by_broker_id: Yup.number().nullable().optional(),
@@ -171,7 +182,7 @@ export function BrokerWizard({
       first_name: broker?.first_name || "",
       last_name: broker?.last_name || "",
       phone: broker?.phone || "",
-      role: broker?.role || "broker",
+      role: broker?.role || "realtor",
       license_number: broker?.license_number || "",
       specializations:
         broker?.specializations && Array.isArray(broker.specializations)
@@ -271,7 +282,7 @@ export function BrokerWizard({
     selectedBrokerProfile?.avatar_url ||
     `https://ui-avatars.com/api/?name=${encodeURIComponent(
       `${broker?.first_name || ""} ${broker?.last_name || ""}`,
-    )}&background=e8192c&color=fff&size=128`;
+    )}&background=0A2F52&color=fff&size=128`;
 
   const tabs: { id: WizardTab; label: string }[] = [
     { id: "info", label: "Basic Info" },
@@ -283,12 +294,12 @@ export function BrokerWizard({
       <DialogContent className="max-w-2xl max-h-[92vh] overflow-hidden flex flex-col p-0 gap-0">
         <DialogHeader className="px-6 pt-6 pb-4 border-b">
           <DialogTitle className="text-lg font-bold">
-            {mode === "create" ? "Add New Broker" : "Edit Broker"}
+            {mode === "create" ? "Add New Realtor" : "Edit Realtor"}
           </DialogTitle>
           <DialogDescription className="text-sm text-gray-500">
             {mode === "create"
-              ? "Create a new broker account with the details below."
-              : "Update broker information and profile."}
+              ? "Create a new realtor account with the details below."
+              : "Update realtor information and profile."}
           </DialogDescription>
         </DialogHeader>
 
@@ -302,7 +313,7 @@ export function BrokerWizard({
               className={cn(
                 "px-4 py-2 text-sm font-medium rounded-t-lg transition-colors border-b-2 -mb-px",
                 activeTab === tab.id
-                  ? "text-red-600 border-red-600 bg-white"
+                  ? "text-primary border-primary bg-white"
                   : "text-gray-500 border-transparent hover:text-gray-700",
               )}
             >
@@ -327,7 +338,7 @@ export function BrokerWizard({
                   {/* Personal Information */}
                   <section className="space-y-4">
                     <div className="flex items-center gap-2">
-                      <User className="h-4 w-4 text-red-500" />
+                      <User className="h-4 w-4 text-primary" />
                       <h3 className="text-sm font-semibold text-gray-900">
                         Personal Information
                       </h3>
@@ -349,7 +360,7 @@ export function BrokerWizard({
                         />
                         {formik.touched.first_name &&
                           formik.errors.first_name && (
-                            <p className="text-xs text-red-500">
+                            <p className="text-xs text-destructive">
                               {formik.errors.first_name}
                             </p>
                           )}
@@ -421,7 +432,7 @@ export function BrokerWizard({
                           }
                         />
                         {formik.touched.phone && formik.errors.phone && (
-                          <p className="text-xs text-red-500">
+                          <p className="text-xs text-destructive">
                             {formik.errors.phone}
                           </p>
                         )}
@@ -432,39 +443,12 @@ export function BrokerWizard({
                   {/* Professional Information */}
                   <section className="space-y-4">
                     <div className="flex items-center gap-2">
-                      <Briefcase className="h-4 w-4 text-red-500" />
+                      <Briefcase className="h-4 w-4 text-primary" />
                       <h3 className="text-sm font-semibold text-gray-900">
                         Professional Information
                       </h3>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <Label htmlFor="role">
-                          Role <span className="text-red-500">*</span>
-                        </Label>
-                        <Select
-                          value={formik.values.role}
-                          onValueChange={(value) =>
-                            formik.setFieldValue("role", value)
-                          }
-                        >
-                          <SelectTrigger id="role">
-                            <SelectValue placeholder="Select role" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="broker">Partner</SelectItem>
-                            <SelectItem value="admin">
-                              Mortgage Banker
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
-                        {formik.touched.role && formik.errors.role && (
-                          <p className="text-xs text-red-500">
-                            {formik.errors.role}
-                          </p>
-                        )}
-                      </div>
-
+                    <div className="space-y-4">
                       <div className="space-y-1.5">
                         <Label htmlFor="license_number">License Number</Label>
                         <Input
@@ -472,17 +456,182 @@ export function BrokerWizard({
                           {...formik.getFieldProps("license_number")}
                         />
                       </div>
+                      <div className="space-y-1.5">
+                        <Label>
+                          Role <span className="text-destructive">*</span>
+                        </Label>
+                        <div className="grid grid-cols-1 gap-2">
+                          {(
+                            [
+                              {
+                                value: "admin",
+                                label: "Admin",
+                                color: "border-purple-300 bg-purple-50",
+                                selectedColor:
+                                  "border-purple-500 bg-purple-50 ring-2 ring-purple-300",
+                                badgeColor: "bg-purple-100 text-purple-800",
+                                desc: "Full system access. Manages all loans, clients, staff, templates, settings and reports.",
+                                sections: [
+                                  "Dashboard",
+                                  "Pipeline",
+                                  "Clients",
+                                  "Tasks",
+                                  "Documents",
+                                  "Calendar",
+                                  "Conversations",
+                                  "Reports",
+                                  "People Mgmt",
+                                  "Templates",
+                                  "Settings",
+                                ],
+                              },
+                              {
+                                value: "loan_officer",
+                                label: "Loan Officer",
+                                color: "border-indigo-200 bg-indigo-50/40",
+                                selectedColor:
+                                  "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-300",
+                                badgeColor: "bg-indigo-100 text-indigo-800",
+                                desc: "Staff member with full tenant visibility. Can assign loan officers and partners to files, manage clients and generate reports.",
+                                sections: [
+                                  "Dashboard",
+                                  "Pipeline",
+                                  "Clients",
+                                  "Tasks",
+                                  "Documents",
+                                  "Calendar",
+                                  "Conversations",
+                                  "Reports",
+                                ],
+                              },
+                              {
+                                value: "loan_processor",
+                                label: "Loan Processor",
+                                color: "border-cyan-200 bg-cyan-50/40",
+                                selectedColor:
+                                  "border-cyan-500 bg-cyan-50 ring-2 ring-cyan-300",
+                                badgeColor: "bg-cyan-100 text-cyan-800",
+                                desc: "Staff member with full tenant visibility. Focuses on task processing and document management. No reports access.",
+                                sections: [
+                                  "Dashboard",
+                                  "Pipeline",
+                                  "Clients",
+                                  "Tasks",
+                                  "Documents",
+                                  "Calendar",
+                                  "Conversations",
+                                ],
+                              },
+                              {
+                                value: "realtor",
+                                label: "Realtor",
+                                color: "border-blue-200 bg-blue-50/40",
+                                selectedColor:
+                                  "border-blue-500 bg-blue-50 ring-2 ring-blue-300",
+                                badgeColor: "bg-blue-100 text-blue-800",
+                                desc: "Referring real estate agent. Sees only loans and clients where they are the assigned partner.",
+                                sections: [
+                                  "Dashboard",
+                                  "Pipeline (own)",
+                                  "Clients (own)",
+                                  "Calendar",
+                                  "Calculator",
+                                ],
+                              },
+                              {
+                                value: "buyers_agent",
+                                label: "Buyer's Agent",
+                                color: "border-blue-200 bg-blue-50/40",
+                                selectedColor:
+                                  "border-blue-500 bg-blue-50 ring-2 ring-blue-300",
+                                badgeColor: "bg-blue-100 text-blue-800",
+                                desc: "Partner representing homebuyers. Sees only loans and clients where they are the assigned partner.",
+                                sections: [
+                                  "Dashboard",
+                                  "Pipeline (own)",
+                                  "Clients (own)",
+                                  "Calendar",
+                                  "Calculator",
+                                ],
+                              },
+                              {
+                                value: "listing_agent",
+                                label: "Listing Agent",
+                                color: "border-blue-200 bg-blue-50/40",
+                                selectedColor:
+                                  "border-blue-500 bg-blue-50 ring-2 ring-blue-300",
+                                badgeColor: "bg-blue-100 text-blue-800",
+                                desc: "Partner representing home sellers. Sees only loans and clients where they are the assigned partner.",
+                                sections: [
+                                  "Dashboard",
+                                  "Pipeline (own)",
+                                  "Clients (own)",
+                                  "Calendar",
+                                  "Calculator",
+                                ],
+                              },
+                            ] as const
+                          ).map((r) => {
+                            const isSelected = formik.values.role === r.value;
+                            return (
+                              <button
+                                key={r.value}
+                                type="button"
+                                onClick={() =>
+                                  formik.setFieldValue("role", r.value)
+                                }
+                                className={`w-full text-left rounded-lg border p-3 transition-all ${isSelected ? r.selectedColor : r.color + " hover:border-gray-400"}`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span
+                                        className={`text-xs font-semibold px-2 py-0.5 rounded-full ${r.badgeColor}`}
+                                      >
+                                        {r.label}
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-gray-600 mb-2">
+                                      {r.desc}
+                                    </p>
+                                    <div className="flex flex-wrap gap-1">
+                                      {r.sections.map((s) => (
+                                        <span
+                                          key={s}
+                                          className="text-[10px] bg-white/80 border border-gray-200 text-gray-500 rounded px-1.5 py-0.5"
+                                        >
+                                          {s}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  {isSelected && (
+                                    <CheckCircle2 className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {formik.touched.role && formik.errors.role && (
+                          <p className="text-xs text-destructive">
+                            {formik.errors.role}
+                          </p>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Assigned Mortgage Banker — only for partners */}
-                    {formik.values.role === "broker" && (
+                    {/* Assigned Manager — only for partner-tier roles */}
+                    {PARTNER_ROLES.includes(
+                      formik.values.role as BrokerRole,
+                    ) && (
                       <div className="space-y-1.5">
                         <Label
                           htmlFor="created_by_broker_id"
                           className="flex items-center gap-1.5"
                         >
                           <Building2 className="h-3.5 w-3.5 text-purple-500" />
-                          Assigned Mortgage Banker
+                          Assigned Manager
                         </Label>
                         <Select
                           value={
@@ -498,19 +647,22 @@ export function BrokerWizard({
                           }
                         >
                           <SelectTrigger id="created_by_broker_id">
-                            <SelectValue placeholder="Select mortgage banker…" />
+                            <SelectValue placeholder="Select manager…" />
                           </SelectTrigger>
                           <SelectContent>
                             {mortgageBankers.map((mb) => (
                               <SelectItem key={mb.id} value={String(mb.id)}>
-                                {mb.first_name} {mb.last_name}
+                                {mb.first_name} {mb.last_name}{" "}
+                                {mb.role === "admin"
+                                  ? "(Admin)"
+                                  : "(Loan Officer)"}
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                         <p className="text-xs text-gray-400">
-                          This Mortgage Banker will appear co-branded on the
-                          partner's public apply page.
+                          This manager (admin or loan officer) will appear
+                          co-branded on the partner's public apply page.
                         </p>
                       </div>
                     )}
@@ -552,7 +704,7 @@ export function BrokerWizard({
                               <button
                                 type="button"
                                 onClick={() => handleRemoveSpecialization(spec)}
-                                className="ml-2 hover:text-red-500 transition-colors"
+                                className="ml-2 hover:text-destructive transition-colors"
                               >
                                 <X className="h-3 w-3" />
                               </button>
@@ -577,19 +729,19 @@ export function BrokerWizard({
                 >
                   {profileLoading && mode === "edit" ? (
                     <div className="flex items-center justify-center py-12">
-                      <Loader2 className="h-6 w-6 animate-spin text-red-500 mr-3" />
+                      <Loader2 className="h-6 w-6 animate-spin text-primary mr-3" />
                       <span className="text-sm text-gray-500">
                         Loading profile…
                       </span>
                     </div>
                   ) : (
                     <>
-                      {/* Avatar — only available after broker is created */}
+                      {/* Avatar — only available after realtor is created */}
                       {mode === "edit" && (
                         <>
                           <section className="space-y-4">
                             <div className="flex items-center gap-2">
-                              <Camera className="h-4 w-4 text-red-500" />
+                              <Camera className="h-4 w-4 text-primary" />
                               <h3 className="text-sm font-semibold text-gray-900">
                                 Profile Photo
                               </h3>
@@ -643,7 +795,7 @@ export function BrokerWizard({
                       {mode === "create" && (
                         <p className="text-xs text-gray-400 italic flex items-center gap-1.5">
                           <Camera className="h-3.5 w-3.5" />
-                          Profile photo can be set after the broker account is
+                          Profile photo can be set after the realtor account is
                           created.
                         </p>
                       )}
@@ -655,7 +807,7 @@ export function BrokerWizard({
                         </h3>
                         <Textarea
                           id="bio"
-                          placeholder="Tell clients about this broker's background and expertise…"
+                          placeholder="Tell clients about this realtor's background and expertise…"
                           rows={4}
                           {...formik.getFieldProps("bio")}
                           className="resize-none"
@@ -664,7 +816,7 @@ export function BrokerWizard({
                           {(formik.values.bio || "").length}/500
                         </p>
                         {formik.touched.bio && formik.errors.bio && (
-                          <p className="text-xs text-red-500">
+                          <p className="text-xs text-destructive">
                             {formik.errors.bio}
                           </p>
                         )}
@@ -675,7 +827,7 @@ export function BrokerWizard({
                       {/* Office Location */}
                       <section className="space-y-4">
                         <div className="flex items-center gap-2">
-                          <MapPin className="h-4 w-4 text-red-500" />
+                          <MapPin className="h-4 w-4 text-primary" />
                           <h3 className="text-sm font-semibold text-gray-900">
                             Office Location
                           </h3>
@@ -737,7 +889,7 @@ export function BrokerWizard({
                         />
                         {formik.touched.years_experience &&
                           formik.errors.years_experience && (
-                            <p className="text-xs text-red-500">
+                            <p className="text-xs text-destructive">
                               {formik.errors.years_experience}
                             </p>
                           )}
@@ -748,7 +900,7 @@ export function BrokerWizard({
                       {/* Social Networks */}
                       <section className="space-y-4">
                         <div className="flex items-center gap-2">
-                          <Share2 className="h-4 w-4 text-red-500" />
+                          <Share2 className="h-4 w-4 text-primary" />
                           <h3 className="text-sm font-semibold text-gray-900">
                             Social Networks
                           </h3>
@@ -771,7 +923,7 @@ export function BrokerWizard({
                             />
                             {formik.touched.website_url &&
                               formik.errors.website_url && (
-                                <p className="text-xs text-red-500">
+                                <p className="text-xs text-destructive">
                                   {formik.errors.website_url}
                                 </p>
                               )}
@@ -793,7 +945,7 @@ export function BrokerWizard({
                             />
                             {formik.touched.linkedin_url &&
                               formik.errors.linkedin_url && (
-                                <p className="text-xs text-red-500">
+                                <p className="text-xs text-destructive">
                                   {formik.errors.linkedin_url}
                                 </p>
                               )}
@@ -815,7 +967,7 @@ export function BrokerWizard({
                             />
                             {formik.touched.facebook_url &&
                               formik.errors.facebook_url && (
-                                <p className="text-xs text-red-500">
+                                <p className="text-xs text-destructive">
                                   {formik.errors.facebook_url}
                                 </p>
                               )}
@@ -837,7 +989,7 @@ export function BrokerWizard({
                             />
                             {formik.touched.instagram_url &&
                               formik.errors.instagram_url && (
-                                <p className="text-xs text-red-500">
+                                <p className="text-xs text-destructive">
                                   {formik.errors.instagram_url}
                                 </p>
                               )}
@@ -859,7 +1011,7 @@ export function BrokerWizard({
                             />
                             {formik.touched.twitter_url &&
                               formik.errors.twitter_url && (
-                                <p className="text-xs text-red-500">
+                                <p className="text-xs text-destructive">
                                   {formik.errors.twitter_url}
                                 </p>
                               )}
@@ -881,7 +1033,7 @@ export function BrokerWizard({
                             />
                             {formik.touched.youtube_url &&
                               formik.errors.youtube_url && (
-                                <p className="text-xs text-red-500">
+                                <p className="text-xs text-destructive">
                                   {formik.errors.youtube_url}
                                 </p>
                               )}
@@ -910,7 +1062,7 @@ export function BrokerWizard({
                     Saving…
                   </>
                 ) : mode === "create" ? (
-                  "Create Broker"
+                  "Create Realtor"
                 ) : (
                   "Save Changes"
                 )}
