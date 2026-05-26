@@ -3100,7 +3100,7 @@ const AdminCalendar: React.FC = () => {
     window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1"
       ? window.location.origin
-      : `https://portal.themortgageprofessionals.net`;
+      : `https://the-mortgage-professionals.vercel.app`;
 
   const schedulerUrl = user
     ? `${portalOrigin}/scheduler/${user.slug ?? user.public_token}`

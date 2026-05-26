@@ -2653,7 +2653,7 @@ async function sendClientVerificationEmail(
                   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;">
                     <tr>
                       <td align="center">
-                        <a href="${process.env.CLIENT_URL || "https://portal.themortgageprofessionals.net"}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Go to Client Login</a>
+                        <a href="${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Go to Client Login</a>
                       </td>
                     </tr>
                   </table>
@@ -2780,7 +2780,7 @@ async function sendClientLoanWelcomeEmail(
                     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:32px;">
                       <tr>
                         <td align="center">
-                          <a href="${process.env.CLIENT_URL || "https://portal.themortgageprofessionals.net"}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Log In to Your Portal</a>
+                          <a href="${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Log In to Your Portal</a>
                         </td>
                       </tr>
                     </table>
@@ -2821,7 +2821,7 @@ async function sendClientManualWelcomeEmail(
 ): Promise<void> {
   try {
     console.log(`📧 Sending manual client welcome email to ${email}`);
-    const loginUrl = `${process.env.CLIENT_URL || "https://portal.themortgageprofessionals.net"}/client-login`;
+    const loginUrl = `${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/client-login`;
     await sendViaResend({
       to: email,
       subject: `Welcome to The Mortgage Professionals, ${firstName}!`,
@@ -3018,7 +3018,7 @@ async function sendPublicApplicationWelcomeEmail(
     };
 
     const portalUrl =
-      process.env.CLIENT_URL || "https://portal.themortgageprofessionals.net";
+      process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app";
 
     const mailOptions = {
       from: RESEND_FROM,
@@ -3253,7 +3253,7 @@ async function sendTaskReopenedEmail(
                     <table width="100%" cellpadding="0" cellspacing="0" border="0">
                       <tr>
                         <td align="center">
-                          <a href="${process.env.CLIENT_URL || "https://portal.themortgageprofessionals.net"}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Review Task Now</a>
+                          <a href="${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Review Task Now</a>
                         </td>
                       </tr>
                     </table>
@@ -3342,7 +3342,7 @@ async function sendTaskApprovedEmail(
                     <table width="100%" cellpadding="0" cellspacing="0" border="0">
                       <tr>
                         <td align="center">
-                          <a href="${process.env.CLIENT_URL || "https://portal.themortgageprofessionals.net"}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">View My Portal</a>
+                          <a href="${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">View My Portal</a>
                         </td>
                       </tr>
                     </table>
@@ -3435,7 +3435,7 @@ async function sendNewTaskAssignedEmail(
                     <table width="100%" cellpadding="0" cellspacing="0" border="0">
                       <tr>
                         <td align="center">
-                          <a href="${process.env.CLIENT_URL || "https://portal.themortgageprofessionals.net"}/portal" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Go to My Portal</a>
+                          <a href="${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/portal" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Go to My Portal</a>
                         </td>
                       </tr>
                     </table>
@@ -14862,7 +14862,7 @@ function wrapReminderEmailBody(plainText: string): string {
     .join("");
 
   const portalUrl =
-    process.env.CLIENT_URL || "https://portal.themortgageprofessionals.net";
+    process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -18575,7 +18575,7 @@ const handleInboundSMS: RequestHandler = async (req, res) => {
   try {
     // Security: validate using Twilio signature (preferred) OR fallback to shared secret
     const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
-    const webhookUrl = process.env.TWILIO_SMS_WEBHOOK_URL; // e.g. https://portal.themortgageprofessionals.net/api/webhooks/inbound-sms
+    const webhookUrl = process.env.TWILIO_SMS_WEBHOOK_URL; // e.g. https://the-mortgage-professionals.vercel.app/api/webhooks/inbound-sms
 
     if (twilioAuthToken && webhookUrl) {
       const twilioSignature =
@@ -21100,7 +21100,7 @@ function getVoiceBaseUrl(): string {
       /\/api\/webhooks\/inbound-sms$/,
       "",
     ) ||
-    "https://portal.themortgageprofessionals.net"
+    "https://the-mortgage-professionals.vercel.app"
   );
 }
 
@@ -27558,8 +27558,8 @@ function createServer() {
             </tr>
           </table>`;
 
-    const cancelUrl = `${process.env.CLIENT_URL || "https://portal.themortgageprofessionals.net"}/scheduler/cancel/${opts.bookingToken}`;
-    const rescheduleUrl = `${process.env.CLIENT_URL || "https://portal.themortgageprofessionals.net"}/scheduler/reschedule/${opts.rescheduleToken}`;
+    const cancelUrl = `${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/scheduler/cancel/${opts.bookingToken}`;
+    const rescheduleUrl = `${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/scheduler/reschedule/${opts.rescheduleToken}`;
 
     const icsLocation = isVideoMeeting
       ? opts.videoRoomUrl ||
@@ -27696,7 +27696,7 @@ function createServer() {
       : "";
     const timeLabel = (t: string) =>
       `${formatTime(t)}${tzAbbr ? ` ${tzAbbr}` : ""}`;
-    const adminUrl = `${process.env.BASE_URL || "https://portal.themortgageprofessionals.net"}/admin/scheduler`;
+    const adminUrl = `${process.env.BASE_URL || "https://the-mortgage-professionals.vercel.app"}/admin/scheduler`;
 
     const isVideoMeeting =
       opts.meetingType === "video" || opts.meetingType === "teams";
@@ -27796,7 +27796,7 @@ function createServer() {
       : "";
     const timeLabel = (t: string) =>
       `${formatTime(t)}${tzAbbr ? ` ${tzAbbr}` : ""}`;
-    const scheduleUrl = `${process.env.CLIENT_URL || "https://portal.themortgageprofessionals.net"}/scheduler`;
+    const scheduleUrl = `${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/scheduler`;
 
     await sendViaResend({
       from: process.env.SMTP_FROM,
