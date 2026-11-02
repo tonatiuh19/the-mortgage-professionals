@@ -26981,6 +26981,10 @@ async function fulfillFromMetadata(
   onTopUpGranted?: TopUpGrantedHandler,
   recipientEmail?: string,
 ): Promise<{ granted: boolean; alreadyFulfilled: boolean }> {
+  // Webhooks arrive from a shared Stripe account, so they must name this tenant.
+  if (source === "webhook" && !metadata.tenant_id) {
+    return { granted: false, alreadyFulfilled: false };
+  }
   const tid = Number(metadata.tenant_id ?? defaultTenantId);
   const dimension = metadata.dimension as UsageDimension | undefined;
   const units = Number(metadata.units ?? 0);
@@ -27119,6 +27123,14 @@ function registerStripeWebhookEarly(
         const eventId = String(event.id ?? "");
         if (!eventId) {
           return res.status(400).send("Missing Stripe event id");
+        }
+
+        // This Stripe account is shared with other businesses; ignore their tenants.
+        const eventTenantId = (
+          event.data?.object?.metadata as Record<string, string> | undefined
+        )?.tenant_id;
+        if (eventTenantId && Number(eventTenantId) !== tenantId) {
+          return res.json({ received: true, ignored: true });
         }
 
         let webhookRecorded = false;
