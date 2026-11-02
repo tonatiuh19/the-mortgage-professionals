@@ -397,7 +397,7 @@ const LoanOptions: React.FC = () => {
             </Badge>
             <h1 className="text-4xl font-black tracking-tight sm:text-5xl md:text-6xl mb-4">
               Find Your{" "}
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-red-600">
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-accent">
                 Perfect Loan
               </span>
             </h1>

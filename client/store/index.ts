@@ -21,6 +21,9 @@ import settingsReducer from "./slices/settingsSlice";
 import reminderFlowsReducer from "./slices/reminderFlowsSlice";
 import roleSectionPermissionsReducer from "./slices/roleSectionPermissionsSlice";
 import billingReducer from "./slices/billingSlice";
+import blockedNumbersReducer from "./slices/blockedNumbersSlice";
+import calculatorSavesReducer from "./slices/calculatorSavesSlice";
+import bulkImportReducer from "./slices/bulkImportSlice";
 import adminSectionControlsReducer from "./slices/adminSectionControlsSlice";
 import contactSubmissionsReducer from "./slices/contactSubmissionsSlice";
 import schedulerReducer from "./slices/schedulerSlice";
@@ -29,7 +32,6 @@ import clientDetailReducer from "./slices/clientDetailSlice";
 import voiceReducer from "./slices/voiceSlice";
 import realtorProspectingReducer from "./slices/realtorProspectingSlice";
 import emailReducer from "./slices/emailSlice";
-import mortgiReducer from "./slices/mortgiSlice";
 import brokerNotificationPrefsReducer from "./slices/brokerNotificationPrefsSlice";
 import complianceReducer from "./slices/complianceSlice";
 import crmReducer from "./slices/crmSlice";
@@ -60,6 +62,9 @@ export const store = configureStore({
     settings: settingsReducer,
     reminderFlows: reminderFlowsReducer,
     adminSectionControls: adminSectionControlsReducer,
+    calculatorSaves: calculatorSavesReducer,
+    bulkImport: bulkImportReducer,
+    blockedNumbers: blockedNumbersReducer,
     billing: billingReducer,
     roleSectionPermissions: roleSectionPermissionsReducer,
     contactSubmissions: contactSubmissionsReducer,
@@ -69,7 +74,6 @@ export const store = configureStore({
     clientDetail: clientDetailReducer,
     realtorProspecting: realtorProspectingReducer,
     email: emailReducer,
-    mortgi: mortgiReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

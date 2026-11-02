@@ -890,7 +890,7 @@ INSERT INTO `system_settings` (`id`, `tenant_id`, `setting_key`, `setting_value`
 (7, 2, 'company_address', '', 'string', 'Company address displayed in pre-approval letters', '2026-03-16 18:52:11'),
 (8, 2, 'company_phone', '5623370000', 'string', 'Company phone displayed in pre-approval letters', '2026-03-16 18:52:11'),
 (9, 2, 'company_nmls', '1105497', 'string', 'Company NMLS license number for pre-approval letters', '2026-03-16 18:52:11'),
-(11, 2, 'pre_approval_default_template', '<div style=\"font-family: Arial, Helvetica, sans-serif; max-width: 750px; margin: 0 auto; padding: 48px; background: #fff; color: #222;\">\r\n\r\n  <table style=\"width: 100%; margin-bottom: 20px; border-collapse: collapse;\">\r\n    <tr>\r\n      <td style=\"vertical-align: top; width: 55%;\">{{COMPANY_LOGO}}</td>\r\n      <td style=\"vertical-align: top; text-align: right; font-size: 13px; color: #333; line-height: 1.8;\">\r\n        <strong>{{COMPANY_NAME}}</strong><br>P. {{COMPANY_PHONE}}<br>NMLS# {{COMPANY_NMLS}}\r\n      </td>\r\n    </tr>\r\n  </table>\r\n\r\n  <hr style=\"border: none; border-top: 1px solid #ccc; margin-bottom: 20px;\">\r\n\r\n  <table style=\"width: 100%; margin-bottom: 20px; border-collapse: collapse;\">\r\n    <tr>\r\n      <td style=\"font-size: 13px;\">Date: {{LETTER_DATE}}</td>\r\n      <td style=\"font-size: 13px; text-align: right;\">Expires: {{EXPIRES_SHORT}}</td>\r\n    </tr>\r\n  </table>\r\n\r\n  <p style=\"margin: 0 0 20px; font-size: 13px;\">Re: {{CLIENT_FULL_NAME}}</p>\r\n  <hr style=\"border: none; border-top: 1px solid #ccc; margin-bottom: 20px;\">\r\n\r\n  <p style=\"margin: 0 0 16px; font-size: 13px; line-height: 1.7;\">This letter shall serve as a pre-approval for a loan in connection with the purchase transaction for the above referenced buyer(s). Based on preliminary information, a pre-approval is herein granted with the following terms:</p>\r\n\r\n  <p style=\"margin: 0 0 5px; font-size: 13px;\">Purchase Price: {{APPROVED_AMOUNT}}</p>\r\n  <p style=\"margin: 0 0 5px; font-size: 13px;\">Loan Type: </p>\r\n  <p style=\"margin: 0 0 5px; font-size: 13px;\">Term: 30 years</p>\r\n  <p style=\"margin: 0 0 5px; font-size: 13px;\">FICO Score: </p>\r\n  <p style=\"margin: 0 0 20px; font-size: 13px;\">Property Address: {{PROPERTY_ADDRESS}}</p>\r\n\r\n  <p style=\"margin: 0 0 8px; font-size: 13px;\"><strong>We have reviewed the following:</strong></p>\r\n  <ul style=\"margin: 0 0 20px; padding-left: 24px; font-size: 13px; line-height: 1.9;\">\r\n    <li>Reviewed applicant&#39;s credit report and credit score</li>\r\n    <li>Verified applicant&#39;s income documentation and debt to income ratio</li>\r\n    <li>Verified applicant&#39;s assets documentation</li>\r\n  </ul>\r\n\r\n  <p style=\"margin: 0 0 20px; font-size: 13px; line-height: 1.7;\">Disclaimer: <strong>Loan Contingency.</strong> Even though a buyer may hold a pre-approval letter, further investigations concerning the property or the borrower could result in a loan denial. We suggest the buyer consider a loan contingency requirement in the purchase contract (to protect earnest money deposit) in accordance with applicable state law.</p>\r\n\r\n  <p style=\"margin: 0 0 32px; font-size: 13px;\">Realtor Partner: </p>\r\n\r\n  <table style=\"width: 100%; border-collapse: collapse;\">\r\n    <tr>\r\n      <td style=\"vertical-align: top; width: 100px;\">{{BROKER_PHOTO}}</td>\r\n      <td style=\"vertical-align: top; padding-left: 16px; font-size: 13px; line-height: 1.7;\">\r\n        <p style=\"margin: 0 0 3px;\"><strong>{{BROKER_FULL_NAME}}</strong></p>\r\n        <p style=\"margin: 0 0 3px; color: #444;\">Mortgage Banker</p>\r\n        <p style=\"margin: 0 0 3px; color: #444;\">{{BROKER_LICENSE}}</p>\r\n        <p style=\"margin: 0 0 3px; color: #444;\">{{COMPANY_NAME}}</p>\r\n        <p style=\"margin: 0 0 3px; color: #444;\">{{BROKER_PHONE}}</p>\r\n        <p style=\"margin: 0; color: #444;\">{{BROKER_EMAIL}}</p>\r\n      </td>\r\n    </tr>\r\n  </table>\r\n\r\n</div>', 'string', 'Default HTML template for pre-approval letters — matches Encore Mortgage letter format', '2026-03-16 18:52:11'),
+(11, 2, 'pre_approval_default_template', '<div style=\"font-family: \'DM Sans\', Arial, Helvetica, sans-serif; max-width: 750px; margin: 0 auto; padding: 48px; background: #fff; color: #222;\">\r\n\r\n  <table style=\"width: 100%; margin-bottom: 20px; border-collapse: collapse;\">\r\n    <tr>\r\n      <td style=\"vertical-align: top; width: 55%;\">{{COMPANY_LOGO}}</td>\r\n      <td style=\"vertical-align: top; text-align: right; font-size: 13px; color: #333; line-height: 1.8;\">\r\n        <strong>{{COMPANY_NAME}}</strong><br>P. {{COMPANY_PHONE}}<br>NMLS# {{COMPANY_NMLS}}\r\n      </td>\r\n    </tr>\r\n  </table>\r\n\r\n  <hr style=\"border: none; border-top: 1px solid #ccc; margin-bottom: 20px;\">\r\n\r\n  <table style=\"width: 100%; margin-bottom: 20px; border-collapse: collapse;\">\r\n    <tr>\r\n      <td style=\"font-size: 13px;\">Date: {{LETTER_DATE}}</td>\r\n      <td style=\"font-size: 13px; text-align: right;\">Expires: {{EXPIRES_SHORT}}</td>\r\n    </tr>\r\n  </table>\r\n\r\n  <p style=\"margin: 0 0 20px; font-size: 13px;\">Re: {{CLIENT_FULL_NAME}}</p>\r\n  <hr style=\"border: none; border-top: 1px solid #ccc; margin-bottom: 20px;\">\r\n\r\n  <p style=\"margin: 0 0 16px; font-size: 13px; line-height: 1.7;\">This letter shall serve as a pre-approval for a loan in connection with the purchase transaction for the above referenced buyer(s). Based on preliminary information, a pre-approval is herein granted with the following terms:</p>\r\n\r\n  <p style=\"margin: 0 0 5px; font-size: 13px;\">Purchase Price: {{APPROVED_AMOUNT}}</p>\r\n  <p style=\"margin: 0 0 5px; font-size: 13px;\">Loan Type: </p>\r\n  <p style=\"margin: 0 0 5px; font-size: 13px;\">Term: 30 years</p>\r\n  <p style=\"margin: 0 0 5px; font-size: 13px;\">FICO Score: </p>\r\n  <p style=\"margin: 0 0 20px; font-size: 13px;\">Property Address: {{PROPERTY_ADDRESS}}</p>\r\n\r\n  <p style=\"margin: 0 0 8px; font-size: 13px;\"><strong>We have reviewed the following:</strong></p>\r\n  <ul style=\"margin: 0 0 20px; padding-left: 24px; font-size: 13px; line-height: 1.9;\">\r\n    <li>Reviewed applicant&#39;s credit report and credit score</li>\r\n    <li>Verified applicant&#39;s income documentation and debt to income ratio</li>\r\n    <li>Verified applicant&#39;s assets documentation</li>\r\n  </ul>\r\n\r\n  <p style=\"margin: 0 0 20px; font-size: 13px; line-height: 1.7;\">Disclaimer: <strong>Loan Contingency.</strong> Even though a buyer may hold a pre-approval letter, further investigations concerning the property or the borrower could result in a loan denial. We suggest the buyer consider a loan contingency requirement in the purchase contract (to protect earnest money deposit) in accordance with applicable state law.</p>\r\n\r\n  <p style=\"margin: 0 0 32px; font-size: 13px;\">Realtor Partner: </p>\r\n\r\n  <table style=\"width: 100%; border-collapse: collapse;\">\r\n    <tr>\r\n      <td style=\"vertical-align: top; width: 100px;\">{{BROKER_PHOTO}}</td>\r\n      <td style=\"vertical-align: top; padding-left: 16px; font-size: 13px; line-height: 1.7;\">\r\n        <p style=\"margin: 0 0 3px;\"><strong>{{BROKER_FULL_NAME}}</strong></p>\r\n        <p style=\"margin: 0 0 3px; color: #444;\">Mortgage Banker</p>\r\n        <p style=\"margin: 0 0 3px; color: #444;\">{{BROKER_LICENSE}}</p>\r\n        <p style=\"margin: 0 0 3px; color: #444;\">{{COMPANY_NAME}}</p>\r\n        <p style=\"margin: 0 0 3px; color: #444;\">{{BROKER_PHONE}}</p>\r\n        <p style=\"margin: 0; color: #444;\">{{BROKER_EMAIL}}</p>\r\n      </td>\r\n    </tr>\r\n  </table>\r\n\r\n</div>', 'string', 'Default HTML template for pre-approval letters — matches Encore Mortgage letter format', '2026-03-16 18:52:11'),
 (12, 2, 'pre_approval_require_all_tasks', 'false', 'string', NULL, '2026-03-16 18:52:11');
 
 -- --------------------------------------------------------
@@ -2686,6 +2686,10 @@ CREATE TABLE IF NOT EXISTS broker_role_section_permissions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS tenant_subscription (
+  past_due_at DATETIME NULL,
+  grace_ends_at DATETIME NULL,
+  restricted_at DATETIME NULL,
+  suspended_at DATETIME NULL,
   tenant_id INT NOT NULL,
   plan_code VARCHAR(50) NOT NULL DEFAULT 'platform_standard',
   status ENUM('active','trialing','past_due','canceled','inactive') NOT NULL DEFAULT 'active',
@@ -2721,6 +2725,7 @@ CREATE TABLE IF NOT EXISTS tenant_usage_period (
 );
 
 CREATE TABLE IF NOT EXISTS tenant_usage_ledger (
+  idempotency_key VARCHAR(150) DEFAULT NULL,
   id BIGINT NOT NULL AUTO_INCREMENT,
   tenant_id INT NOT NULL,
   dimension ENUM('sms_segments','voice_minutes','email_sends','scheduler_bookings','mortgi_ai_tokens') NOT NULL,
@@ -2843,4 +2848,79 @@ CREATE TABLE IF NOT EXISTS stripe_webhook_events (
   processed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (event_id),
   KEY idx_swe_processed (processed_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `blocked_phone_numbers` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL,
+  `phone_e164` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Number as entered, normalised to E.164 when possible',
+  `normalized_phone` varchar(10) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Last 10 digits; used for matching',
+  `block_calls` tinyint(1) NOT NULL DEFAULT '1',
+  `block_sms` tinyint(1) NOT NULL DEFAULT '1',
+  `reason` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `blocked_by_broker_id` int DEFAULT NULL,
+  `blocked_call_count` int NOT NULL DEFAULT '0' COMMENT 'Inbound calls rejected since blocking',
+  `blocked_sms_count` int NOT NULL DEFAULT '0' COMMENT 'Inbound SMS dropped since blocking',
+  `last_blocked_at` datetime DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_blocked_phone_tenant_norm` (`tenant_id`, `normalized_phone`),
+  KEY `idx_blocked_phone_broker` (`blocked_by_broker_id`),
+  CONSTRAINT `fk_blocked_phone_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `bulk_import_jobs` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL,
+  `entity` enum('clients','realtors') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `uploaded_by_broker_id` int NOT NULL,
+  `file_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `file_sha256` char(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` enum('validated','processing','committed','expired','failed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'validated',
+  `options_json` json DEFAULT NULL,
+  `preview_json` json DEFAULT NULL,
+  `result_json` json DEFAULT NULL,
+  `row_count` int NOT NULL DEFAULT '0',
+  `created_count` int NOT NULL DEFAULT '0',
+  `skipped_count` int NOT NULL DEFAULT '0',
+  `error_count` int NOT NULL DEFAULT '0',
+  `expires_at` datetime NOT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `committed_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_bulk_import_tenant_status` (`tenant_id`,`status`),
+  KEY `idx_bulk_import_uploader` (`uploaded_by_broker_id`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+CREATE TABLE IF NOT EXISTS `broker_calculator_saves` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `tenant_id` INT NOT NULL,
+  `broker_id` INT NOT NULL COMMENT 'Creator broker',
+  `client_id` INT NOT NULL,
+  `loan_application_id` INT DEFAULT NULL,
+  `kind` ENUM(
+    'fha',
+    'va',
+    'conventional',
+    'investment',
+    'mobile_home',
+    'income'
+  ) NOT NULL,
+  `title` VARCHAR(255) NOT NULL,
+  `summary_json` JSON DEFAULT NULL COMMENT 'Grid preview: payment, household_total, etc.',
+  `payload_json` JSON NOT NULL COMMENT 'Full worksheet / loan calc inputs',
+  `borrower_client_ids` JSON DEFAULT NULL COMMENT 'Wage earner: [id|null x4]',
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_bcs_tenant_broker` (`tenant_id`, `broker_id`),
+  KEY `idx_bcs_tenant_client` (`tenant_id`, `client_id`),
+  KEY `idx_bcs_tenant_kind` (`tenant_id`, `kind`),
+  KEY `idx_bcs_loan` (`loan_application_id`),
+  CONSTRAINT `fk_bcs_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_bcs_broker` FOREIGN KEY (`broker_id`) REFERENCES `brokers` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_bcs_client` FOREIGN KEY (`client_id`) REFERENCES `clients` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_bcs_loan` FOREIGN KEY (`loan_application_id`) REFERENCES `loan_applications` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

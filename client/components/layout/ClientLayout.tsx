@@ -31,7 +31,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { MortgiWidget } from "@/components/MortgiWidget";
 
 interface ClientLayoutProps {
   children: React.ReactNode;
@@ -281,7 +280,6 @@ const ClientLayout = ({ children }: ClientLayoutProps) => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <MortgiWidget userType="client" />
     </div>
   );
 };

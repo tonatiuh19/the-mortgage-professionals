@@ -57,7 +57,6 @@ FILES=(
   "client/components/NewConversationWizard.tsx"
   "client/components/BrokerWizard.tsx"
   "client/components/BrokerSchedulerLinkModal.tsx"
-  "client/components/MortgiWidget.tsx"
   "client/components/PreApprovalLetterModal.tsx"
   "client/components/PDFSigningViewer.tsx"
   "client/components/PDFSignatureZoneEditor.tsx"
@@ -89,7 +88,6 @@ FILES=(
   "client/pages/admin/BrokerProfile.tsx"
   "client/pages/admin/ContactSubmissions.tsx"
   "client/pages/admin/ReminderFlows.tsx"
-  "client/pages/admin/Mortgi.tsx"
 
   # Pages – Client
   "client/pages/client/Dashboard.tsx"
@@ -140,7 +138,6 @@ FILES=(
   "client/store/slices/schedulerSlice.ts"
   "client/store/slices/calendar.spec.ts"
   "client/store/slices/settingsSlice.ts"
-  "client/store/slices/mortgiSlice.ts"
   "client/store/slices/tasksSlice.ts"
   "client/store/slices/voiceSlice.ts"
 

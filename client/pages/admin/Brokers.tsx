@@ -1,3 +1,5 @@
+import BulkImportWizard from "@/components/bulk-import/BulkImportWizard";
+import { openBulkImportWizard } from "@/store/slices/bulkImportSlice";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
@@ -38,6 +40,7 @@ import {
   Phone,
   Link2,
   CalendarDays,
+  Upload,
 } from "lucide-react";
 import type { Broker, BrokerRole } from "@shared/api";
 import { ROLE_LABELS, PARTNER_ROLES } from "@shared/api";
@@ -88,6 +91,10 @@ export default function Brokers() {
   };
 
   const isAdmin = currentBroker?.role === "admin";
+  const bulkCsvImportEnabled = useAppSelector(
+    (state) => state.bulkImport.bulkCsvImportEnabled,
+  );
+  const canBulkImport = isAdmin && bulkCsvImportEnabled;
 
   const doFetch = useCallback(
     (params: {
@@ -366,10 +373,22 @@ export default function Brokers() {
           className="mb-0"
           actions={
             isAdmin ? (
-              <Button onClick={handleCreateBroker} className="gap-2">
-                <Plus className="h-4 w-4" />
-                Add Realtor
-              </Button>
+              <div className="flex items-center gap-2">
+                {canBulkImport && (
+                  <Button
+                    variant="outline"
+                    className="gap-2"
+                    onClick={() => dispatch(openBulkImportWizard("realtors"))}
+                  >
+                    <Upload className="h-4 w-4" />
+                    Import
+                  </Button>
+                )}
+                <Button onClick={handleCreateBroker} className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  Add Realtor
+                </Button>
+              </div>
             ) : undefined
           }
         />
@@ -761,6 +780,7 @@ export default function Brokers() {
           brokerId={detailBrokerId}
         />
       </div>
+      {canBulkImport && <BulkImportWizard entity="realtors" />}
     </>
   );
 }

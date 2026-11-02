@@ -271,7 +271,6 @@ export function StripePlatformSubscription({ hideHeader = false }: Props) {
             ["Voice minutes", plan.includedVoiceMinutes],
             ["Email sends", plan.includedEmailSends],
             ["Scheduler", plan.includedSchedulerBookings],
-            ["Mortgi tokens", plan.includedMortgiAiTokens],
           ] as const)
         : [],
     [plan],

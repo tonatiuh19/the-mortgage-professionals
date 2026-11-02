@@ -6,7 +6,6 @@ import {
   RefreshCw,
   Shield,
   Megaphone,
-  Bot,
   AlertCircle,
   TrendingUp,
   Zap,
@@ -326,7 +325,6 @@ const Billing = () => {
                   ["Voice minutes", quota.voice_minutes],
                   ["Email sends", quota.email_sends],
                   ["Scheduler", quota.scheduler_bookings],
-                  ["Mortgi tokens", quota.mortgi_ai_tokens],
                 ] as const
               ).map(([label, slice]) => (
                 <div
@@ -530,33 +528,6 @@ const Billing = () => {
                         tone="blue"
                       />
                     </motion.div>
-
-                    <motion.div
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: 0.25 }}
-                    >
-                      <BillingUsageMeter
-                        label="Mortgi AI tokens"
-                        used={usage.mortgiAiTokens}
-                        included={resolveQuotaIncluded(
-                          quota,
-                          "mortgi_ai_tokens",
-                          plan.includedMortgiAiTokens,
-                        )}
-                        pct={usagePctAgainstCapacity(
-                          usage.mortgiAiTokens,
-                          resolveQuotaIncluded(
-                            quota,
-                            "mortgi_ai_tokens",
-                            plan.includedMortgiAiTokens,
-                          ),
-                        )}
-                        tone="purple"
-                        detail={`${usage.mortgiSessions} session(s) · per-user 50 msg/day cap still applies`}
-                        formatValue={(n) => n.toLocaleString()}
-                      />
-                    </motion.div>
                   </>
                 ) : (
                   <div className="col-span-full flex items-center justify-center py-16 text-muted-foreground">
@@ -698,40 +669,6 @@ const Billing = () => {
                           </div>
                         </>
                       ) : null}
-                    </CardContent>
-                  </Card>
-
-                  <Card className="lg:col-span-2">
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2 text-base">
-                        <Bot className="h-4 w-4 text-purple-500" />
-                        Mortgi AI
-                      </CardTitle>
-                      <CardDescription>
-                        AI token pool — separate from SMS/voice/email
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="grid gap-4 sm:grid-cols-3 text-sm">
-                      <div>
-                        <p className="text-muted-foreground">Tokens used</p>
-                        <p className="text-lg font-semibold tabular-nums">
-                          {usage?.mortgiAiTokens.toLocaleString() ?? "—"}
-                        </p>
-                      </div>
-                      {showInternalEconomics ? (
-                        <div>
-                          <p className="text-muted-foreground">COGS</p>
-                          <p className="text-lg font-semibold tabular-nums">
-                            {formatUsd(expenditure.mortgiCogsUsd)}
-                          </p>
-                        </div>
-                      ) : null}
-                      <div>
-                        <p className="text-muted-foreground">Sessions</p>
-                        <p className="text-lg font-semibold tabular-nums">
-                          {usage?.mortgiSessions ?? "—"}
-                        </p>
-                      </div>
                     </CardContent>
                   </Card>
                 </div>

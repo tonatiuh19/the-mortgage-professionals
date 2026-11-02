@@ -112,15 +112,6 @@ const Navbar = () => {
 
           <div className="flex items-center gap-4">
             <div className="hidden lg:flex items-center gap-3">
-              <a href="tel:(562)337-0000">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="font-semibold hover:bg-white/10 transition-colors"
-                >
-                  (562) 337-0000
-                </Button>
-              </a>
               {!isClientAuthenticated && (
                 <>
                   <Link to="/client-login">
@@ -232,14 +223,6 @@ const Navbar = () => {
               );
             })}
             <div className="mt-4 flex flex-col gap-2 px-1 pb-2">
-              <a href="tel:(562)337-0000" className="w-full">
-                <Button
-                  variant="outline"
-                  className="w-full rounded-xl border-white/20 hover:bg-white/10"
-                >
-                  (562) 337-0000
-                </Button>
-              </a>
               {!isClientAuthenticated && (
                 <>
                   <Link to="/client-login" className="w-full">

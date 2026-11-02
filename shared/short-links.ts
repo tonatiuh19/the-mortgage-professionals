@@ -14,11 +14,11 @@ export const BROADCAST_MMS_QUOTA_MIN_SEGMENTS = 2;
 export const LINK_ASSET_RETENTION_DAYS = 90;
 
 export const DEFAULT_PORTAL_SHORT_LINK_ORIGIN =
-  "https://portal.encoremortgage.org";
+  "https://www.themortgagepro.net";
 
 /** First-party host suffixes allowed as short-link targets (phishing guard). */
 export const SHORT_LINK_ALLOWED_HOST_SUFFIXES = [
-  "encoremortgage.org",
+  "themortgagepro.net",
 ] as const;
 
 export const BROADCAST_LINK_ALLOWED_MIMES = [
@@ -136,7 +136,7 @@ function hostMatchesAllowedSuffix(host: string, suffix: string): boolean {
 
 /**
  * Short-link targets must stay on first-party (or explicitly allowed) hosts
- * so portal.encoremortgage.org/l/… cannot launder phishing destinations.
+ * so www.themortgagepro.net/l/… cannot launder phishing destinations.
  */
 export function isAllowedShortLinkTargetUrl(
   targetUrl: string,
@@ -181,7 +181,7 @@ export function isAllowedShortLinkTargetUrl(
   return {
     ok: false,
     error:
-      "Short links may only target Encore Mortgage domains (or your portal / MMS public host).",
+      "Short links may only target The Mortgage Professionals domains (or your portal / MMS public host).",
   };
 }
 
@@ -212,7 +212,7 @@ export function buildShortSmsInviteTemplate(params: {
   const broker = params.brokerNameTag || "{{broker_name}}";
   const link = (params.shortUrl || "").trim();
   const linkPart = link ? ` Details: ${link}` : " Details: ";
-  return `Hi ${first}, Encore Mortgage update from ${broker}.${linkPart}`;
+  return `Hi ${first}, The Mortgage Professionals update from ${broker}.${linkPart}`;
 }
 
 export function assertBroadcastMmsAudienceOk(smsRecipientCount: number): {

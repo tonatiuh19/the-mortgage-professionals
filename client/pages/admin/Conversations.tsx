@@ -18,6 +18,8 @@ import {
   Filter,
   Plus,
   MoreVertical,
+  Ban,
+  ShieldCheck,
   Users,
   Clock,
   AlertCircle,
@@ -139,6 +141,11 @@ import {
 } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { BlockNumberDialog } from "@/components/BlockNumberDialog";
+import {
+  fetchBlockedNumbers,
+  unblockPhoneNumber,
+} from "@/store/slices/blockedNumbersSlice";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   fetchConversationThreads,
@@ -441,6 +448,22 @@ const Conversations = () => {
     (s) => s.brokerAuth,
   );
   const varMap = buildVarMap(currentThread, currentUser);
+  const canManageBlockedNumbers = useAppSelector(
+    (s) => s.brokerAuth.user?.role === "admin",
+  );
+  const blockedNumbersLoaded = useAppSelector((s) => s.blockedNumbers.loaded);
+  const blockedNumbersItems = useAppSelector((s) => s.blockedNumbers.items);
+  const [isBlockDialogOpen, setIsBlockDialogOpen] = useState(false);
+  const blockedEntry = blockedNumbersItems.find(
+    (b) =>
+      b.normalized_phone ===
+      (currentThread?.client_phone ?? "").replace(/\D/g, "").slice(-10),
+  );
+  useEffect(() => {
+    if (canManageBlockedNumbers && !blockedNumbersLoaded) {
+      dispatch(fetchBlockedNumbers());
+    }
+  }, [dispatch, canManageBlockedNumbers, blockedNumbersLoaded]);
   const isAvailable = useAppSelector((s) => s.voice.isAvailable);
   const deviceStatus = useAppSelector((s) => s.voice.deviceStatus);
 
@@ -1919,6 +1942,32 @@ const Conversations = () => {
                           <Tag className="h-4 w-4 mr-2" />
                           Add Tags
                         </DropdownMenuItem>
+                        {canManageBlockedNumbers &&
+                          currentThread.client_phone && (
+                            <>
+                              <DropdownMenuSeparator />
+                              {blockedEntry ? (
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    void dispatch(
+                                      unblockPhoneNumber(blockedEntry.id),
+                                    )
+                                  }
+                                >
+                                  <ShieldCheck className="h-4 w-4 mr-2" />
+                                  Unblock number
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem
+                                  onClick={() => setIsBlockDialogOpen(true)}
+                                  className="text-red-600 focus:text-red-600"
+                                >
+                                  <Ban className="h-4 w-4 mr-2" />
+                                  Block number
+                                </DropdownMenuItem>
+                              )}
+                            </>
+                          )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
@@ -4099,6 +4148,15 @@ const Conversations = () => {
       />
 
       {/* Save message as reusable template */}
+      {canManageBlockedNumbers && currentThread?.client_phone && (
+        <BlockNumberDialog
+          open={isBlockDialogOpen}
+          onOpenChange={setIsBlockDialogOpen}
+          phone={currentThread.client_phone}
+          contactName={currentThread.client_name}
+          offerCloseConversation={false}
+        />
+      )}
       <SaveAsTemplateDialog
         isOpen={saveTemplateOpen}
         onClose={() => setSaveTemplateOpen(false)}

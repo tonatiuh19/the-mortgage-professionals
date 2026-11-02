@@ -41,7 +41,7 @@ const DEFAULT_INPUTS: BudgetForecastInputs = {
   emailPerBlast: true,
   extraTwilioNumbers: 0,
   zoomBrokerLicenses: 0,
-  mortgiAiTokensPerMonth: TENANT_1_ACTUAL_30D.mortgiAiTokens,
+  mortgiAiTokensPerMonth: 0,
 };
 
 function ForecastField({
@@ -131,12 +131,6 @@ export function BillingBudgetForecast({
             label="Scheduler bookings / mo"
             value={inputs.schedulerBookingsPerMonth}
             onChange={(n) => patch({ schedulerBookingsPerMonth: n })}
-          />
-          <ForecastField
-            id="mortgi"
-            label="Mortgi AI tokens / mo"
-            value={inputs.mortgiAiTokensPerMonth}
-            onChange={(n) => patch({ mortgiAiTokensPerMonth: n })}
           />
           <ForecastField
             id="twilio"

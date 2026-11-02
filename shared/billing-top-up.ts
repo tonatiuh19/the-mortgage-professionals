@@ -69,12 +69,6 @@ export const TOP_UP_CHANNELS: TopUpChannelMeta[] = [
     unitLabel: "bookings",
     unitLabelShort: "bookings",
   },
-  {
-    dimension: "mortgi_ai_tokens",
-    title: "Mortgi AI",
-    unitLabel: "AI tokens",
-    unitLabelShort: "tokens",
-  },
 ];
 
 /** Tiered retail — volume steps with improved margins vs flat $18/1k SMS. */
@@ -246,8 +240,7 @@ export function isUsageDimension(value: string): value is UsageDimension {
     value === "sms_segments" ||
     value === "voice_minutes" ||
     value === "email_sends" ||
-    value === "scheduler_bookings" ||
-    value === "mortgi_ai_tokens"
+    value === "scheduler_bookings"
   );
 }
 
@@ -330,7 +323,11 @@ export function buildLegacyTopUpPackCatalog(): Record<
   return catalog;
 }
 
-export const TOP_UP_PACK_DEFINITIONS = buildLegacyTopUpPackCatalog();
+export const TOP_UP_PACK_DEFINITIONS = Object.fromEntries(
+  Object.entries(buildLegacyTopUpPackCatalog()).filter(
+    ([, pack]) => pack.dimension !== "mortgi_ai_tokens",
+  ),
+) as ReturnType<typeof buildLegacyTopUpPackCatalog>;
 
 export type TopUpPackId = string;
 

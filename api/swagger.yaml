@@ -322,6 +322,142 @@ components:
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 paths:
+  /admin/bulk-import/templates/clients.csv:
+    get:
+      tags: [admin]
+      summary: GET /admin/bulk-import/templates/clients.csv
+      responses:
+        '200':
+          description: Successful response
+  /admin/bulk-import/templates/realtors.csv:
+    get:
+      tags: [admin]
+      summary: GET /admin/bulk-import/templates/realtors.csv
+      responses:
+        '200':
+          description: Successful response
+  /admin/bulk-import/validate:
+    post:
+      tags: [admin]
+      summary: POST /admin/bulk-import/validate
+      responses:
+        '200':
+          description: Successful response
+  /admin/bulk-import/{jobId}:
+    get:
+      tags: [admin]
+      summary: GET /admin/bulk-import/{jobId}
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /admin/bulk-import/{jobId}/commit:
+    post:
+      tags: [admin]
+      summary: POST /admin/bulk-import/{jobId}/commit
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /calculator-saves:
+    get:
+      tags: [calculator-saves]
+      summary: GET /calculator-saves
+      responses:
+        '200':
+          description: Successful response
+    post:
+      tags: [calculator-saves]
+      summary: POST /calculator-saves
+      responses:
+        '200':
+          description: Successful response
+  /calculator-saves/{id}:
+    delete:
+      tags: [calculator-saves]
+      summary: DELETE /calculator-saves/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+    get:
+      tags: [calculator-saves]
+      summary: GET /calculator-saves/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+    put:
+      tags: [calculator-saves]
+      summary: PUT /calculator-saves/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /calculator-saves/{id}/apply-note:
+    post:
+      tags: [calculator-saves]
+      summary: POST /calculator-saves/{id}/apply-note
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /blocked-numbers:
+    get:
+      tags: [blocked-numbers]
+      summary: GET /blocked-numbers
+      responses:
+        '200':
+          description: Successful response
+    post:
+      tags: [blocked-numbers]
+      summary: POST /blocked-numbers
+      responses:
+        '200':
+          description: Successful response
+  /blocked-numbers/{id}:
+    delete:
+      tags: [blocked-numbers]
+      summary: DELETE /blocked-numbers/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
   /billing/access:
     get:
       tags: [billing]
@@ -574,53 +710,6 @@ paths:
           required: true
           schema:
             type: string
-      responses:
-        '200':
-          description: Successful response
-  /ai/chat:
-    post:
-      tags: [ai]
-      summary: POST /ai/chat
-      responses:
-        '200':
-          description: Successful response
-  /ai/config:
-    get:
-      tags: [ai]
-      summary: GET /ai/config
-      responses:
-        '200':
-          description: Successful response
-    put:
-      tags: [ai]
-      summary: PUT /ai/config
-      responses:
-        '200':
-          description: Successful response
-  /ai/history:
-    get:
-      tags: [ai]
-      summary: GET /ai/history
-      responses:
-        '200':
-          description: Successful response
-  /ai/history/{id}:
-    delete:
-      tags: [ai]
-      summary: DELETE /ai/history/{id}
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Successful response
-  /ai/usage:
-    get:
-      tags: [ai]
-      summary: GET /ai/usage
       responses:
         '200':
           description: Successful response

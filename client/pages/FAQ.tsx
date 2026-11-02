@@ -12,7 +12,7 @@ const faqs = [
     questions: [
       {
         q: "How do I apply for a mortgage with The Mortgage Professionals?",
-        a: "You can start your application online in minutes by clicking 'Apply Now'. Our wizard will guide you step-by-step through the process. You can also call us at (562) 337-0000 to speak with a loan officer directly.",
+        a: "You can start your application online in minutes by clicking 'Apply Now'. Our wizard will guide you step-by-step through the process. You can also reach out through our Contact page to speak with a loan officer.",
       },
       {
         q: "What documents do I need to get pre-approved?",
@@ -223,15 +223,13 @@ export default function FAQ() {
             >
               <h3 className="text-xl font-bold mb-2">Still have questions?</h3>
               <p className="text-muted-foreground mb-6">
-                Our loan officers are ready to help. Call us or start your
+                Our loan officers are ready to help. Contact us or start your
                 application today.
               </p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                <a href="tel:(562)337-0000">
-                  <Button variant="outline" className="w-full sm:w-auto">
-                    (562) 337-0000
-                  </Button>
-                </a>
+                <Link to="/contact">
+                  <Button variant="outline" className="w-full sm:w-auto">Contact Us</Button>
+                </Link>
                 <Link to="/wizard">
                   <Button className="w-full sm:w-auto">Apply Now</Button>
                 </Link>

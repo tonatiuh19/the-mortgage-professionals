@@ -23,7 +23,6 @@ import helmet from "helmet";
 import type { PoolConnection } from "mysql2/promise";
 import { deflateSync, inflateSync } from "zlib";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
-import Groq from "groq-sdk";
 
 
 
@@ -260,21 +259,6 @@ async function publishConversationNewMessage(
   });
 }
 
-// Initialize Groq AI client (Mortgi assistant)
-let groqClient: Groq | null = null;
-if (process.env.GROQ_API_KEY) {
-  try {
-    groqClient = new Groq({ apiKey: process.env.GROQ_API_KEY });
-    console.log("✅ Groq client initialized successfully");
-  } catch (error) {
-    console.warn("⚠️  Warning: Failed to initialize Groq client:", error);
-  }
-} else {
-  console.warn(
-    "⚠️  Warning: GROQ_API_KEY not set. Mortgi AI assistant will be disabled.",
-  );
-}
-
 // Initialize Resend email client
 let resendClient: Resend | null = null;
 if (process.env.RESEND_API_KEY) {
@@ -285,6 +269,10 @@ if (process.env.RESEND_API_KEY) {
     "⚠️  Warning: RESEND_API_KEY not set. Email functionality will be disabled.",
   );
 }
+
+/** DM Sans for clients that load web fonts; the inline stacks fall back elsewhere. */
+const EMAIL_FONT_LINK =
+  '<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />';
 
 const RESEND_FROM =
   process.env.SMTP_FROM ||
@@ -2564,13 +2552,13 @@ async function sendBrokerVerificationEmail(
     const emailBody = `
       <!DOCTYPE html>
       <html lang="en">
-      <head>
+      <head>${EMAIL_FONT_LINK}
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Verification Code</title>
       </head>
-      <body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+      <body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
           <tr><td align="center">
             <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
               <!-- LOGO HEADER -->
@@ -2582,8 +2570,8 @@ async function sendBrokerVerificationEmail(
               <!-- BODY -->
               <tr>
                 <td style="background-color:#ffffff;padding:40px 32px 32px;">
-                  <h2 style="margin:0 0 8px 0;color:#0f172a;font-size:22px;font-weight:700;">Hi ${firstName},</h2>
-                  <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">Your verification code for the admin panel is:</p>
+                  <h2 style="margin:0 0 8px 0;color:#1F2933;font-size:22px;font-weight:700;">Hi ${firstName},</h2>
+                  <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;line-height:1.6;">Your verification code for the admin panel is:</p>
                   <!-- CODE BOX -->
                   <table width="100%" cellpadding="0" cellspacing="0" border="0">
                     <tr>
@@ -2595,9 +2583,9 @@ async function sendBrokerVerificationEmail(
                   <!-- VALIDITY -->
                   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px;">
                     <tr>
-                      <td style="background-color:#f8fafc;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:14px 18px;">
-                        <p style="margin:0 0 6px 0;color:#0f172a;font-size:14px;"><strong>⏱️ Expires in:</strong> This code will expire in <strong>15 minutes</strong>.</p>
-                        <p style="margin:0;color:#64748b;font-size:13px;">If you did not request this code, you can safely ignore this email.</p>
+                      <td style="background-color:#F5F8FA;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:14px 18px;">
+                        <p style="margin:0 0 6px 0;color:#1F2933;font-size:14px;"><strong>⏱️ Expires in:</strong> This code will expire in <strong>15 minutes</strong>.</p>
+                        <p style="margin:0;color:#64748B;font-size:13px;">If you did not request this code, you can safely ignore this email.</p>
                       </td>
                     </tr>
                   </table>
@@ -2605,9 +2593,9 @@ async function sendBrokerVerificationEmail(
               </tr>
               <!-- FOOTER -->
               <tr>
-                <td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+                <td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
                   <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">The Mortgage Professionals</p>
-                  <p style="margin:0;color:#94a3b8;font-size:12px;">Admin Panel</p>
+                  <p style="margin:0;color:#9AA5B1;font-size:12px;">Admin Panel</p>
                 </td>
               </tr>
             </table>
@@ -2648,13 +2636,13 @@ async function sendClientVerificationEmail(
     const emailBody = `
       <!DOCTYPE html>
       <html lang="en">
-      <head>
+      <head>${EMAIL_FONT_LINK}
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Verification Code</title>
       </head>
-      <body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+      <body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
           <tr><td align="center">
             <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
               <!-- LOGO HEADER -->
@@ -2666,9 +2654,9 @@ async function sendClientVerificationEmail(
               <!-- BODY -->
               <tr>
                 <td style="background-color:#ffffff;padding:40px 32px 32px;">
-                  <h2 style="margin:0 0 4px 0;color:#0f172a;font-size:22px;font-weight:700;">Hello ${firstName},</h2>
-                  <p style="margin:0 0 8px 0;color:#475569;font-size:15px;line-height:1.6;">Welcome! We're excited to help you with your mortgage process.</p>
-                  <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">Use the following code to access your client portal:</p>
+                  <h2 style="margin:0 0 4px 0;color:#1F2933;font-size:22px;font-weight:700;">Hello ${firstName},</h2>
+                  <p style="margin:0 0 8px 0;color:#3E4C59;font-size:15px;line-height:1.6;">Welcome! We're excited to help you with your mortgage process.</p>
+                  <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;line-height:1.6;">Use the following code to access your client portal:</p>
                   <!-- CODE BOX -->
                   <table width="100%" cellpadding="0" cellspacing="0" border="0">
                     <tr>
@@ -2680,9 +2668,9 @@ async function sendClientVerificationEmail(
                   <!-- INFO -->
                   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px;">
                     <tr>
-                      <td style="background-color:#f8fafc;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:14px 18px;">
-                        <p style="margin:0 0 6px 0;color:#0f172a;font-size:14px;"><strong>⏱️ Validity:</strong> This code expires in <strong>15 minutes</strong>.</p>
-                        <p style="margin:0;color:#64748b;font-size:13px;"><strong>🔒 Security:</strong> Never share this code with anyone.</p>
+                      <td style="background-color:#F5F8FA;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:14px 18px;">
+                        <p style="margin:0 0 6px 0;color:#1F2933;font-size:14px;"><strong>⏱️ Validity:</strong> This code expires in <strong>15 minutes</strong>.</p>
+                        <p style="margin:0;color:#64748B;font-size:13px;"><strong>🔒 Security:</strong> Never share this code with anyone.</p>
                       </td>
                     </tr>
                   </table>
@@ -2694,14 +2682,14 @@ async function sendClientVerificationEmail(
                       </td>
                     </tr>
                   </table>
-                  <p style="margin:20px 0 0 0;color:#94a3b8;font-size:12px;text-align:center;">If you didn't request this code, you can safely ignore this email.</p>
+                  <p style="margin:20px 0 0 0;color:#9AA5B1;font-size:12px;text-align:center;">If you didn't request this code, you can safely ignore this email.</p>
                 </td>
               </tr>
               <!-- FOOTER -->
               <tr>
-                <td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+                <td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
                   <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">The Mortgage Professionals</p>
-                  <p style="margin:0;color:#94a3b8;font-size:12px;">Your partner on the path to your new home</p>
+                  <p style="margin:0;color:#9AA5B1;font-size:12px;">Your partner on the path to your new home</p>
                 </td>
               </tr>
             </table>
@@ -2751,20 +2739,20 @@ async function sendClientLoanWelcomeEmail(
               <table width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
                   <td style="padding-bottom:6px;">
-                    <strong style="color:#0f172a;font-size:14px;">${task.title}</strong>
+                    <strong style="color:#1F2933;font-size:14px;">${task.title}</strong>
                     &nbsp;&nbsp;<span style="background-color:${
                       task.priority === "urgent"
                         ? "#dc2626"
                         : task.priority === "high"
-                          ? "#f59e0b"
+                          ? "#F9A826"
                           : task.priority === "medium"
                             ? "#0A2F52"
                             : "#10b981"
                     };color:#ffffff;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:700;text-transform:uppercase;">${task.priority}</span>
                   </td>
                 </tr>
-                <tr><td style="color:#475569;font-size:13px;line-height:1.5;padding-bottom:6px;">${task.description}</td></tr>
-                <tr><td style="color:#94a3b8;font-size:12px;">📅 Due: ${new Date(task.due_date).toLocaleDateString()}</td></tr>
+                <tr><td style="color:#3E4C59;font-size:13px;line-height:1.5;padding-bottom:6px;">${task.description}</td></tr>
+                <tr><td style="color:#9AA5B1;font-size:12px;">📅 Due: ${new Date(task.due_date).toLocaleDateString()}</td></tr>
               </table>
             </td>
           </tr>
@@ -2780,13 +2768,13 @@ async function sendClientLoanWelcomeEmail(
       html: `
         <!DOCTYPE html>
         <html lang="en">
-        <head>
+        <head>${EMAIL_FONT_LINK}
           <meta charset="UTF-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1.0" />
           <title>Your Loan Application</title>
         </head>
-        <body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+        <body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
             <tr><td align="center">
               <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
                 <!-- LOGO HEADER -->
@@ -2798,20 +2786,20 @@ async function sendClientLoanWelcomeEmail(
                 <!-- BODY -->
                 <tr>
                   <td style="background-color:#ffffff;padding:40px 32px 32px;">
-                    <h2 style="margin:0 0 6px 0;color:#0f172a;font-size:22px;font-weight:700;">Welcome, ${firstName}! 🏡</h2>
-                    <p style="margin:0 0 6px 0;color:#475569;font-size:15px;line-height:1.6;">Your loan application has been successfully created.</p>
-                    <p style="margin:0 0 28px 0;color:#475569;font-size:15px;">Loan amount: <strong style="color:#0f172a;">$${loanAmount}</strong></p>
+                    <h2 style="margin:0 0 6px 0;color:#1F2933;font-size:22px;font-weight:700;">Welcome, ${firstName}! 🏡</h2>
+                    <p style="margin:0 0 6px 0;color:#3E4C59;font-size:15px;line-height:1.6;">Your loan application has been successfully created.</p>
+                    <p style="margin:0 0 28px 0;color:#3E4C59;font-size:15px;">Loan amount: <strong style="color:#1F2933;">$${loanAmount}</strong></p>
                     <!-- APP NUMBER -->
                     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;">
                       <tr>
                         <td style="background-color:#FFF8EB;border:1px solid #F9A826;border-radius:12px;padding:18px;text-align:center;">
                           <p style="margin:0 0 6px 0;color:#0A2F52;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;">Application Number</p>
-                          <p style="margin:0;color:#0f172a;font-size:28px;font-weight:800;letter-spacing:1px;">${applicationNumber}</p>
+                          <p style="margin:0;color:#1F2933;font-size:28px;font-weight:800;letter-spacing:1px;">${applicationNumber}</p>
                         </td>
                       </tr>
                     </table>
                     <!-- TASKS -->
-                    <p style="margin:0 0 12px 0;color:#0f172a;font-size:15px;font-weight:700;">📋 Your Next Steps</p>
+                    <p style="margin:0 0 12px 0;color:#1F2933;font-size:15px;font-weight:700;">📋 Your Next Steps</p>
                     ${taskListHTML}
                     <!-- CTA -->
                     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:32px;">
@@ -2821,14 +2809,14 @@ async function sendClientLoanWelcomeEmail(
                         </td>
                       </tr>
                     </table>
-                    <p style="margin:16px 0 0 0;color:#94a3b8;font-size:12px;text-align:center;">You will need your email to verify your identity on first login.</p>
+                    <p style="margin:16px 0 0 0;color:#9AA5B1;font-size:12px;text-align:center;">You will need your email to verify your identity on first login.</p>
                   </td>
                 </tr>
                 <!-- FOOTER -->
                 <tr>
-                  <td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+                  <td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
                     <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">The Mortgage Professionals</p>
-                    <p style="margin:0;color:#94a3b8;font-size:12px;">Your partner on the path to your new home</p>
+                    <p style="margin:0;color:#9AA5B1;font-size:12px;">Your partner on the path to your new home</p>
                   </td>
                 </tr>
               </table>
@@ -2865,13 +2853,13 @@ async function sendClientManualWelcomeEmail(
       html: `
         <!DOCTYPE html>
         <html lang="en">
-        <head>
+        <head>${EMAIL_FONT_LINK}
           <meta charset="UTF-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1.0" />
           <title>Welcome to The Mortgage Professionals</title>
         </head>
-        <body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+        <body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
             <tr><td align="center">
               <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
                 <!-- LOGO HEADER -->
@@ -2883,27 +2871,27 @@ async function sendClientManualWelcomeEmail(
                 <!-- BODY -->
                 <tr>
                   <td style="background-color:#ffffff;padding:40px 32px 32px;">
-                    <h2 style="margin:0 0 8px 0;color:#0f172a;font-size:22px;font-weight:700;">Welcome, ${firstName} ${lastName}! 🏡</h2>
-                    <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">You've been added to the The Mortgage Professionals client portal by <strong>${brokerName}</strong>. You can now log in to view your applications, tasks, and communicate with your loan officer.</p>
+                    <h2 style="margin:0 0 8px 0;color:#1F2933;font-size:22px;font-weight:700;">Welcome, ${firstName} ${lastName}! 🏡</h2>
+                    <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;line-height:1.6;">You've been added to the The Mortgage Professionals client portal by <strong>${brokerName}</strong>. You can now log in to view your applications, tasks, and communicate with your loan officer.</p>
                     <!-- INFO BOX -->
                     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;">
                       <tr>
                         <td style="background-color:#FFF8EB;border:1px solid #F9A826;border-radius:12px;padding:18px;">
                           <p style="margin:0 0 10px 0;color:#0A2F52;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;">Your Account</p>
-                          <p style="margin:0 0 6px 0;color:#0f172a;font-size:14px;"><strong>Email:</strong> ${email}</p>
-                          <p style="margin:0;color:#475569;font-size:13px;">Use your email address to verify your identity when you first log in.</p>
+                          <p style="margin:0 0 6px 0;color:#1F2933;font-size:14px;"><strong>Email:</strong> ${email}</p>
+                          <p style="margin:0;color:#3E4C59;font-size:13px;">Use your email address to verify your identity when you first log in.</p>
                         </td>
                       </tr>
                     </table>
                     <!-- HOW IT WORKS -->
                     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;">
                       <tr>
-                        <td style="background-color:#f8fafc;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:16px 18px;">
-                          <p style="margin:0 0 8px 0;color:#0f172a;font-size:14px;font-weight:700;">📋 What you can do in the portal:</p>
-                          <p style="margin:0 0 4px 0;color:#475569;font-size:13px;line-height:1.6;">• View and track your loan applications</p>
-                          <p style="margin:0 0 4px 0;color:#475569;font-size:13px;line-height:1.6;">• Complete required tasks and upload documents</p>
-                          <p style="margin:0 0 4px 0;color:#475569;font-size:13px;line-height:1.6;">• Communicate directly with your loan officer</p>
-                          <p style="margin:0;color:#475569;font-size:13px;line-height:1.6;">• Stay updated on your application status</p>
+                        <td style="background-color:#F5F8FA;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:16px 18px;">
+                          <p style="margin:0 0 8px 0;color:#1F2933;font-size:14px;font-weight:700;">📋 What you can do in the portal:</p>
+                          <p style="margin:0 0 4px 0;color:#3E4C59;font-size:13px;line-height:1.6;">• View and track your loan applications</p>
+                          <p style="margin:0 0 4px 0;color:#3E4C59;font-size:13px;line-height:1.6;">• Complete required tasks and upload documents</p>
+                          <p style="margin:0 0 4px 0;color:#3E4C59;font-size:13px;line-height:1.6;">• Communicate directly with your loan officer</p>
+                          <p style="margin:0;color:#3E4C59;font-size:13px;line-height:1.6;">• Stay updated on your application status</p>
                         </td>
                       </tr>
                     </table>
@@ -2915,14 +2903,14 @@ async function sendClientManualWelcomeEmail(
                         </td>
                       </tr>
                     </table>
-                    <p style="margin:16px 0 0 0;color:#94a3b8;font-size:12px;text-align:center;">Questions? Reply to this email or contact your loan officer directly.</p>
+                    <p style="margin:16px 0 0 0;color:#9AA5B1;font-size:12px;text-align:center;">Questions? Reply to this email or contact your loan officer directly.</p>
                   </td>
                 </tr>
                 <!-- FOOTER -->
                 <tr>
-                  <td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+                  <td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
                     <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">The Mortgage Professionals</p>
-                    <p style="margin:0;color:#94a3b8;font-size:12px;">Your partner on the path to your new home</p>
+                    <p style="margin:0;color:#9AA5B1;font-size:12px;">Your partner on the path to your new home</p>
                   </td>
                 </tr>
               </table>
@@ -2958,13 +2946,13 @@ async function sendBrokerManualWelcomeEmail(
       html: `
         <!DOCTYPE html>
         <html lang="en">
-        <head>
+        <head>${EMAIL_FONT_LINK}
           <meta charset="UTF-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1.0" />
           <title>Welcome to The Mortgage Professionals</title>
         </head>
-        <body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+        <body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
             <tr><td align="center">
               <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
                 <!-- LOGO HEADER -->
@@ -2976,27 +2964,27 @@ async function sendBrokerManualWelcomeEmail(
                 <!-- BODY -->
                 <tr>
                   <td style="background-color:#ffffff;padding:40px 32px 32px;">
-                    <h2 style="margin:0 0 8px 0;color:#0f172a;font-size:22px;font-weight:700;">Welcome, ${firstName} ${lastName}!</h2>
-                    <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">Your <strong>${roleLabel}</strong> account has been created on the The Mortgage Professionals platform. You can now log in to the admin panel to get started.</p>
+                    <h2 style="margin:0 0 8px 0;color:#1F2933;font-size:22px;font-weight:700;">Welcome, ${firstName} ${lastName}!</h2>
+                    <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;line-height:1.6;">Your <strong>${roleLabel}</strong> account has been created on the The Mortgage Professionals platform. You can now log in to the admin panel to get started.</p>
                     <!-- ROLE BOX -->
                     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;">
                       <tr>
                         <td style="background-color:#FFF8EB;border:1px solid #F9A826;border-radius:12px;padding:18px;">
                           <p style="margin:0 0 10px 0;color:#0A2F52;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;">Account Details</p>
-                          <p style="margin:0 0 6px 0;color:#0f172a;font-size:14px;"><strong>Email:</strong> ${email}</p>
-                          <p style="margin:0 0 6px 0;color:#0f172a;font-size:14px;"><strong>Role:</strong> ${roleLabel}</p>
-                          <p style="margin:0;color:#475569;font-size:13px;">Use your email to receive a one-time verification code when you log in.</p>
+                          <p style="margin:0 0 6px 0;color:#1F2933;font-size:14px;"><strong>Email:</strong> ${email}</p>
+                          <p style="margin:0 0 6px 0;color:#1F2933;font-size:14px;"><strong>Role:</strong> ${roleLabel}</p>
+                          <p style="margin:0;color:#3E4C59;font-size:13px;">Use your email to receive a one-time verification code when you log in.</p>
                         </td>
                       </tr>
                     </table>
                     <!-- HOW TO LOGIN -->
                     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;">
                       <tr>
-                        <td style="background-color:#f8fafc;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:16px 18px;">
-                          <p style="margin:0 0 8px 0;color:#0f172a;font-size:14px;font-weight:700;">🔐 How to log in:</p>
-                          <p style="margin:0 0 4px 0;color:#475569;font-size:13px;line-height:1.6;">1. Click the button below to go to the admin panel login</p>
-                          <p style="margin:0 0 4px 0;color:#475569;font-size:13px;line-height:1.6;">2. Enter your email address</p>
-                          <p style="margin:0;color:#475569;font-size:13px;line-height:1.6;">3. Check your inbox for a one-time verification code</p>
+                        <td style="background-color:#F5F8FA;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:16px 18px;">
+                          <p style="margin:0 0 8px 0;color:#1F2933;font-size:14px;font-weight:700;">🔐 How to log in:</p>
+                          <p style="margin:0 0 4px 0;color:#3E4C59;font-size:13px;line-height:1.6;">1. Click the button below to go to the admin panel login</p>
+                          <p style="margin:0 0 4px 0;color:#3E4C59;font-size:13px;line-height:1.6;">2. Enter your email address</p>
+                          <p style="margin:0;color:#3E4C59;font-size:13px;line-height:1.6;">3. Check your inbox for a one-time verification code</p>
                         </td>
                       </tr>
                     </table>
@@ -3008,14 +2996,14 @@ async function sendBrokerManualWelcomeEmail(
                         </td>
                       </tr>
                     </table>
-                    <p style="margin:16px 0 0 0;color:#94a3b8;font-size:12px;text-align:center;">If you have any questions, contact your administrator.</p>
+                    <p style="margin:16px 0 0 0;color:#9AA5B1;font-size:12px;text-align:center;">If you have any questions, contact your administrator.</p>
                   </td>
                 </tr>
                 <!-- FOOTER -->
                 <tr>
-                  <td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+                  <td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
                     <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">The Mortgage Professionals</p>
-                    <p style="margin:0;color:#94a3b8;font-size:12px;">Admin Panel</p>
+                    <p style="margin:0;color:#9AA5B1;font-size:12px;">Admin Panel</p>
                   </td>
                 </tr>
               </table>
@@ -3064,13 +3052,13 @@ async function sendPublicApplicationWelcomeEmail(
       html: `
         <!DOCTYPE html>
         <html lang="en">
-        <head>
+        <head>${EMAIL_FONT_LINK}
           <meta charset="UTF-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1.0" />
           <title>Application Received</title>
         </head>
-        <body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+        <body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
             <tr><td align="center">
               <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
 
@@ -3083,7 +3071,7 @@ async function sendPublicApplicationWelcomeEmail(
 
                 <!-- HERO BAND -->
                 <tr>
-                  <td style="background:linear-gradient(135deg,#0A2F52 0%,#F9A826 100%);padding:32px;text-align:center;">
+                  <td style="background-color:#0A2F52;padding:32px;text-align:center;">
                     <p style="margin:0 0 6px 0;color:#F9A826;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">Application Received</p>
                     <h1 style="margin:0 0 4px 0;color:#ffffff;font-size:28px;font-weight:800;letter-spacing:0.5px;">You're on your way home!</h1>
                     <p style="margin:0;color:#F9A826;font-size:15px;">Hi <strong style="color:#ffffff;">${firstName} ${lastName}</strong>, we've got everything we need.</p>
@@ -3094,10 +3082,10 @@ async function sendPublicApplicationWelcomeEmail(
                 <tr>
                   <td style="background-color:#ffffff;padding:40px 32px 32px;">
 
-                    <p style="margin:0 0 28px 0;color:#475569;font-size:15px;line-height:1.7;">
-                      Thank you for submitting your loan application to <strong style="color:#0f172a;">The Mortgage Professionals</strong>.
+                    <p style="margin:0 0 28px 0;color:#3E4C59;font-size:15px;line-height:1.7;">
+                      Thank you for submitting your loan application to <strong style="color:#1F2933;">The Mortgage Professionals</strong>.
                       One of our licensed loan officers will personally review your information and
-                      reach out within <strong style="color:#0f172a;">1–2 business days</strong> to discuss your options.
+                      reach out within <strong style="color:#1F2933;">1–2 business days</strong> to discuss your options.
                     </p>
 
                     <!-- APPLICATION NUMBER BOX -->
@@ -3105,35 +3093,35 @@ async function sendPublicApplicationWelcomeEmail(
                       <tr>
                         <td style="background-color:#FFF8EB;border:1px solid #F9A826;border-radius:12px;padding:20px;text-align:center;">
                           <p style="margin:0 0 6px 0;color:#0A2F52;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">Your Application Number</p>
-                          <p style="margin:0 0 6px 0;color:#0f172a;font-size:30px;font-weight:800;letter-spacing:1.5px;">${applicationNumber}</p>
-                          <p style="margin:0;color:#94a3b8;font-size:12px;">Keep this for your records</p>
+                          <p style="margin:0 0 6px 0;color:#1F2933;font-size:30px;font-weight:800;letter-spacing:1.5px;">${applicationNumber}</p>
+                          <p style="margin:0;color:#9AA5B1;font-size:12px;">Keep this for your records</p>
                         </td>
                       </tr>
                     </table>
 
                     <!-- SUMMARY TABLE -->
-                    <p style="margin:0 0 12px 0;color:#0f172a;font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;">Application Summary</p>
-                    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;margin-bottom:28px;">
-                      <tr style="background-color:#f8fafc;">
-                        <td style="padding:12px 16px;color:#64748b;font-size:13px;font-weight:600;border-bottom:1px solid #e2e8f0;width:45%;">Loan Type</td>
-                        <td style="padding:12px 16px;color:#0f172a;font-size:13px;font-weight:700;border-bottom:1px solid #e2e8f0;">${loanTypeLabel[loanType] || loanType}</td>
+                    <p style="margin:0 0 12px 0;color:#1F2933;font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;">Application Summary</p>
+                    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #E8EFF4;border-radius:12px;overflow:hidden;margin-bottom:28px;">
+                      <tr style="background-color:#F5F8FA;">
+                        <td style="padding:12px 16px;color:#64748B;font-size:13px;font-weight:600;border-bottom:1px solid #E8EFF4;width:45%;">Loan Type</td>
+                        <td style="padding:12px 16px;color:#1F2933;font-size:13px;font-weight:700;border-bottom:1px solid #E8EFF4;">${loanTypeLabel[loanType] || loanType}</td>
                       </tr>
                       <tr>
-                        <td style="padding:12px 16px;color:#64748b;font-size:13px;font-weight:600;border-bottom:1px solid #e2e8f0;">Property Value</td>
-                        <td style="padding:12px 16px;color:#0f172a;font-size:13px;font-weight:700;border-bottom:1px solid #e2e8f0;">${propertyValue}</td>
+                        <td style="padding:12px 16px;color:#64748B;font-size:13px;font-weight:600;border-bottom:1px solid #E8EFF4;">Property Value</td>
+                        <td style="padding:12px 16px;color:#1F2933;font-size:13px;font-weight:700;border-bottom:1px solid #E8EFF4;">${propertyValue}</td>
                       </tr>
-                      <tr style="background-color:#f8fafc;">
-                        <td style="padding:12px 16px;color:#64748b;font-size:13px;font-weight:600;border-bottom:1px solid #e2e8f0;">Estimated Loan Amount</td>
-                        <td style="padding:12px 16px;color:#0A2F52;font-size:13px;font-weight:800;border-bottom:1px solid #e2e8f0;">${estimatedLoan}</td>
+                      <tr style="background-color:#F5F8FA;">
+                        <td style="padding:12px 16px;color:#64748B;font-size:13px;font-weight:600;border-bottom:1px solid #E8EFF4;">Estimated Loan Amount</td>
+                        <td style="padding:12px 16px;color:#0A2F52;font-size:13px;font-weight:800;border-bottom:1px solid #E8EFF4;">${estimatedLoan}</td>
                       </tr>
                       <tr>
-                        <td style="padding:12px 16px;color:#64748b;font-size:13px;font-weight:600;">Property Address</td>
-                        <td style="padding:12px 16px;color:#0f172a;font-size:13px;font-weight:700;">${propertyAddress || "Not provided"}</td>
+                        <td style="padding:12px 16px;color:#64748B;font-size:13px;font-weight:600;">Property Address</td>
+                        <td style="padding:12px 16px;color:#1F2933;font-size:13px;font-weight:700;">${propertyAddress || "Not provided"}</td>
                       </tr>
                     </table>
 
                     <!-- WHAT HAPPENS NEXT -->
-                    <p style="margin:0 0 12px 0;color:#0f172a;font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;">What Happens Next</p>
+                    <p style="margin:0 0 12px 0;color:#1F2933;font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;">What Happens Next</p>
                     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;">
                       ${[
                         [
@@ -3162,8 +3150,8 @@ async function sendPublicApplicationWelcomeEmail(
                                   <div style="width:28px;height:28px;background-color:#0A2F52;border-radius:50%;text-align:center;line-height:28px;color:#ffffff;font-size:13px;font-weight:800;">${num}</div>
                                 </td>
                                 <td style="padding-left:12px;">
-                                  <p style="margin:0 0 3px 0;color:#0f172a;font-size:14px;font-weight:700;">${title}</p>
-                                  <p style="margin:0;color:#475569;font-size:13px;line-height:1.5;">${desc}</p>
+                                  <p style="margin:0 0 3px 0;color:#1F2933;font-size:14px;font-weight:700;">${title}</p>
+                                  <p style="margin:0;color:#3E4C59;font-size:13px;line-height:1.5;">${desc}</p>
                                 </td>
                               </tr>
                             </table>
@@ -3177,26 +3165,26 @@ async function sendPublicApplicationWelcomeEmail(
                     <!-- CTA -->
                     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
                       <tr>
-                        <td align="center" style="background-color:#f8fafc;border-radius:12px;padding:24px;">
-                          <p style="margin:0 0 16px 0;color:#475569;font-size:14px;">Track your application status and upload documents in your secure portal.</p>
+                        <td align="center" style="background-color:#F5F8FA;border-radius:12px;padding:24px;">
+                          <p style="margin:0 0 16px 0;color:#3E4C59;font-size:14px;">Track your application status and upload documents in your secure portal.</p>
                           <a href="${portalUrl}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Access My Portal</a>
-                          <p style="margin:12px 0 0 0;color:#94a3b8;font-size:12px;">Use your email address to verify your identity on first login.</p>
+                          <p style="margin:12px 0 0 0;color:#9AA5B1;font-size:12px;">Use your email address to verify your identity on first login.</p>
                         </td>
                       </tr>
                     </table>
 
-                    <p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;line-height:1.6;">
-                      Questions? Call us at <a href="tel:(562)337-0000" style="color:#0A2F52;text-decoration:none;font-weight:600;">(562) 337-0000</a>
+                    <p style="margin:0;color:#9AA5B1;font-size:12px;text-align:center;line-height:1.6;">
+                      Questions? Just reply to this email.
                     </p>
                   </td>
                 </tr>
 
                 <!-- FOOTER -->
                 <tr>
-                  <td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+                  <td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
                     <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">The Mortgage Professionals · NMLS #1946451</p>
-                    <p style="margin:0 0 8px 0;color:#94a3b8;font-size:12px;">Your partner on the path to your new home</p>
-                    <p style="margin:0;color:#475569;font-size:11px;">
+                    <p style="margin:0 0 8px 0;color:#9AA5B1;font-size:12px;">Your partner on the path to your new home</p>
+                    <p style="margin:0;color:#3E4C59;font-size:11px;">
                       This email was sent because you submitted a loan application on our website.
                     </p>
                   </td>
@@ -3237,13 +3225,13 @@ async function sendTaskReopenedEmail(
       html: `
         <!DOCTYPE html>
         <html lang="en">
-        <head>
+        <head>${EMAIL_FONT_LINK}
           <meta charset="UTF-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1.0" />
           <title>Task Needs Revision</title>
         </head>
-        <body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+        <body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
             <tr><td align="center">
               <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
                 <!-- LOGO HEADER -->
@@ -3255,24 +3243,24 @@ async function sendTaskReopenedEmail(
                 <!-- BODY -->
                 <tr>
                   <td style="background-color:#ffffff;padding:40px 32px 32px;">
-                    <h2 style="margin:0 0 6px 0;color:#0f172a;font-size:22px;font-weight:700;">📝 Task Needs Revision</h2>
-                    <p style="margin:0 0 4px 0;color:#475569;font-size:15px;line-height:1.6;">Hi <strong style="color:#0f172a;">${firstName}</strong>,</p>
-                    <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">Your task <strong style="color:#0f172a;">&ldquo;${taskTitle}&rdquo;</strong> has been reviewed and needs some revisions before it can be approved.</p>
+                    <h2 style="margin:0 0 6px 0;color:#1F2933;font-size:22px;font-weight:700;">📝 Task Needs Revision</h2>
+                    <p style="margin:0 0 4px 0;color:#3E4C59;font-size:15px;line-height:1.6;">Hi <strong style="color:#1F2933;">${firstName}</strong>,</p>
+                    <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;line-height:1.6;">Your task <strong style="color:#1F2933;">&ldquo;${taskTitle}&rdquo;</strong> has been reviewed and needs some revisions before it can be approved.</p>
                     <!-- FEEDBACK BOX -->
                     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:16px;">
                       <tr>
                         <td style="background-color:#FFF8EB;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:16px 18px;">
                           <p style="margin:0 0 8px 0;color:#0A2F52;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">📋 Feedback from Your Loan Officer</p>
-                          <p style="margin:0;color:#0f172a;font-size:14px;line-height:1.7;">${reason}</p>
+                          <p style="margin:0;color:#1F2933;font-size:14px;line-height:1.7;">${reason}</p>
                         </td>
                       </tr>
                     </table>
                     <!-- NEXT STEPS -->
                     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
                       <tr>
-                        <td style="background-color:#f8fafc;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:16px 18px;">
-                          <p style="margin:0 0 10px 0;color:#0f172a;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">✅ What to Do Next</p>
-                          <ol style="margin:0;padding-left:18px;color:#475569;">
+                        <td style="background-color:#F5F8FA;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:16px 18px;">
+                          <p style="margin:0 0 10px 0;color:#1F2933;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">✅ What to Do Next</p>
+                          <ol style="margin:0;padding-left:18px;color:#3E4C59;">
                             <li style="margin:6px 0;font-size:14px;">Log in to your client portal</li>
                             <li style="margin:6px 0;font-size:14px;">Review the feedback above</li>
                             <li style="margin:6px 0;font-size:14px;">Make the necessary updates or corrections</li>
@@ -3289,14 +3277,14 @@ async function sendTaskReopenedEmail(
                         </td>
                       </tr>
                     </table>
-                    <p style="margin:16px 0 0 0;color:#94a3b8;font-size:12px;text-align:center;">If you have any questions, please contact your loan officer.</p>
+                    <p style="margin:16px 0 0 0;color:#9AA5B1;font-size:12px;text-align:center;">If you have any questions, please contact your loan officer.</p>
                   </td>
                 </tr>
                 <!-- FOOTER -->
                 <tr>
-                  <td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+                  <td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
                     <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">The Mortgage Professionals</p>
-                    <p style="margin:0;color:#94a3b8;font-size:12px;">Your partner on the path to your new home</p>
+                    <p style="margin:0;color:#9AA5B1;font-size:12px;">Your partner on the path to your new home</p>
                   </td>
                 </tr>
               </table>
@@ -3330,13 +3318,13 @@ async function sendTaskApprovedEmail(
       html: `
         <!DOCTYPE html>
         <html lang="en">
-        <head>
+        <head>${EMAIL_FONT_LINK}
           <meta charset="UTF-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1.0" />
           <title>Task Approved</title>
         </head>
-        <body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+        <body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
             <tr><td align="center">
               <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
                 <!-- LOGO HEADER -->
@@ -3358,18 +3346,18 @@ async function sendTaskApprovedEmail(
                         </td>
                       </tr>
                     </table>
-                    <h2 style="margin:0 0 6px 0;color:#0f172a;font-size:22px;font-weight:700;text-align:center;">Task Approved!</h2>
-                    <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;text-align:center;">Great work, <strong style="color:#0f172a;">${firstName}</strong>!</p>
+                    <h2 style="margin:0 0 6px 0;color:#1F2933;font-size:22px;font-weight:700;text-align:center;">Task Approved!</h2>
+                    <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;line-height:1.6;text-align:center;">Great work, <strong style="color:#1F2933;">${firstName}</strong>!</p>
                     <!-- TASK BOX -->
                     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
                       <tr>
                         <td style="background-color:#FFF8EB;border-left:4px solid #F9A826;border-radius:0 8px 8px 0;padding:16px 18px;">
                           <p style="margin:0 0 4px 0;color:#0A2F52;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">✔ Approved Task</p>
-                          <p style="margin:0;color:#0f172a;font-size:15px;font-weight:600;">${taskTitle}</p>
+                          <p style="margin:0;color:#1F2933;font-size:15px;font-weight:600;">${taskTitle}</p>
                         </td>
                       </tr>
                     </table>
-                    <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">Your loan officer has reviewed and approved this task. Your application is moving forward — keep up the great work!</p>
+                    <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;line-height:1.6;">Your loan officer has reviewed and approved this task. Your application is moving forward — keep up the great work!</p>
                     <!-- CTA -->
                     <table width="100%" cellpadding="0" cellspacing="0" border="0">
                       <tr>
@@ -3378,14 +3366,14 @@ async function sendTaskApprovedEmail(
                         </td>
                       </tr>
                     </table>
-                    <p style="margin:16px 0 0 0;color:#94a3b8;font-size:12px;text-align:center;">If you have any questions, please contact your loan officer.</p>
+                    <p style="margin:16px 0 0 0;color:#9AA5B1;font-size:12px;text-align:center;">If you have any questions, please contact your loan officer.</p>
                   </td>
                 </tr>
                 <!-- FOOTER -->
                 <tr>
-                  <td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+                  <td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
                     <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">The Mortgage Professionals</p>
-                    <p style="margin:0;color:#94a3b8;font-size:12px;">Your partner on the path to your new home</p>
+                    <p style="margin:0;color:#9AA5B1;font-size:12px;">Your partner on the path to your new home</p>
                   </td>
                 </tr>
               </table>
@@ -3423,13 +3411,13 @@ async function sendNewTaskAssignedEmail(
       html: `
         <!DOCTYPE html>
         <html lang="en">
-        <head>
+        <head>${EMAIL_FONT_LINK}
           <meta charset="UTF-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1.0" />
           <title>New Task Assigned</title>
         </head>
-        <body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+        <body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
             <tr><td align="center">
               <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
                 <!-- LOGO HEADER -->
@@ -3441,14 +3429,14 @@ async function sendNewTaskAssignedEmail(
                 <!-- BODY -->
                 <tr>
                   <td style="background-color:#ffffff;padding:40px 32px 32px;">
-                    <h2 style="margin:0 0 6px 0;color:#0f172a;font-size:22px;font-weight:700;text-align:center;">New Task Assigned</h2>
-                    <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;text-align:center;">Hi <strong style="color:#0f172a;">${firstName}</strong>, a new task has been added to your loan application.</p>
+                    <h2 style="margin:0 0 6px 0;color:#1F2933;font-size:22px;font-weight:700;text-align:center;">New Task Assigned</h2>
+                    <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;line-height:1.6;text-align:center;">Hi <strong style="color:#1F2933;">${firstName}</strong>, a new task has been added to your loan application.</p>
                     <!-- APP NUMBER -->
                     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:20px;">
                       <tr>
-                        <td style="background-color:#f1f5f9;border-radius:8px;padding:12px 16px;text-align:center;">
-                          <p style="margin:0;color:#64748b;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Application</p>
-                          <p style="margin:4px 0 0;color:#0f172a;font-size:16px;font-weight:700;letter-spacing:0.5px;">#${applicationNumber}</p>
+                        <td style="background-color:#F5F8FA;border-radius:8px;padding:12px 16px;text-align:center;">
+                          <p style="margin:0;color:#64748B;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">Application</p>
+                          <p style="margin:4px 0 0;color:#1F2933;font-size:16px;font-weight:700;letter-spacing:0.5px;">#${applicationNumber}</p>
                         </td>
                       </tr>
                     </table>
@@ -3457,12 +3445,12 @@ async function sendNewTaskAssignedEmail(
                       <tr>
                         <td style="background-color:#FFF8EB;border-left:4px solid #F9A826;border-radius:0 8px 8px 0;padding:16px 18px;">
                           <p style="margin:0 0 4px 0;color:#0A2F52;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Task Required</p>
-                          <p style="margin:0 0 6px;color:#0f172a;font-size:15px;font-weight:600;">${taskTitle}</p>
-                          ${taskDescription ? `<p style="margin:0;color:#475569;font-size:14px;line-height:1.5;">${taskDescription}</p>` : ""}
+                          <p style="margin:0 0 6px;color:#1F2933;font-size:15px;font-weight:600;">${taskTitle}</p>
+                          ${taskDescription ? `<p style="margin:0;color:#3E4C59;font-size:14px;line-height:1.5;">${taskDescription}</p>` : ""}
                         </td>
                       </tr>
                     </table>
-                    <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">Please log in to your portal to review and complete this task. Completing tasks promptly helps keep your application on track.</p>
+                    <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;line-height:1.6;">Please log in to your portal to review and complete this task. Completing tasks promptly helps keep your application on track.</p>
                     <!-- CTA -->
                     <table width="100%" cellpadding="0" cellspacing="0" border="0">
                       <tr>
@@ -3471,14 +3459,14 @@ async function sendNewTaskAssignedEmail(
                         </td>
                       </tr>
                     </table>
-                    <p style="margin:16px 0 0 0;color:#94a3b8;font-size:12px;text-align:center;">Questions? Contact your loan officer at The Mortgage Professionals.</p>
+                    <p style="margin:16px 0 0 0;color:#9AA5B1;font-size:12px;text-align:center;">Questions? Contact your loan officer at The Mortgage Professionals.</p>
                   </td>
                 </tr>
                 <!-- FOOTER -->
                 <tr>
-                  <td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+                  <td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
                     <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">The Mortgage Professionals &mdash; NMLS #1946451</p>
-                    <p style="margin:0;color:#94a3b8;font-size:12px;">Your partner on the path to your new home</p>
+                    <p style="margin:0;color:#9AA5B1;font-size:12px;">Your partner on the path to your new home</p>
                   </td>
                 </tr>
               </table>
@@ -5667,9 +5655,9 @@ async function sendBroadcastAsync(broadcastId: number): Promise<void> {
               sender,
               companyName,
             )}
-<p style="font-size:11px;color:#999;margin-top:24px;border-top:1px solid #eee;padding-top:8px;">
+<p style="font-size:11px;color:#64748B;margin-top:24px;border-top:1px solid #E8EFF4;padding-top:8px;">
   ${companyName}${companyAddress ? ` · ${companyAddress}` : ""}<br/>
-  <a href="${unsubscribeUrl}" style="color:#999;">Unsubscribe</a> from broadcast emails.
+  <a href="${unsubscribeUrl}" style="color:#64748B;">Unsubscribe</a> from broadcast emails.
 </p>`;
             const sent = await sendViaResend({
               to: recipient.recipient_email,
@@ -5679,7 +5667,7 @@ async function sendBroadcastAsync(broadcastId: number): Promise<void> {
                 sender,
                 companyName,
               ),
-              html,
+              html: wrapBrandedEmailBody(html, { tagline: companyName }),
             });
             await pool.query(
               `UPDATE realtor_broadcast_recipients
@@ -8230,7 +8218,10 @@ const handlePublicApply: RequestHandler = async (req, res) => {
             )
           )[0].map((r) => r.id as number);
     const clientLabel = `${first_name} ${last_name}`.trim() || "a client";
-    const alertHtml = `<p>Hi,</p><p><strong>${clientLabel}</strong> submitted application <strong>${applicationNumber}</strong>.</p><p><a href="${process.env.BASE_URL || ""}/admin/clients/${clientId}">Open in admin</a></p>`;
+    const alertHtml = wrapBrandedEmailBody(
+      `<p>Hi,</p><p><strong>${clientLabel}</strong> submitted application <strong>${applicationNumber}</strong>.</p><p><a href="${process.env.BASE_URL || ""}/admin/clients/${clientId}" style="color:#0A2F52;font-weight:700;">Open in admin</a></p>`,
+      { tagline: "Admin Panel" },
+    );
     for (const bid of emailBrokerIds) {
       void deliverBrokerEmailAlert({
         brokerId: bid,
@@ -8804,13 +8795,13 @@ const handleSendShareLinkEmail: RequestHandler = async (req, res) => {
     const emailHtml = `
 <!DOCTYPE html>
 <html lang="en">
-<head>
+<head>${EMAIL_FONT_LINK}
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Mortgage Application Invitation</title>
 </head>
-<body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+<body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
     <tr><td align="center">
       <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
         <!-- LOGO HEADER -->
@@ -8822,8 +8813,8 @@ const handleSendShareLinkEmail: RequestHandler = async (req, res) => {
         <!-- BODY -->
         <tr>
           <td style="background-color:#ffffff;padding:40px 32px 32px;">
-            <h2 style="margin:0 0 8px 0;color:#0f172a;font-size:22px;font-weight:700;">Hello ${clientFirstName},</h2>
-            <p style="margin:0 0 6px 0;color:#475569;font-size:15px;line-height:1.6;">
+            <h2 style="margin:0 0 8px 0;color:#1F2933;font-size:22px;font-weight:700;">Hello ${clientFirstName},</h2>
+            <p style="margin:0 0 6px 0;color:#3E4C59;font-size:15px;line-height:1.6;">
               <strong>${brokerFullName}</strong> has invited you to submit your mortgage application.
             </p>
             ${
@@ -8832,14 +8823,14 @@ const handleSendShareLinkEmail: RequestHandler = async (req, res) => {
             <!-- PERSONAL NOTE -->
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px;margin-bottom:20px;">
               <tr>
-                <td style="background-color:#f8fafc;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:14px 18px;">
-                  <p style="margin:0;color:#475569;font-size:14px;line-height:1.6;font-style:italic;">"${message}"</p>
+                <td style="background-color:#F5F8FA;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:14px 18px;">
+                  <p style="margin:0;color:#3E4C59;font-size:14px;line-height:1.6;font-style:italic;">"${message}"</p>
                 </td>
               </tr>
             </table>`
                 : `<br/>`
             }
-            <p style="margin:0 0 28px 0;color:#475569;font-size:15px;line-height:1.6;">
+            <p style="margin:0 0 28px 0;color:#3E4C59;font-size:15px;line-height:1.6;">
               Click the button below to get started — the application only takes a few minutes to complete.
             </p>
             <!-- CTA BUTTON -->
@@ -8853,15 +8844,15 @@ const handleSendShareLinkEmail: RequestHandler = async (req, res) => {
             <!-- LINK FALLBACK -->
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:28px;">
               <tr>
-                <td style="background-color:#f8fafc;border-radius:8px;padding:12px 16px;text-align:center;">
-                  <p style="margin:0 0 4px 0;color:#64748b;font-size:12px;">Or copy this link into your browser:</p>
+                <td style="background-color:#F5F8FA;border-radius:8px;padding:12px 16px;text-align:center;">
+                  <p style="margin:0 0 4px 0;color:#64748B;font-size:12px;">Or copy this link into your browser:</p>
                   <p style="margin:0;font-size:12px;word-break:break-all;">
                     <a href="${shareUrl}" style="color:#0A2F52;text-decoration:none;">${shareUrl}</a>
                   </p>
                 </td>
               </tr>
             </table>
-            <p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;">
+            <p style="margin:0;color:#9AA5B1;font-size:12px;text-align:center;">
               If you have any questions, reach out to ${brokerFullName} directly.<br/>
               If you did not expect this email, you can safely ignore it.
             </p>
@@ -8869,9 +8860,9 @@ const handleSendShareLinkEmail: RequestHandler = async (req, res) => {
         </tr>
         <!-- FOOTER -->
         <tr>
-          <td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+          <td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
             <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">The Mortgage Professionals</p>
-            <p style="margin:0;color:#94a3b8;font-size:12px;">Your partner on the path to your new home</p>
+            <p style="margin:0;color:#9AA5B1;font-size:12px;">Your partner on the path to your new home</p>
           </td>
         </tr>
       </table>
@@ -16719,7 +16710,7 @@ async function triggerPipelineAutomation(
         sendResult = await sendEmailMessage(
           loan.email,
           subject,
-          body,
+          wrapReminderEmailBody(body),
           true,
           pipelineConversationId,
         );
@@ -17135,27 +17126,46 @@ async function markExecutionsRespondedForConversation(
  * The Mortgage Professionals HTML email shell, matching the style used by
  * sendBrokerVerificationEmail / sendClientLoanWelcomeEmail etc.
  */
-function wrapReminderEmailBody(plainText: string): string {
+/** Renders plain text or an HTML fragment inside the tenant's branded email shell. */
+function wrapBrandedEmailBody(
+  content: string,
+  options: { showPortalCta?: boolean; tagline?: string } = {},
+): string {
+  if (/<html[\s>]/i.test(content)) return content;
+
   // Convert double newlines → paragraph breaks, single newlines → <br>
-  const htmlBody = plainText
-    .split(/\n\n+/)
-    .map(
-      (para) =>
-        `<p style="margin:0 0 14px 0;color:#475569;font-size:15px;line-height:1.7;">${para.replace(/\n/g, "<br />")}</p>`,
-    )
-    .join("");
+  const htmlBody = /<[a-z][\s\S]*>/i.test(content)
+    ? `<div style="color:#3E4C59;font-size:15px;line-height:1.7;">${content}</div>`
+    : content
+        .split(/\n\n+/)
+        .map(
+          (para) =>
+            `<p style="margin:0 0 14px 0;color:#3E4C59;font-size:15px;line-height:1.7;">${para.replace(/\n/g, "<br />")}</p>`,
+        )
+        .join("");
 
   const portalUrl =
     process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app";
 
+  const ctaHtml = options.showPortalCta
+    ? `<!-- CTA -->
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;">
+              <tr>
+                <td align="center">
+                  <a href="${portalUrl}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Log In to Your Portal</a>
+                </td>
+              </tr>
+            </table>`
+    : "";
+
   return `<!DOCTYPE html>
 <html lang="en">
-<head>
+<head>${EMAIL_FONT_LINK}
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 </head>
-<body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+<body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
     <tr><td align="center">
       <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
         <!-- LOGO HEADER -->
@@ -17168,21 +17178,14 @@ function wrapReminderEmailBody(plainText: string): string {
         <tr>
           <td style="background-color:#ffffff;padding:40px 32px 32px;">
             ${htmlBody}
-            <!-- CTA -->
-            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;">
-              <tr>
-                <td align="center">
-                  <a href="${portalUrl}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Log In to Your Portal</a>
-                </td>
-              </tr>
-            </table>
+            ${ctaHtml}
           </td>
         </tr>
         <!-- FOOTER -->
         <tr>
-          <td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+          <td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
             <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">The Mortgage Professionals</p>
-            <p style="margin:0;color:#94a3b8;font-size:12px;">Your partner on the path to your new home</p>
+            <p style="margin:0;color:#9AA5B1;font-size:12px;">${options.tagline ?? "Your partner on the path to your new home"}</p>
           </td>
         </tr>
       </table>
@@ -17190,6 +17193,11 @@ function wrapReminderEmailBody(plainText: string): string {
   </table>
 </body>
 </html>`;
+}
+
+
+function wrapReminderEmailBody(content: string): string {
+  return wrapBrandedEmailBody(content, { showPortalCta: true });
 }
 
 /**
@@ -20700,9 +20708,9 @@ function resolveCdnFileUrl(filePath: string): string | null {
   const raw = String(filePath || "").trim();
   if (!raw) return null;
   if (/^https?:\/\//i.test(raw)) return raw;
-  // Uploaded docs live under /data/encore/... on the PHP CDN.
+  // Uploaded docs live under a tenant folder on the PHP CDN.
   // Public base is https://disruptinglabs.com/data/api + path
-  // (same as Documents.tsx). Bare https://disruptinglabs.com/data/encore
+  // (same as Documents.tsx). Bare tenant-folder URLs
   // returns Apache HTML catch-all — that corrupted zip downloads.
   const cleaned = raw.startsWith("/") ? raw : `/${raw}`;
   return `https://disruptinglabs.com/data/api${cleaned}`;
@@ -21566,12 +21574,6 @@ const TOP_UP_CHANNELS: TopUpChannelMeta[] = [
     unitLabel: "bookings",
     unitLabelShort: "bookings",
   },
-  {
-    dimension: "mortgi_ai_tokens",
-    title: "Mortgi AI",
-    unitLabel: "AI tokens",
-    unitLabelShort: "tokens",
-  },
 ];
 
 /** Tiered retail — volume steps with improved margins vs flat $18/1k SMS. */
@@ -21745,8 +21747,7 @@ function isUsageDimension(value: string): value is UsageDimension {
     value === "sms_segments" ||
     value === "voice_minutes" ||
     value === "email_sends" ||
-    value === "scheduler_bookings" ||
-    value === "mortgi_ai_tokens"
+    value === "scheduler_bookings"
   );
 }
 
@@ -21832,7 +21833,11 @@ function buildLegacyTopUpPackCatalog(): Record<
   return catalog;
 }
 
-const TOP_UP_PACK_DEFINITIONS = buildLegacyTopUpPackCatalog();
+const TOP_UP_PACK_DEFINITIONS = Object.fromEntries(
+  Object.entries(buildLegacyTopUpPackCatalog()).filter(
+    ([, pack]) => pack.dimension !== "mortgi_ai_tokens",
+  ),
+) as ReturnType<typeof buildLegacyTopUpPackCatalog>;
 
 type TopUpPackId = string;
 
@@ -23753,7 +23758,6 @@ const BILLING_CAPACITY_DIMENSIONS: UsageDimension[] = [
   "voice_minutes",
   "email_sends",
   "scheduler_bookings",
-  "mortgi_ai_tokens",
 ];
 
 function topUpChannelTitle(dimension: UsageDimension): string {
@@ -25043,7 +25047,7 @@ const DIMENSION_LABELS: Record<UsageDimension, string> = {
   voice_minutes: "Voice minutes",
   email_sends: "Email sends",
   scheduler_bookings: "Scheduler bookings",
-  mortgi_ai_tokens: "Mortgi AI tokens",
+  mortgi_ai_tokens: "AI tokens",
 };
 
 function formatUsd(amount: number): string {
@@ -25090,50 +25094,50 @@ function buildBillingTopUpReceiptEmailHtml(
 
   return `<!DOCTYPE html>
 <html lang="en">
-<head>
+<head>${EMAIL_FONT_LINK}
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Payment receipt — ${companyName}</title>
 </head>
-<body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+<body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
     <tr><td align="center">
       <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
         <tr>
-          <td style="background-color:#ffffff;padding:24px 32px;border-radius:16px 16px 0 0;border-bottom:3px solid #e8192c;text-align:center;">
+          <td style="background-color:#ffffff;padding:24px 32px;border-radius:16px 16px 0 0;border-bottom:3px solid #0A2F52;text-align:center;">
             <img src="${BILLING_LOGO_URL}" alt="${companyName}" style="height:52px;width:auto;display:inline-block;" />
           </td>
         </tr>
         <tr>
           <td style="background-color:#ffffff;padding:40px 32px 32px;">
-            <p style="margin:0 0 6px 0;color:#e8192c;font-size:12px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;">Payment receipt</p>
-            <h2 style="margin:0 0 12px 0;color:#0f172a;font-size:22px;font-weight:700;">Thank you for your payment</h2>
-            <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">
+            <p style="margin:0 0 6px 0;color:#0A2F52;font-size:12px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;">Payment receipt</p>
+            <h2 style="margin:0 0 12px 0;color:#1F2933;font-size:22px;font-weight:700;">Thank you for your payment</h2>
+            <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;line-height:1.6;">
               Hi <strong>${recipientName}</strong>, your quota top-up for <strong>${companyName}</strong> was successful. Capacity has been added to your account immediately.
             </p>
-            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:24px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;border:1px solid #E8EFF4;border-radius:12px;margin-bottom:24px;">
               <tr>
                 <td style="padding:20px 24px;">
                   <table width="100%" cellpadding="0" cellspacing="0" border="0">
                     <tr>
-                      <td style="padding:6px 0;color:#64748b;font-size:13px;width:140px;">Item</td>
-                      <td style="padding:6px 0;color:#0f172a;font-size:14px;font-weight:600;">${packLabel}</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:13px;width:140px;">Item</td>
+                      <td style="padding:6px 0;color:#1F2933;font-size:14px;font-weight:600;">${packLabel}</td>
                     </tr>
                     <tr>
-                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Capacity added</td>
-                      <td style="padding:6px 0;color:#0f172a;font-size:14px;">${formatUnits(units, dimension)}</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:13px;">Capacity added</td>
+                      <td style="padding:6px 0;color:#1F2933;font-size:14px;">${formatUnits(units, dimension)}</td>
                     </tr>
                     <tr>
-                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Amount paid</td>
-                      <td style="padding:6px 0;color:#0f172a;font-size:16px;font-weight:700;">${formatUsd(amountUsd)}</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:13px;">Amount paid</td>
+                      <td style="padding:6px 0;color:#1F2933;font-size:16px;font-weight:700;">${formatUsd(amountUsd)}</td>
                     </tr>
                     <tr>
-                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Date</td>
-                      <td style="padding:6px 0;color:#0f172a;font-size:14px;">${paidAtFormatted} PT</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:13px;">Date</td>
+                      <td style="padding:6px 0;color:#1F2933;font-size:14px;">${paidAtFormatted} PT</td>
                     </tr>
                     <tr>
-                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Reference</td>
-                      <td style="padding:6px 0;color:#64748b;font-size:12px;font-family:ui-monospace,monospace;">${receiptRef}</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:13px;">Reference</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:12px;font-family:ui-monospace,monospace;">${receiptRef}</td>
                     </tr>
                   </table>
                 </td>
@@ -25142,20 +25146,20 @@ function buildBillingTopUpReceiptEmailHtml(
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
               <tr>
                 <td align="center">
-                  <a href="${billingUrl}" style="display:inline-block;background-color:#e8192c;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:8px;font-weight:700;font-size:15px;letter-spacing:0.3px;">View billing &amp; usage →</a>
+                  <a href="${billingUrl}" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:8px;font-weight:700;font-size:15px;letter-spacing:0.3px;">View billing &amp; usage →</a>
                 </td>
               </tr>
             </table>
-            <p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;line-height:1.5;">
+            <p style="margin:0;color:#9AA5B1;font-size:12px;text-align:center;line-height:1.5;">
               This receipt confirms your one-time quota purchase. Monthly platform fees and subscription invoices are managed separately in billing.<br/>
               If you did not authorize this payment, contact your platform administrator immediately.
             </p>
           </td>
         </tr>
         <tr>
-          <td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+          <td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
             <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">${companyName}</p>
-            <p style="margin:0;color:#94a3b8;font-size:12px;">Platform billing &amp; usage</p>
+            <p style="margin:0;color:#9AA5B1;font-size:12px;">Platform billing &amp; usage</p>
           </td>
         </tr>
       </table>
@@ -25569,51 +25573,51 @@ function buildBillingPaymentFailedEmailHtml(
     : invoiceId.slice(0, 8).toUpperCase();
 
   const payCta = updatePaymentUrl
-    ? `<a href="${updatePaymentUrl}" style="display:inline-block;background-color:#e8192c;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:8px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Update payment method →</a>`
-    : `<a href="${billingUrl}" style="display:inline-block;background-color:#e8192c;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:8px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Open billing →</a>`;
+    ? `<a href="${updatePaymentUrl}" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:8px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Update payment method →</a>`
+    : `<a href="${billingUrl}" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:8px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Open billing →</a>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
-<head>
+<head>${EMAIL_FONT_LINK}
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Payment failed — ${companyName}</title>
 </head>
-<body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+<body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
     <tr><td align="center">
       <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
         <tr>
-          <td style="background-color:#ffffff;padding:24px 32px;border-radius:16px 16px 0 0;border-bottom:3px solid #e8192c;text-align:center;">
+          <td style="background-color:#ffffff;padding:24px 32px;border-radius:16px 16px 0 0;border-bottom:3px solid #0A2F52;text-align:center;">
             <img src="${BILLING_LOGO_URL}" alt="${companyName}" style="height:52px;width:auto;display:inline-block;" />
           </td>
         </tr>
         <tr>
           <td style="background-color:#ffffff;padding:40px 32px 32px;">
-            <p style="margin:0 0 6px 0;color:#e8192c;font-size:12px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;">Payment failed</p>
-            <h2 style="margin:0 0 12px 0;color:#0f172a;font-size:22px;font-weight:700;">Action required</h2>
-            <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">
+            <p style="margin:0 0 6px 0;color:#0A2F52;font-size:12px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;">Payment failed</p>
+            <h2 style="margin:0 0 12px 0;color:#1F2933;font-size:22px;font-weight:700;">Action required</h2>
+            <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;line-height:1.6;">
               Hi <strong>${recipientName}</strong>, we couldn't process the ${formatUsd(amountUsd)} monthly renewal for <strong>${companyName}</strong>. Outbound sends stay active during a short grace period, then pause if payment isn't updated.
             </p>
-            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#fff7ed;border:1px solid #fed7aa;border-radius:12px;margin-bottom:24px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFF8EB;border:1px solid #F9A826;border-radius:12px;margin-bottom:24px;">
               <tr>
                 <td style="padding:20px 24px;">
-                  <p style="margin:0 0 8px 0;color:#9a3412;font-size:13px;font-weight:600;">Grace period ends</p>
-                  <p style="margin:0;color:#0f172a;font-size:16px;font-weight:700;">${graceFormatted} PT</p>
+                  <p style="margin:0 0 8px 0;color:#8A5A0B;font-size:13px;font-weight:600;">Grace period ends</p>
+                  <p style="margin:0;color:#1F2933;font-size:16px;font-weight:700;">${graceFormatted} PT</p>
                 </td>
               </tr>
             </table>
-            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:24px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;border:1px solid #E8EFF4;border-radius:12px;margin-bottom:24px;">
               <tr>
                 <td style="padding:20px 24px;">
                   <table width="100%" cellpadding="0" cellspacing="0" border="0">
                     <tr>
-                      <td style="padding:6px 0;color:#64748b;font-size:13px;width:140px;">Amount due</td>
-                      <td style="padding:6px 0;color:#0f172a;font-size:16px;font-weight:700;">${formatUsd(amountUsd)}</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:13px;width:140px;">Amount due</td>
+                      <td style="padding:6px 0;color:#1F2933;font-size:16px;font-weight:700;">${formatUsd(amountUsd)}</td>
                     </tr>
                     <tr>
-                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Reference</td>
-                      <td style="padding:6px 0;color:#64748b;font-size:12px;font-family:ui-monospace,monospace;">${ref}</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:13px;">Reference</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:12px;font-family:ui-monospace,monospace;">${ref}</td>
                     </tr>
                   </table>
                 </td>
@@ -25624,7 +25628,7 @@ function buildBillingPaymentFailedEmailHtml(
                 <td align="center">${payCta}</td>
               </tr>
             </table>
-            <p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;line-height:1.5;">
+            <p style="margin:0;color:#9AA5B1;font-size:12px;text-align:center;line-height:1.5;">
               Update your card before the grace period ends to avoid interruption to SMS, email, and other outbound features.
             </p>
           </td>
@@ -25669,56 +25673,56 @@ function buildBillingSubscriptionReceiptEmailHtml(
 
   return `<!DOCTYPE html>
 <html lang="en">
-<head>
+<head>${EMAIL_FONT_LINK}
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Subscription confirmed — ${companyName}</title>
 </head>
-<body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+<body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
     <tr><td align="center">
       <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
         <tr>
-          <td style="background-color:#ffffff;padding:24px 32px;border-radius:16px 16px 0 0;border-bottom:3px solid #e8192c;text-align:center;">
+          <td style="background-color:#ffffff;padding:24px 32px;border-radius:16px 16px 0 0;border-bottom:3px solid #0A2F52;text-align:center;">
             <img src="${BILLING_LOGO_URL}" alt="${companyName}" style="height:52px;width:auto;display:inline-block;" />
           </td>
         </tr>
         <tr>
           <td style="background-color:#ffffff;padding:40px 32px 32px;">
-            <p style="margin:0 0 6px 0;color:#e8192c;font-size:12px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;">Subscription confirmed</p>
-            <h2 style="margin:0 0 12px 0;color:#0f172a;font-size:22px;font-weight:700;">You're all set</h2>
-            <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">
+            <p style="margin:0 0 6px 0;color:#0A2F52;font-size:12px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;">Subscription confirmed</p>
+            <h2 style="margin:0 0 12px 0;color:#1F2933;font-size:22px;font-weight:700;">You're all set</h2>
+            <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;line-height:1.6;">
               Hi <strong>${recipientName}</strong>, your platform subscription for <strong>${companyName}</strong> is active. Your card is saved for monthly renewals and top-up purchases.
             </p>
-            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:24px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;border:1px solid #E8EFF4;border-radius:12px;margin-bottom:24px;">
               <tr>
                 <td style="padding:20px 24px;">
                   <table width="100%" cellpadding="0" cellspacing="0" border="0">
                     <tr>
-                      <td style="padding:6px 0;color:#64748b;font-size:13px;width:140px;">Plan</td>
-                      <td style="padding:6px 0;color:#0f172a;font-size:14px;font-weight:600;">Platform · ${formatUsd(amountUsd)}/month</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:13px;width:140px;">Plan</td>
+                      <td style="padding:6px 0;color:#1F2933;font-size:14px;font-weight:600;">Platform · ${formatUsd(amountUsd)}/month</td>
                     </tr>
                     <tr>
-                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Billing period</td>
-                      <td style="padding:6px 0;color:#0f172a;font-size:14px;">${periodStart} → ${periodEnd}</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:13px;">Billing period</td>
+                      <td style="padding:6px 0;color:#1F2933;font-size:14px;">${periodStart} → ${periodEnd}</td>
                     </tr>
                     <tr>
-                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Included</td>
-                      <td style="padding:6px 0;color:#0f172a;font-size:14px;line-height:1.5;">
+                      <td style="padding:6px 0;color:#64748B;font-size:13px;">Included</td>
+                      <td style="padding:6px 0;color:#1F2933;font-size:14px;line-height:1.5;">
                         ${plan.includedSmsSegments.toLocaleString()} SMS · ${plan.includedVoiceMinutes.toLocaleString()} voice min · ${plan.includedEmailSends.toLocaleString()} email
                       </td>
                     </tr>
                     <tr>
-                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Amount paid</td>
-                      <td style="padding:6px 0;color:#0f172a;font-size:16px;font-weight:700;">${formatUsd(amountUsd)}</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:13px;">Amount paid</td>
+                      <td style="padding:6px 0;color:#1F2933;font-size:16px;font-weight:700;">${formatUsd(amountUsd)}</td>
                     </tr>
                     <tr>
-                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Date</td>
-                      <td style="padding:6px 0;color:#0f172a;font-size:14px;">${paidAtFormatted} PT</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:13px;">Date</td>
+                      <td style="padding:6px 0;color:#1F2933;font-size:14px;">${paidAtFormatted} PT</td>
                     </tr>
                     <tr>
-                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Reference</td>
-                      <td style="padding:6px 0;color:#64748b;font-size:12px;font-family:ui-monospace,monospace;">${ref}</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:13px;">Reference</td>
+                      <td style="padding:6px 0;color:#64748B;font-size:12px;font-family:ui-monospace,monospace;">${ref}</td>
                     </tr>
                   </table>
                 </td>
@@ -25727,18 +25731,18 @@ function buildBillingSubscriptionReceiptEmailHtml(
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
               <tr>
                 <td align="center">
-                  <a href="${billingUrl}" style="display:inline-block;background-color:#e8192c;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:8px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Open billing &amp; usage →</a>
+                  <a href="${billingUrl}" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:8px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Open billing &amp; usage →</a>
                 </td>
               </tr>
             </table>
-            <p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;line-height:1.5;">
+            <p style="margin:0;color:#9AA5B1;font-size:12px;text-align:center;line-height:1.5;">
               Included quotas renew each billing period. Top-ups are available anytime from billing if you need extra capacity.
             </p>
           </td>
         </tr>
         <tr>
-          <td style="background-color:#f1f5f9;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
-            <p style="margin:0;color:#94a3b8;font-size:11px;">© ${new Date().getFullYear()} ${companyName} · Powered by Encore CRM</p>
+          <td style="background-color:#F5F8FA;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+            <p style="margin:0;color:#9AA5B1;font-size:11px;">© ${new Date().getFullYear()} ${companyName}</p>
           </td>
         </tr>
       </table>
@@ -28687,6 +28691,3358 @@ function registerStripeBillingRoutes(
 }
 // ===== END BILLING & QUOTA =====
 
+// ── Blocked phone numbers ──
+function phoneLast10(phone: string | null | undefined): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length < 10) return null;
+  return digits.slice(-10);
+}
+
+const BLOCKED_NUMBER_ADMIN_ROLES = new Set([
+  "admin",
+  "superadmin",
+]);
+
+/** E.164 for 10-digit / 1+10-digit US numbers; otherwise "+" + digits. */
+function toBlockedPhoneE164(raw: string): string | null {
+  const digits = String(raw ?? "").replace(/\D/g, "");
+  if (digits.length < 10 || digits.length > 15) return null;
+  if (digits.length === 10) return `+1${digits}`;
+  return `+${digits}`;
+}
+
+/**
+ * Returns true when the phone is blocked for the channel and bumps the
+ * counters. Fails OPEN on any DB error so a lookup problem never drops a
+ * legitimate call or text.
+ */
+async function checkAndCountBlockedPhone(
+  tenantId: number,
+  phone: string | null | undefined,
+  channel: "call" | "sms",
+): Promise<boolean> {
+  const last10 = phoneLast10(phone);
+  if (!last10) return false;
+  try {
+    const channelCol = channel === "call" ? "block_calls" : "block_sms";
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM blocked_phone_numbers
+       WHERE tenant_id = ? AND normalized_phone = ? AND ${channelCol} = 1
+       LIMIT 1`,
+      [tenantId, last10],
+    );
+    if (rows.length === 0) return false;
+    const counterCol =
+      channel === "call" ? "blocked_call_count" : "blocked_sms_count";
+    // Awaited: on Vercel, work left running after the response may be frozen.
+    await pool
+      .query(
+        `UPDATE blocked_phone_numbers
+         SET ${counterCol} = ${counterCol} + 1, last_blocked_at = NOW()
+         WHERE id = ?`,
+        [rows[0].id],
+      )
+      .catch((err) =>
+        console.error("blocked_phone_numbers counter update failed:", err),
+      );
+    return true;
+  } catch (err) {
+    console.error("Blocked-number lookup failed (failing open):", err);
+    return false;
+  }
+}
+
+const BLOCKED_NUMBER_SELECT = `
+  SELECT bpn.id, bpn.phone_e164, bpn.normalized_phone, bpn.block_calls,
+         bpn.block_sms, bpn.reason, bpn.blocked_by_broker_id,
+         NULLIF(TRIM(CONCAT(COALESCE(b.first_name, ''), ' ', COALESCE(b.last_name, ''))), '') AS blocked_by_name,
+         bpn.blocked_call_count, bpn.blocked_sms_count, bpn.last_blocked_at,
+         bpn.created_at
+  FROM blocked_phone_numbers bpn
+  LEFT JOIN brokers b ON b.id = bpn.blocked_by_broker_id AND b.tenant_id = bpn.tenant_id`;
+
+function serializeBlockedPhoneNumber(row: RowDataPacket) {
+  const iso = (v: unknown) =>
+    v == null ? null : v instanceof Date ? v.toISOString() : String(v);
+  return {
+    id: Number(row.id),
+    phone_e164: String(row.phone_e164),
+    normalized_phone: String(row.normalized_phone),
+    block_calls: !!row.block_calls,
+    block_sms: !!row.block_sms,
+    reason: (row.reason as string | null) ?? null,
+    blocked_by_broker_id:
+      row.blocked_by_broker_id != null
+        ? Number(row.blocked_by_broker_id)
+        : null,
+    blocked_by_name: (row.blocked_by_name as string | null) ?? null,
+    blocked_call_count: Number(row.blocked_call_count ?? 0),
+    blocked_sms_count: Number(row.blocked_sms_count ?? 0),
+    last_blocked_at: iso(row.last_blocked_at),
+    created_at: iso(row.created_at) ?? "",
+  };
+}
+
+/** GET /api/blocked-numbers — admin roles only. */
+const handleListBlockedNumbers: RequestHandler = async (req, res) => {
+  if (!BLOCKED_NUMBER_ADMIN_ROLES.has((req as any).brokerRole)) {
+    return res
+      .status(403)
+      .json({ success: false, error: "Admin access required" });
+  }
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `${BLOCKED_NUMBER_SELECT}
+       WHERE bpn.tenant_id = ?
+       ORDER BY bpn.created_at DESC, bpn.id DESC`,
+      [MORTGAGE_TENANT_ID],
+    );
+    return res.json({
+      success: true,
+      blocked_numbers: rows.map(serializeBlockedPhoneNumber),
+    });
+  } catch (error) {
+    console.error("Error listing blocked numbers:", error);
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to load blocked numbers" });
+  }
+};
+
+/** POST /api/blocked-numbers — admin roles only. */
+const handleCreateBlockedNumber: RequestHandler = async (req, res) => {
+  if (!BLOCKED_NUMBER_ADMIN_ROLES.has((req as any).brokerRole)) {
+    return res
+      .status(403)
+      .json({ success: false, error: "Admin access required" });
+  }
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const body = (req.body ?? {}) as {
+      phone?: string;
+      reason?: string | null;
+      block_calls?: boolean | string;
+      block_sms?: boolean | string;
+    };
+    const phone = body.phone;
+    const reason = body.reason;
+    // Strict: only an explicit false / "false" / 0 turns a channel off.
+    const channelOn = (v: unknown) =>
+      !(v === false || v === "false" || v === 0 || v === "0");
+    const block_calls = channelOn(body.block_calls);
+    const block_sms = channelOn(body.block_sms);
+
+    const e164 = toBlockedPhoneE164(phone ?? "");
+    const last10 = phoneLast10(e164);
+    if (!e164 || !last10) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Enter a valid phone number" });
+    }
+    if (!block_calls && !block_sms) {
+      return res.status(400).json({
+        success: false,
+        error: "Block calls, texts, or both",
+      });
+    }
+    const trimmedReason =
+      typeof reason === "string" && reason.trim()
+        ? reason.trim().slice(0, 255)
+        : null;
+
+    // Never allow blocking one of our own Twilio lines.
+    const [ownLine] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM brokers
+       WHERE tenant_id = ? AND twilio_caller_id IS NOT NULL
+         AND RIGHT(REGEXP_REPLACE(twilio_caller_id, '[^0-9]', ''), 10) = ?
+       LIMIT 1`,
+      [MORTGAGE_TENANT_ID, last10],
+    );
+    if (ownLine.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: "That number is one of your own phone lines",
+      });
+    }
+
+    const [existing] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM blocked_phone_numbers
+       WHERE tenant_id = ? AND normalized_phone = ? LIMIT 1`,
+      [MORTGAGE_TENANT_ID, last10],
+    );
+    if (existing.length > 0) {
+      return res
+        .status(409)
+        .json({ success: false, error: "This number is already blocked" });
+    }
+
+    const [result] = await pool.query<ResultSetHeader>(
+      `INSERT INTO blocked_phone_numbers
+         (tenant_id, phone_e164, normalized_phone, block_calls, block_sms,
+          reason, blocked_by_broker_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        MORTGAGE_TENANT_ID,
+        e164,
+        last10,
+        block_calls ? 1 : 0,
+        block_sms ? 1 : 0,
+        trimmedReason,
+        brokerId ?? null,
+      ],
+    );
+    const [[row]] = await pool.query<RowDataPacket[]>(
+      `${BLOCKED_NUMBER_SELECT} WHERE bpn.id = ?`,
+      [result.insertId],
+    );
+    console.log(
+      `🚫 Number blocked: ${e164} by broker=${brokerId} calls=${!!block_calls} sms=${!!block_sms}`,
+    );
+    return res.status(201).json({
+      success: true,
+      blocked_number: serializeBlockedPhoneNumber(row),
+    });
+  } catch (error: any) {
+    if (error?.code === "ER_DUP_ENTRY") {
+      return res
+        .status(409)
+        .json({ success: false, error: "This number is already blocked" });
+    }
+    console.error("Error blocking number:", error);
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to block number" });
+  }
+};
+
+/** DELETE /api/blocked-numbers/:id — admin roles only. */
+const handleDeleteBlockedNumber: RequestHandler = async (req, res) => {
+  if (!BLOCKED_NUMBER_ADMIN_ROLES.has((req as any).brokerRole)) {
+    return res
+      .status(403)
+      .json({ success: false, error: "Admin access required" });
+  }
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ success: false, error: "Invalid id" });
+    }
+    const [result] = await pool.query<ResultSetHeader>(
+      `DELETE FROM blocked_phone_numbers WHERE id = ? AND tenant_id = ?`,
+      [id, MORTGAGE_TENANT_ID],
+    );
+    if (result.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Blocked number not found" });
+    }
+    console.log(
+      `✅ Number unblocked: id=${id} by broker=${(req as any).brokerId}`,
+    );
+    return res.json({ success: true });
+  } catch (error) {
+    console.error("Error unblocking number:", error);
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to unblock number" });
+  }
+};
+
+function rowHasLoanOwnershipAccess(
+  brokerId: number,
+  row:
+    | RowDataPacket
+    | {
+        assigned_broker_id?: number | null;
+        broker_user_id?: number | null;
+        partner_broker_id?: number | null;
+        partner_owner_broker_id?: number | null;
+      },
+): boolean {
+  const r = row as RowDataPacket;
+  return (
+    Number(r.assigned_broker_id) === brokerId ||
+    Number(r.broker_user_id) === brokerId ||
+    Number(r.partner_broker_id) === brokerId ||
+    Number(r.partner_owner_broker_id) === brokerId
+  );
+}
+
+async function fetchLoanAccessRow(
+  loanId: number,
+): Promise<RowDataPacket | null> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT la.id, la.status, la.broker_user_id, la.partner_broker_id,
+            c.assigned_broker_id, op.created_by_broker_id AS partner_owner_broker_id
+     FROM loan_applications la
+     INNER JOIN clients c ON c.id = la.client_user_id AND c.tenant_id = la.tenant_id
+     LEFT JOIN brokers op ON op.id = la.partner_broker_id AND op.tenant_id = la.tenant_id
+     WHERE la.id = ? AND la.tenant_id = ?
+     LIMIT 1`,
+    [loanId, MORTGAGE_TENANT_ID],
+  );
+  return rows.length ? rows[0] : null;
+}
+
+async function assertLoanAccess(
+  brokerId: number,
+  brokerRole: string,
+  loanId: number,
+): Promise<
+  | { ok: true; loan: RowDataPacket }
+  | { ok: false; status: number; error: string }
+> {
+  const loan = await fetchLoanAccessRow(loanId);
+  if (!loan) {
+    return { ok: false, status: 404, error: "Loan not found" };
+  }
+  if (brokerRole === "admin") {
+    return { ok: true, loan };
+  }
+  if (!rowHasLoanOwnershipAccess(brokerId, loan)) {
+    return { ok: false, status: 403, error: "Access denied" };
+  }
+  return { ok: true, loan };
+}
+
+// This tenant keeps one client email per tenant (unique_tenant_email).
+type ClientEmailConflictScope = "tenant" | "per_owner";
+const resolveClientEmailConflictScope = (
+  ..._flags: unknown[]
+): ClientEmailConflictScope => "tenant";
+
+// ===== Bulk import and calculator saves — inlined from real-state =====
+// =====================================================
+// Bulk CSV import helpers (inlined from shared/bulk-import.ts for Vercel)
+// =====================================================
+/**
+ * Bulk CSV import — shared validation, parsing, templates.
+ * Used by API, client preview helpers, and smoke tests.
+ */
+
+type BulkImportEntity = "clients" | "realtors";
+
+type BulkImportRowStatus = "will_create" | "skipped" | "error";
+
+type BulkImportTableFilter = "all" | "ready" | "skipped" | "error";
+
+const BULK_IMPORT_MAX_FILE_BYTES = 5 * 1024 * 1024;
+const BULK_IMPORT_MAX_CLIENT_ROWS = 500;
+const BULK_IMPORT_MAX_REALTOR_ROWS = 200;
+const BULK_IMPORT_JOB_TTL_MS = 60 * 60 * 1000;
+const BULK_IMPORT_ACK_THRESHOLD = 100;
+
+const BULK_LEAD_SOURCES = [
+  "current_client_referral",
+  "past_client",
+  "past_client_referral",
+  "personal_friend",
+  "realtor",
+  "advertisement",
+  "business_partner",
+  "builder",
+  "other",
+] as const;
+
+type BulkLeadSource = (typeof BULK_LEAD_SOURCES)[number];
+
+const BULK_PARTNER_TYPES = ["realtor", "mortgage_banker"] as const;
+
+type BulkPartnerType = (typeof BULK_PARTNER_TYPES)[number];
+
+const BULK_CITIZENSHIP_STATUSES = [
+  "us_citizen",
+  "permanent_resident",
+  "non_resident",
+  "other",
+] as const;
+
+const BULK_SPECIALIZATIONS = [
+  "Conventional Loans",
+  "FHA Loans",
+  "VA Loans",
+  "USDA Loans",
+  "Jumbo Loans",
+  "Refinancing",
+  "First-Time Home Buyers",
+  "Investment Properties",
+  "Commercial Loans",
+  "Reverse Mortgages",
+] as const;
+
+const BULK_FORBIDDEN_COLUMNS = new Set([
+  "password",
+  "password_hash",
+  "ssn",
+  "social_security",
+  "twilio_caller_id",
+  "twilio_phone_sid",
+]);
+
+const CLIENT_CSV_HEADERS = [
+  "first_name",
+  "last_name",
+  "middle_name",
+  "email",
+  "phone",
+  "alternate_phone",
+  "date_of_birth",
+  "address_street",
+  "address_unit",
+  "address_city",
+  "address_state",
+  "address_zip",
+  "citizenship_status",
+  "lead_source",
+  "external_ref",
+] as const;
+
+const REALTOR_CSV_HEADERS = [
+  "first_name",
+  "last_name",
+  "email",
+  "phone",
+  "partner_type",
+  "license_number",
+  "specializations",
+  "office_address",
+  "office_city",
+  "office_state",
+  "office_zip",
+  "bio",
+  "external_ref",
+] as const;
+
+interface BulkImportRowPreview {
+  row_number: number;
+  status: BulkImportRowStatus;
+  message?: string;
+  external_ref?: string | null;
+  display_name: string;
+  email?: string | null;
+  phone?: string | null;
+  badge?: string | null;
+  conflict_entity_id?: number | null;
+}
+
+interface NormalizedClientBulkRow {
+  row_number: number;
+  external_ref: string | null;
+  first_name: string;
+  last_name: string;
+  middle_name: string | null;
+  email: string | null;
+  phone: string | null;
+  normalized_phone: string | null;
+  alternate_phone: string | null;
+  date_of_birth: string | null;
+  address_street: string | null;
+  address_unit: string | null;
+  address_city: string | null;
+  address_state: string | null;
+  address_zip: string | null;
+  citizenship_status: string | null;
+  lead_source: string;
+  status: BulkImportRowStatus;
+  message?: string;
+  conflict_client_id?: number | null;
+}
+
+interface NormalizedRealtorBulkRow {
+  row_number: number;
+  external_ref: string | null;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string | null;
+  partner_type: BulkPartnerType;
+  role: "broker" | "admin";
+  license_number: string | null;
+  specializations: string[] | null;
+  office_address: string | null;
+  office_city: string | null;
+  office_state: string | null;
+  office_zip: string | null;
+  bio: string | null;
+  status: BulkImportRowStatus;
+  message?: string;
+  conflict_broker_id?: number | null;
+}
+
+interface BulkImportParseResult {
+  success: boolean;
+  file_error?: string;
+  file_error_code?: string;
+  headers?: string[];
+  rows?: string[][];
+}
+
+interface BulkImportValidationResult {
+  success: boolean;
+  file_error?: string;
+  file_error_code?: string;
+  entity: BulkImportEntity;
+  row_count: number;
+  will_create_count: number;
+  skipped_count: number;
+  error_count: number;
+  preview_rows: BulkImportRowPreview[];
+  breakdown: Record<string, number>;
+  normalized_clients?: NormalizedClientBulkRow[];
+  normalized_realtors?: NormalizedRealtorBulkRow[];
+}
+
+function isTruthyBulkEnvFlag(value: string | undefined): boolean {
+  const v = (value ?? "").toLowerCase().trim();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+function isFalsyBulkEnvFlag(value: string | undefined): boolean {
+  const v = (value ?? "").toLowerCase().trim();
+  return v === "0" || v === "false" || v === "no" || v === "off";
+}
+
+/**
+ * Runtime bulk-import gate (mirrors group conversations pattern).
+ * - Off when BULK_CSV_IMPORT_ENABLED=0
+ * - Off in production unless BULK_CSV_IMPORT_ENABLED=1 or BULK_CSV_IMPORT_ALLOW_PRODUCTION=1
+ * - On in dev/preview when unset
+ */
+function resolveBulkCsvImportEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const raw = env.BULK_CSV_IMPORT_ENABLED;
+  if (isFalsyBulkEnvFlag(raw)) return false;
+
+  const runtime = (env.VERCEL_ENV ?? env.NODE_ENV ?? "").toLowerCase();
+
+  if (runtime === "production") {
+    if (isTruthyBulkEnvFlag(raw)) return true;
+    return isTruthyBulkEnvFlag(env.BULK_CSV_IMPORT_ALLOW_PRODUCTION);
+  }
+
+  if (raw === undefined || raw.trim() === "") return true;
+  return isTruthyBulkEnvFlag(raw);
+}
+
+/** @param envValue explicit override for unit tests */
+function isBulkCsvImportEnabled(envValue?: string): boolean {
+  if (envValue !== undefined) {
+    if (isFalsyBulkEnvFlag(envValue)) return false;
+    if (envValue.trim() === "") return resolveBulkCsvImportEnabled();
+    return isTruthyBulkEnvFlag(envValue);
+  }
+  return resolveBulkCsvImportEnabled();
+}
+
+function sanitizeCsvCell(raw: string): string {
+  let v = raw.trim();
+  if (/^[=+\-@]/.test(v)) {
+    v = v.replace(/^[=+\-@]+/, "").trim();
+  }
+  return v;
+}
+
+function normalizeBulkImportPhoneLast10(
+  raw: string | null | undefined,
+): string | null {
+  if (!raw?.trim()) return null;
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length < 10) return null;
+  return digits.slice(-10);
+}
+
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function isValidDateIso(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const d = new Date(`${value}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return false;
+  if (d > new Date()) return false;
+  return true;
+}
+
+function normalizeUsState(raw: string | null): string | null {
+  if (!raw?.trim()) return null;
+  const t = raw.trim().toUpperCase();
+  if (t.length === 2) return t;
+  return null;
+}
+
+/** RFC 4180-ish CSV parser */
+function parseCsv(text: string): BulkImportParseResult {
+  const stripped = text.replace(/^\uFEFF/, "");
+  if (!stripped.trim()) {
+    return {
+      success: false,
+      file_error: "File is empty",
+      file_error_code: "EMPTY_FILE",
+    };
+  }
+
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < stripped.length; i++) {
+    const c = stripped[i];
+    const next = stripped[i + 1];
+
+    if (inQuotes) {
+      if (c === '"' && next === '"') {
+        field += '"';
+        i++;
+      } else if (c === '"') {
+        inQuotes = false;
+      } else {
+        field += c;
+      }
+      continue;
+    }
+
+    if (c === '"') {
+      inQuotes = true;
+    } else if (c === ",") {
+      row.push(sanitizeCsvCell(field));
+      field = "";
+    } else if (c === "\n" || (c === "\r" && next === "\n")) {
+      row.push(sanitizeCsvCell(field));
+      field = "";
+      if (row.some((cell) => cell.length > 0)) rows.push(row);
+      row = [];
+      if (c === "\r") i++;
+    } else if (c !== "\r") {
+      field += c;
+    }
+  }
+
+  row.push(sanitizeCsvCell(field));
+  if (row.some((cell) => cell.length > 0)) rows.push(row);
+
+  if (inQuotes) {
+    return {
+      success: false,
+      file_error: "Unclosed quote in CSV",
+      file_error_code: "INVALID_CSV",
+    };
+  }
+
+  if (!rows.length) {
+    return {
+      success: false,
+      file_error: "File is empty",
+      file_error_code: "EMPTY_FILE",
+    };
+  }
+
+  let startIdx = 0;
+  if (rows[0][0]?.startsWith("#")) startIdx = 1;
+  if (startIdx >= rows.length) {
+    return {
+      success: false,
+      file_error: "No header row found",
+      file_error_code: "MISSING_HEADER",
+    };
+  }
+
+  const headers = rows[startIdx].map((h) => h.trim().toLowerCase());
+  const dataRows = rows
+    .slice(startIdx + 1)
+    .filter((r) => r.some((c) => c.length > 0));
+
+  if (!dataRows.length) {
+    return {
+      success: false,
+      file_error: "No data rows in file",
+      file_error_code: "NO_DATA_ROWS",
+    };
+  }
+
+  const headerSet = new Set(headers);
+  if (headerSet.size !== headers.length) {
+    return {
+      success: false,
+      file_error: "Duplicate column names in header",
+      file_error_code: "DUPLICATE_HEADER",
+    };
+  }
+
+  for (const h of headers) {
+    if (BULK_FORBIDDEN_COLUMNS.has(h)) {
+      return {
+        success: false,
+        file_error: `Forbidden column: ${h}`,
+        file_error_code: "FORBIDDEN_COLUMN",
+      };
+    }
+  }
+
+  const expected = headers.includes("lead_source")
+    ? CLIENT_CSV_HEADERS
+    : REALTOR_CSV_HEADERS;
+  const expectedSet = new Set(expected as readonly string[]);
+
+  for (const h of headers) {
+    if (!expectedSet.has(h)) {
+      return {
+        success: false,
+        file_error: `Unknown column: ${h}`,
+        file_error_code: "UNKNOWN_COLUMN",
+      };
+    }
+  }
+
+  const required = headers.includes("lead_source")
+    ? (["first_name", "last_name", "lead_source"] as const)
+    : (["first_name", "last_name", "email", "partner_type"] as const);
+
+  for (const col of required) {
+    if (!headerSet.has(col)) {
+      return {
+        success: false,
+        file_error: `Missing required column: ${col}`,
+        file_error_code: "MISSING_COLUMN",
+      };
+    }
+  }
+
+  const parsedRows: string[][] = [];
+  for (let i = 0; i < dataRows.length; i++) {
+    const raw = dataRows[i];
+    if (raw.length !== headers.length) {
+      return {
+        success: false,
+        file_error: `Row ${i + startIdx + 2} has ${raw.length} columns, expected ${headers.length}`,
+        file_error_code: "COLUMN_COUNT_MISMATCH",
+      };
+    }
+    const obj: string[] = [];
+    for (let c = 0; c < headers.length; c++) {
+      obj.push(raw[c] ?? "");
+    }
+    parsedRows.push(obj);
+  }
+
+  return { success: true, headers, rows: parsedRows };
+}
+
+function rowToRecord(
+  headers: string[],
+  cells: string[],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((h, i) => {
+    out[h] = cells[i] ?? "";
+  });
+  return out;
+}
+
+function validateClientRows(
+  headers: string[],
+  dataRows: string[][],
+): BulkImportValidationResult {
+  const normalized: NormalizedClientBulkRow[] = [];
+  const preview_rows: BulkImportRowPreview[] = [];
+  const breakdown: Record<string, number> = {};
+  const emailsInFile = new Map<string, number>();
+  const phonesInFile = new Map<string, number>();
+
+  if (dataRows.length > BULK_IMPORT_MAX_CLIENT_ROWS) {
+    return {
+      success: false,
+      file_error: `Maximum ${BULK_IMPORT_MAX_CLIENT_ROWS} rows allowed`,
+      file_error_code: "ROW_LIMIT_EXCEEDED",
+      entity: "clients",
+      row_count: 0,
+      will_create_count: 0,
+      skipped_count: 0,
+      error_count: 0,
+      preview_rows: [],
+      breakdown: {},
+    };
+  }
+
+  for (let i = 0; i < dataRows.length; i++) {
+    const rowNumber = i + 2;
+    const rec = rowToRecord(headers, dataRows[i]);
+    const external_ref = rec.external_ref?.trim() || null;
+
+    let status: BulkImportRowStatus = "will_create";
+    let message: string | undefined;
+
+    const first_name = rec.first_name?.trim() ?? "";
+    const last_name = rec.last_name?.trim() ?? "";
+    const lead_source = rec.lead_source?.trim().toLowerCase() ?? "";
+
+    if (!first_name) {
+      status = "error";
+      message = "first_name is required";
+    } else if (!last_name) {
+      status = "error";
+      message = "last_name is required";
+    } else if (!lead_source) {
+      status = "error";
+      message = "lead_source is required";
+    } else if (lead_source === "public_wizard") {
+      status = "error";
+      message = "public_wizard is not allowed in bulk import";
+    } else if (!BULK_LEAD_SOURCES.includes(lead_source as BulkLeadSource)) {
+      status = "error";
+      message = `Invalid lead_source. Use: ${BULK_LEAD_SOURCES.join(", ")}`;
+    }
+
+    let email: string | null = rec.email?.trim().toLowerCase() || null;
+    if (status === "will_create" && email && !isValidEmail(email)) {
+      status = "error";
+      message = "Invalid email format";
+    }
+
+    const phoneNorm = normalizeBulkImportPhoneLast10(rec.phone);
+    const altNorm = normalizeBulkImportPhoneLast10(rec.alternate_phone);
+    if (status === "will_create" && rec.phone?.trim() && !phoneNorm) {
+      status = "error";
+      message = "Invalid phone number";
+    }
+    if (
+      status === "will_create" &&
+      phoneNorm &&
+      altNorm &&
+      phoneNorm === altNorm
+    ) {
+      status = "error";
+      message = "alternate_phone must differ from phone";
+    }
+
+    const dob = rec.date_of_birth?.trim() || null;
+    if (status === "will_create" && dob && !isValidDateIso(dob)) {
+      status = "error";
+      message = "date_of_birth must be YYYY-MM-DD and not in the future";
+    }
+
+    const citizenship = rec.citizenship_status?.trim().toLowerCase() || null;
+    if (
+      status === "will_create" &&
+      citizenship &&
+      !BULK_CITIZENSHIP_STATUSES.includes(
+        citizenship as (typeof BULK_CITIZENSHIP_STATUSES)[number],
+      )
+    ) {
+      status = "error";
+      message = `Invalid citizenship_status`;
+    }
+
+    const state = normalizeUsState(rec.address_state);
+    if (status === "will_create" && rec.address_state?.trim() && !state) {
+      status = "error";
+      message = "address_state must be 2-letter US code";
+    }
+
+    if (status === "will_create" && email) {
+      const prev = emailsInFile.get(email);
+      if (prev !== undefined) {
+        status = "error";
+        message = `Duplicate email in file (row ${prev})`;
+      } else emailsInFile.set(email, rowNumber);
+    }
+
+    if (status === "will_create" && phoneNorm) {
+      const prev = phonesInFile.get(phoneNorm);
+      if (prev !== undefined) {
+        status = "error";
+        message = `Duplicate phone in file (row ${prev})`;
+      } else phonesInFile.set(phoneNorm, rowNumber);
+    }
+
+    const row: NormalizedClientBulkRow = {
+      row_number: rowNumber,
+      external_ref,
+      first_name,
+      last_name,
+      middle_name: rec.middle_name?.trim() || null,
+      email,
+      phone: rec.phone?.trim() || null,
+      normalized_phone: phoneNorm,
+      alternate_phone: rec.alternate_phone?.trim() || null,
+      date_of_birth: dob,
+      address_street: rec.address_street?.trim() || null,
+      address_unit: rec.address_unit?.trim() || null,
+      address_city: rec.address_city?.trim() || null,
+      address_state: state,
+      address_zip: rec.address_zip?.trim() || null,
+      citizenship_status: citizenship,
+      lead_source,
+      status,
+      message,
+    };
+
+    normalized.push(row);
+    preview_rows.push({
+      row_number: rowNumber,
+      status,
+      message,
+      external_ref,
+      display_name: `${first_name} ${last_name}`.trim(),
+      email,
+      phone: rec.phone?.trim() || null,
+      badge: lead_source || null,
+    });
+
+    if (status === "will_create") {
+      breakdown[lead_source] = (breakdown[lead_source] ?? 0) + 1;
+    }
+  }
+
+  return summarizeValidation("clients", normalized, preview_rows, breakdown);
+}
+
+function validateRealtorRows(
+  headers: string[],
+  dataRows: string[][],
+): BulkImportValidationResult {
+  const normalized: NormalizedRealtorBulkRow[] = [];
+  const preview_rows: BulkImportRowPreview[] = [];
+  const breakdown: Record<string, number> = {};
+  const emailsInFile = new Map<string, number>();
+  const phonesInFile = new Map<string, number>();
+
+  if (dataRows.length > BULK_IMPORT_MAX_REALTOR_ROWS) {
+    return {
+      success: false,
+      file_error: `Maximum ${BULK_IMPORT_MAX_REALTOR_ROWS} rows allowed`,
+      file_error_code: "ROW_LIMIT_EXCEEDED",
+      entity: "realtors",
+      row_count: 0,
+      will_create_count: 0,
+      skipped_count: 0,
+      error_count: 0,
+      preview_rows: [],
+      breakdown: {},
+    };
+  }
+
+  for (let i = 0; i < dataRows.length; i++) {
+    const rowNumber = i + 2;
+    const rec = rowToRecord(headers, dataRows[i]);
+    const external_ref = rec.external_ref?.trim() || null;
+
+    let status: BulkImportRowStatus = "will_create";
+    let message: string | undefined;
+
+    const first_name = rec.first_name?.trim() ?? "";
+    const last_name = rec.last_name?.trim() ?? "";
+    const email = rec.email?.trim().toLowerCase() ?? "";
+    const partner_type = rec.partner_type
+      ?.trim()
+      .toLowerCase() as BulkPartnerType;
+
+    if (!first_name || first_name.length < 2) {
+      status = "error";
+      message = "first_name is required (min 2 characters)";
+    } else if (!last_name || last_name.length < 2) {
+      status = "error";
+      message = "last_name is required (min 2 characters)";
+    } else if (!email) {
+      status = "error";
+      message = "email is required";
+    } else if (!isValidEmail(email)) {
+      status = "error";
+      message = "Invalid email format";
+    } else if (!partner_type) {
+      status = "error";
+      message = "partner_type is required";
+    } else if (!BULK_PARTNER_TYPES.includes(partner_type)) {
+      status = "error";
+      message = `partner_type must be: ${BULK_PARTNER_TYPES.join(" | ")}`;
+    }
+
+    const phoneNorm = normalizeBulkImportPhoneLast10(rec.phone);
+    if (status === "will_create" && rec.phone?.trim() && !phoneNorm) {
+      status = "error";
+      message = "Invalid phone number";
+    }
+
+    let specializations: string[] | null = null;
+    if (status === "will_create" && rec.specializations?.trim()) {
+      const parts = rec.specializations
+        .split("|")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const invalid = parts.filter(
+        (p) =>
+          !BULK_SPECIALIZATIONS.includes(
+            p as (typeof BULK_SPECIALIZATIONS)[number],
+          ),
+      );
+      if (invalid.length) {
+        status = "error";
+        message = `Invalid specialization(s): ${invalid.join(", ")}`;
+      } else {
+        specializations = parts;
+      }
+    }
+
+    const bio = rec.bio?.trim() || null;
+    if (status === "will_create" && bio && bio.length > 500) {
+      status = "error";
+      message = "bio max 500 characters";
+    }
+
+    const office_state = normalizeUsState(rec.office_state);
+    if (status === "will_create" && rec.office_state?.trim() && !office_state) {
+      status = "error";
+      message = "office_state must be 2-letter US code";
+    }
+
+    if (status === "will_create") {
+      const prevEmail = emailsInFile.get(email);
+      if (prevEmail !== undefined) {
+        status = "error";
+        message = `Duplicate email in file (row ${prevEmail})`;
+      } else emailsInFile.set(email, rowNumber);
+    }
+
+    if (status === "will_create" && phoneNorm) {
+      const prevPhone = phonesInFile.get(phoneNorm);
+      if (prevPhone !== undefined) {
+        status = "error";
+        message = `Duplicate phone in file (row ${prevPhone})`;
+      } else phonesInFile.set(phoneNorm, rowNumber);
+    }
+
+    const role: "broker" | "admin" =
+      partner_type === "mortgage_banker" ? "admin" : "broker";
+
+    const row: NormalizedRealtorBulkRow = {
+      row_number: rowNumber,
+      external_ref,
+      first_name,
+      last_name,
+      email,
+      phone: rec.phone?.trim() || null,
+      partner_type: partner_type || "realtor",
+      role,
+      license_number: rec.license_number?.trim() || null,
+      specializations,
+      office_address: rec.office_address?.trim() || null,
+      office_city: rec.office_city?.trim() || null,
+      office_state: office_state,
+      office_zip: rec.office_zip?.trim() || null,
+      bio,
+      status,
+      message,
+    };
+
+    normalized.push(row);
+    preview_rows.push({
+      row_number: rowNumber,
+      status,
+      message,
+      external_ref,
+      display_name: `${first_name} ${last_name}`.trim(),
+      email,
+      phone: rec.phone?.trim() || null,
+      badge: partner_type || null,
+    });
+
+    if (status === "will_create" && partner_type) {
+      breakdown[partner_type] = (breakdown[partner_type] ?? 0) + 1;
+    }
+  }
+
+  return summarizeValidation("realtors", normalized, preview_rows, breakdown);
+}
+
+function summarizeValidation(
+  entity: BulkImportEntity,
+  normalized: NormalizedClientBulkRow[] | NormalizedRealtorBulkRow[],
+  preview_rows: BulkImportRowPreview[],
+  breakdown: Record<string, number>,
+): BulkImportValidationResult {
+  const will_create_count = preview_rows.filter(
+    (r) => r.status === "will_create",
+  ).length;
+  const skipped_count = preview_rows.filter(
+    (r) => r.status === "skipped",
+  ).length;
+  const error_count = preview_rows.filter((r) => r.status === "error").length;
+
+  const result: BulkImportValidationResult = {
+    success: true,
+    entity,
+    row_count: preview_rows.length,
+    will_create_count,
+    skipped_count,
+    error_count,
+    preview_rows,
+    breakdown,
+  };
+
+  if (entity === "clients") {
+    result.normalized_clients = normalized as NormalizedClientBulkRow[];
+  } else {
+    result.normalized_realtors = normalized as NormalizedRealtorBulkRow[];
+  }
+
+  return result;
+}
+
+/** Mortgage bankers may bulk-import clients/realtors but not create other MB accounts via CSV. */
+function applyBulkImportImporterRestrictions(
+  validation: BulkImportValidationResult,
+  importerRole: string,
+): BulkImportValidationResult {
+  if (importerRole === "platform_owner") return validation;
+  if (validation.entity !== "realtors" || !validation.normalized_realtors) {
+    return validation;
+  }
+
+  const normalized = validation.normalized_realtors.map((row) => {
+    if (row.partner_type === "mortgage_banker" || row.role === "admin") {
+      return {
+        ...row,
+        status: "error" as const,
+        message: "Mortgage bankers can only bulk-import realtor partners",
+      };
+    }
+    return row;
+  });
+
+  const preview_rows = validation.preview_rows.map((pr) => {
+    const nr = normalized.find((r) => r.row_number === pr.row_number);
+    if (!nr || nr.status !== "error") return pr;
+    return {
+      ...pr,
+      status: "error" as const,
+      message: nr.message,
+    };
+  });
+
+  return summarizeValidation(
+    "realtors",
+    normalized,
+    preview_rows,
+    validation.breakdown,
+  );
+}
+
+function parseAndValidateBulkCsv(
+  text: string,
+  entity: BulkImportEntity,
+): BulkImportValidationResult {
+  const parsed = parseCsv(text);
+  if (!parsed.success || !parsed.headers || !parsed.rows) {
+    return {
+      success: false,
+      file_error: parsed.file_error,
+      file_error_code: parsed.file_error_code,
+      entity,
+      row_count: 0,
+      will_create_count: 0,
+      skipped_count: 0,
+      error_count: 0,
+      preview_rows: [],
+      breakdown: {},
+    };
+  }
+
+  const isClientFile = parsed.headers.includes("lead_source");
+  if (entity === "clients" && !isClientFile) {
+    return {
+      success: false,
+      file_error:
+        "File does not look like a client import (missing lead_source column)",
+      file_error_code: "WRONG_TEMPLATE",
+      entity,
+      row_count: 0,
+      will_create_count: 0,
+      skipped_count: 0,
+      error_count: 0,
+      preview_rows: [],
+      breakdown: {},
+    };
+  }
+  if (entity === "realtors" && isClientFile) {
+    return {
+      success: false,
+      file_error: "File does not look like a realtor import (wrong columns)",
+      file_error_code: "WRONG_TEMPLATE",
+      entity,
+      row_count: 0,
+      will_create_count: 0,
+      skipped_count: 0,
+      error_count: 0,
+      preview_rows: [],
+      breakdown: {},
+    };
+  }
+
+  return entity === "clients"
+    ? validateClientRows(parsed.headers, parsed.rows)
+    : validateRealtorRows(parsed.headers, parsed.rows);
+}
+
+function buildClientTemplateCsv(): string {
+  return [
+    CLIENT_CSV_HEADERS.join(","),
+    "Maria,Flores,,maria.flores@example.com,(562) 555-0100,,1985-03-15,123 Main St,,Whittier,CA,90601,us_citizen,past_client,CRM-1001",
+    "John,Reyes,,,(909) 555-0199,,,,,,,,,realtor,CRM-1002",
+  ].join("\n");
+}
+
+function buildRealtorTemplateCsv(): string {
+  return [
+    REALTOR_CSV_HEADERS.join(","),
+    'Jane,Agent,jane.agent@example.com,(714) 555-0200,realtor,DRE1234567,"FHA Loans|First-Time Home Buyers",100 Main St,Whittier,CA,90603,Top LA agent,REALTOR-501',
+    "Alex,Banker,alex.banker@example.com,(562) 555-0300,mortgage_banker,NMLS987654,,123 Main St,Los Angeles,CA,90001,Senior LO,MB-102",
+  ].join("\n");
+}
+
+function filterPreviewRows(
+  rows: BulkImportRowPreview[],
+  filter: BulkImportTableFilter,
+  search: string,
+): BulkImportRowPreview[] {
+  let out = rows;
+  if (filter === "ready") out = out.filter((r) => r.status === "will_create");
+  else if (filter === "skipped")
+    out = out.filter((r) => r.status === "skipped");
+  else if (filter === "error") out = out.filter((r) => r.status === "error");
+
+  const q = search.trim().toLowerCase();
+  if (!q) return out;
+
+  return out.filter((r) => {
+    const hay = [
+      r.display_name,
+      r.email,
+      r.phone,
+      r.external_ref,
+      r.badge,
+      r.message,
+      String(r.row_number),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return hay.includes(q);
+  });
+}
+
+function csvEscapeCell(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  const s = String(value);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function buildPreviewReportCsv(rows: BulkImportRowPreview[]): string {
+  const headers = [
+    "row_number",
+    "status",
+    "display_name",
+    "email",
+    "phone",
+    "badge",
+    "message",
+    "external_ref",
+    "conflict_entity_id",
+  ];
+  const lines = [
+    headers.join(","),
+    ...rows
+      .filter((r) => r.status !== "will_create")
+      .map((r) =>
+        [
+          r.row_number,
+          r.status,
+          r.display_name,
+          r.email ?? "",
+          r.phone ?? "",
+          r.badge ?? "",
+          r.message ?? "",
+          r.external_ref ?? "",
+          r.conflict_entity_id ?? "",
+        ]
+          .map(csvEscapeCell)
+          .join(","),
+      ),
+  ];
+  return lines.join("\n");
+}
+
+interface BulkImportResultCsvRow {
+  row_number: number;
+  external_ref?: string | null;
+  status: string;
+  entity_id?: number | null;
+  owner_broker_id?: number | null;
+  message?: string;
+}
+
+function buildCommitResultsCsv(rows: BulkImportResultCsvRow[]): string {
+  const headers = [
+    "row_number",
+    "external_ref",
+    "status",
+    "entity_id",
+    "owner_broker_id",
+    "message",
+  ];
+  const lines = [
+    headers.join(","),
+    ...rows.map((r) =>
+      [
+        r.row_number,
+        r.external_ref ?? "",
+        r.status,
+        r.entity_id ?? "",
+        r.owner_broker_id ?? "",
+        r.message ?? "",
+      ]
+        .map(csvEscapeCell)
+        .join(","),
+    ),
+  ];
+  return lines.join("\n");
+}
+
+function downloadTextFile(
+  filename: string,
+  content: string,
+  mime = "text/csv;charset=utf-8",
+): void {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/** Inlined from shared/api.ts — do not import shared/api.js (pulls per-owner-crm at runtime). */
+type MeetingType = "phone" | "video" | "teams" | "office";
+
+interface BulkImportRouteDeps {
+  pool: Pool;
+  tenantId: number;
+  verifyBrokerSession: RequestHandler;
+  createAuditLog: (params: {
+    actorType: "user" | "broker";
+    actorId: number;
+    action: string;
+    entityType?: string;
+    entityId?: number;
+    changes?: unknown;
+    status?: "success" | "failure" | "warning";
+  }) => Promise<void>;
+  sendClientManualWelcomeEmail?: (
+    email: string,
+    firstName: string,
+    lastName: string,
+    brokerName: string,
+  ) => Promise<void>;
+  sendBrokerManualWelcomeEmail?: (
+    email: string,
+    firstName: string,
+    lastName: string,
+    role: string,
+  ) => Promise<void>;
+}
+
+const bulkImportUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: BULK_IMPORT_MAX_FILE_BYTES },
+});
+
+const requireBulkImportEnabled: RequestHandler = (_req, res, next) => {
+  if (!resolveBulkCsvImportEnabled()) {
+    return res.status(404).json({
+      success: false,
+      message: "Bulk CSV import is not enabled",
+    });
+  }
+  next();
+};
+
+const requireBulkImportAccess: RequestHandler = (req, res, next) => {
+  const brokerRole = (req as express.Request & { brokerRole?: string })
+    .brokerRole;
+  if (brokerRole !== "admin") {
+    return res.status(403).json({
+      success: false,
+      message: "Only admins can bulk import",
+    });
+  }
+  next();
+};
+
+async function cleanupExpiredBulkImportJobs(
+  pool: Pool,
+  tenantId: number,
+): Promise<void> {
+  try {
+    await pool.query(
+      `UPDATE bulk_import_jobs SET status = 'expired'
+       WHERE tenant_id = ? AND status = 'validated' AND expires_at < NOW()
+       LIMIT 200`,
+      [tenantId],
+    );
+    await pool.query(
+      `DELETE FROM bulk_import_jobs
+       WHERE tenant_id = ? AND status IN ('expired', 'failed')
+         AND expires_at < DATE_SUB(NOW(), INTERVAL 7 DAY)
+       LIMIT 200`,
+      [tenantId],
+    );
+  } catch {
+    // non-blocking housekeeping
+  }
+}
+
+const BULK_PREFLIGHT_IN_CHUNK = 100;
+
+async function loadClientEmailConflicts(
+  pool: Pool,
+  tenantId: number,
+  emails: string[],
+  scope: ClientEmailConflictScope = "tenant",
+  ownerBrokerId?: number | null,
+): Promise<Map<string, RowDataPacket>> {
+  const map = new Map<string, RowDataPacket>();
+  for (let i = 0; i < emails.length; i += BULK_PREFLIGHT_IN_CHUNK) {
+    const chunk = emails.slice(i, i + BULK_PREFLIGHT_IN_CHUNK);
+    if (!chunk.length) continue;
+    const ownerClause =
+      scope === "per_owner" && ownerBrokerId != null
+        ? " AND assigned_broker_id = ?"
+        : "";
+    const params: (string | number)[] = [tenantId, ...chunk];
+    if (ownerClause) params.push(ownerBrokerId!);
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, first_name, last_name, email FROM clients
+       WHERE tenant_id = ? AND email IN (${chunk.map(() => "?").join(",")})${ownerClause}`,
+      params,
+    );
+    for (const row of rows) {
+      map.set(String(row.email).toLowerCase(), row);
+    }
+  }
+  return map;
+}
+
+async function loadClientPhoneConflicts(
+  pool: Pool,
+  tenantId: number,
+  phones: string[],
+  scope: ClientPhoneConflictScope = "tenant",
+  ownerBrokerId?: number | null,
+): Promise<Map<string, RowDataPacket>> {
+  const map = new Map<string, RowDataPacket>();
+  for (let i = 0; i < phones.length; i += BULK_PREFLIGHT_IN_CHUNK) {
+    const chunk = phones.slice(i, i + BULK_PREFLIGHT_IN_CHUNK);
+    if (!chunk.length) continue;
+    const ownerClause =
+      scope === "per_owner" && ownerBrokerId != null
+        ? " AND assigned_broker_id = ?"
+        : "";
+    const params: (string | number)[] = [tenantId, ...chunk];
+    if (ownerClause) params.push(ownerBrokerId!);
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, first_name, last_name, normalized_phone FROM clients
+       WHERE tenant_id = ? AND normalized_phone IN (${chunk.map(() => "?").join(",")})
+         AND phone IS NOT NULL${ownerClause}`,
+      params,
+    );
+    for (const row of rows) {
+      map.set(String(row.normalized_phone), row);
+    }
+  }
+  return map;
+}
+
+async function loadBrokerEmailConflicts(
+  pool: Pool,
+  tenantId: number,
+  emails: string[],
+  ownerBrokerId?: number | null,
+): Promise<Map<string, RowDataPacket>> {
+  const map = new Map<string, RowDataPacket>();
+  for (let i = 0; i < emails.length; i += BULK_PREFLIGHT_IN_CHUNK) {
+    const chunk = emails.slice(i, i + BULK_PREFLIGHT_IN_CHUNK);
+    if (!chunk.length) continue;
+    const ownerClause =
+      ownerBrokerId != null
+        ? " AND created_by_broker_id = ? AND role = 'broker'"
+        : "";
+    const params: (string | number)[] = [tenantId, ...chunk];
+    if (ownerClause) params.push(ownerBrokerId!);
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, email FROM brokers
+       WHERE tenant_id = ? AND email IN (${chunk.map(() => "?").join(",")})${ownerClause}`,
+      params,
+    );
+    for (const row of rows) {
+      map.set(String(row.email).toLowerCase(), row);
+    }
+  }
+  return map;
+}
+
+async function loadBrokerPhoneConflicts(
+  pool: Pool,
+  tenantId: number,
+  last10List: string[],
+  ownerBrokerId?: number | null,
+): Promise<Map<string, RowDataPacket>> {
+  const map = new Map<string, RowDataPacket>();
+  for (let i = 0; i < last10List.length; i += 20) {
+    const chunk = last10List.slice(i, i + 20);
+    if (!chunk.length) continue;
+    const ownerClause =
+      ownerBrokerId != null
+        ? " AND created_by_broker_id = ? AND role = 'broker'"
+        : "";
+    const params: (string | number)[] = [tenantId, ...chunk];
+    if (ownerClause) params.push(ownerBrokerId!);
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, phone, normalized_phone FROM brokers
+       WHERE tenant_id = ? AND normalized_phone IN (${chunk.map(() => "?").join(",")})${ownerClause}`,
+      params,
+    );
+    for (const row of rows) {
+      const digits =
+        String(row.normalized_phone ?? "")
+          .replace(/\D/g, "")
+          .slice(-10) ||
+        String(row.phone ?? "")
+          .replace(/\D/g, "")
+          .slice(-10);
+      if (digits) map.set(digits, row);
+    }
+  }
+  return map;
+}
+
+async function applyClientDbPreflight(
+  pool: Pool,
+  tenantId: number,
+  validation: BulkImportValidationResult,
+  importerBrokerId?: number | null,
+): Promise<BulkImportValidationResult> {
+  if (!validation.normalized_clients) return validation;
+
+  const flags = await getPerOwnerCrmFlags(
+    pool,
+    tenantId,
+    importerBrokerId ?? null,
+  );
+  const phoneScope = resolveClientPhoneConflictScope(
+    flags,
+    importerBrokerId ?? null,
+  );
+  const emailScope = resolveClientEmailConflictScope(
+    flags,
+    importerBrokerId ?? null,
+  );
+
+  const rows = validation.normalized_clients;
+  const ready = rows.filter((r) => r.status === "will_create");
+  const emails = [
+    ...new Set(
+      ready.map((r) => r.email).filter((e): e is string => Boolean(e)),
+    ),
+  ];
+  const phones = [
+    ...new Set(
+      ready
+        .map((r) => r.normalized_phone)
+        .filter((p): p is string => Boolean(p)),
+    ),
+  ];
+
+  const [emailMap, phoneMap] = await Promise.all([
+    loadClientEmailConflicts(
+      pool,
+      tenantId,
+      emails,
+      emailScope,
+      importerBrokerId,
+    ),
+    loadClientPhoneConflicts(
+      pool,
+      tenantId,
+      phones,
+      phoneScope,
+      importerBrokerId,
+    ),
+  ]);
+
+  for (const row of rows) {
+    if (row.status !== "will_create") continue;
+
+    if (row.email) {
+      const existing = emailMap.get(row.email.toLowerCase());
+      if (existing) {
+        row.status = "skipped";
+        row.message = `Email already exists (client #${existing.id})`;
+        row.conflict_client_id = existing.id as number;
+        continue;
+      }
+    }
+
+    if (row.normalized_phone) {
+      const phoneRow = phoneMap.get(row.normalized_phone);
+      if (phoneRow) {
+        row.status = "skipped";
+        row.message = `Phone already exists (client #${phoneRow.id})`;
+        row.conflict_client_id = phoneRow.id as number;
+      }
+    }
+  }
+
+  return rebuildClientValidation(validation, rows);
+}
+
+async function applyRealtorDbPreflight(
+  pool: Pool,
+  tenantId: number,
+  validation: BulkImportValidationResult,
+  importerBrokerId?: number | null,
+): Promise<BulkImportValidationResult> {
+  if (!validation.normalized_realtors) return validation;
+
+  const flags = await getPerOwnerCrmFlags(
+    pool,
+    tenantId,
+    importerBrokerId ?? null,
+  );
+  const ownerScope =
+    flags.activeForBroker && importerBrokerId != null ? importerBrokerId : null;
+
+  const rows = validation.normalized_realtors;
+  const ready = rows.filter((r) => r.status === "will_create");
+  const emails = [...new Set(ready.map((r) => r.email).filter(Boolean))];
+  const phoneLast10 = [
+    ...new Set(
+      ready
+        .map((r) => r.phone?.replace(/\D/g, "").slice(-10) ?? "")
+        .filter((d) => d.length === 10),
+    ),
+  ];
+
+  const [emailMap, phoneMap] = await Promise.all([
+    loadBrokerEmailConflicts(pool, tenantId, emails, ownerScope),
+    loadBrokerPhoneConflicts(pool, tenantId, phoneLast10, ownerScope),
+  ]);
+
+  for (const row of rows) {
+    if (row.status !== "will_create") continue;
+
+    const existing = emailMap.get(row.email.toLowerCase());
+    if (existing) {
+      row.status = "skipped";
+      row.message = `Email already exists (broker #${existing.id})`;
+      row.conflict_broker_id = existing.id as number;
+      continue;
+    }
+
+    const last10 = row.phone?.replace(/\D/g, "").slice(-10);
+    if (last10) {
+      const phoneRow = phoneMap.get(last10);
+      if (phoneRow) {
+        row.status = "skipped";
+        row.message = `Phone already exists (broker #${phoneRow.id})`;
+        row.conflict_broker_id = phoneRow.id as number;
+      }
+    }
+  }
+
+  return rebuildRealtorValidation(validation, rows);
+}
+
+function rebuildClientValidation(
+  validation: BulkImportValidationResult,
+  rows: NormalizedClientBulkRow[],
+): BulkImportValidationResult {
+  const preview_rows = rows.map((row) => ({
+    row_number: row.row_number,
+    status: row.status,
+    message: row.message,
+    external_ref: row.external_ref,
+    display_name: `${row.first_name} ${row.last_name}`.trim(),
+    email: row.email,
+    phone: row.phone,
+    badge: row.lead_source,
+    conflict_entity_id: row.conflict_client_id ?? null,
+  }));
+
+  const breakdown: Record<string, number> = {};
+  for (const row of rows) {
+    if (row.status === "will_create") {
+      breakdown[row.lead_source] = (breakdown[row.lead_source] ?? 0) + 1;
+    }
+  }
+
+  const will_create_count = preview_rows.filter(
+    (r) => r.status === "will_create",
+  ).length;
+  const skipped_count = preview_rows.filter(
+    (r) => r.status === "skipped",
+  ).length;
+  const error_count = preview_rows.filter((r) => r.status === "error").length;
+
+  return {
+    ...validation,
+    normalized_clients: rows,
+    preview_rows,
+    breakdown,
+    will_create_count,
+    skipped_count,
+    error_count,
+  };
+}
+
+function rebuildRealtorValidation(
+  validation: BulkImportValidationResult,
+  rows: NormalizedRealtorBulkRow[],
+): BulkImportValidationResult {
+  const preview_rows = rows.map((row) => ({
+    row_number: row.row_number,
+    status: row.status,
+    message: row.message,
+    external_ref: row.external_ref,
+    display_name: `${row.first_name} ${row.last_name}`.trim(),
+    email: row.email,
+    phone: row.phone,
+    badge: row.partner_type,
+    conflict_entity_id: row.conflict_broker_id ?? null,
+  }));
+
+  const breakdown: Record<string, number> = {};
+  for (const row of rows) {
+    if (row.status === "will_create") {
+      breakdown[row.partner_type] = (breakdown[row.partner_type] ?? 0) + 1;
+    }
+  }
+
+  const will_create_count = preview_rows.filter(
+    (r) => r.status === "will_create",
+  ).length;
+  const skipped_count = preview_rows.filter(
+    (r) => r.status === "skipped",
+  ).length;
+  const error_count = preview_rows.filter((r) => r.status === "error").length;
+
+  return {
+    ...validation,
+    normalized_realtors: rows,
+    preview_rows,
+    breakdown,
+    will_create_count,
+    skipped_count,
+    error_count,
+  };
+}
+
+function validationToPreviewPayload(validation: BulkImportValidationResult) {
+  return {
+    entity: validation.entity,
+    row_count: validation.row_count,
+    will_create_count: validation.will_create_count,
+    skipped_count: validation.skipped_count,
+    error_count: validation.error_count,
+    preview_rows: validation.preview_rows,
+    breakdown: validation.breakdown,
+    normalized_clients: validation.normalized_clients,
+    normalized_realtors: validation.normalized_realtors,
+  };
+}
+
+async function linkClientPhoneThreads(
+  pool: Pool,
+  tenantId: number,
+  clientId: number,
+  brokerId: number,
+  phone: string | null,
+  email: string | null,
+  clientFullName: string,
+): Promise<void> {
+  if (!phone) return;
+  const lastTen = phone.replace(/\D/g, "").slice(-10);
+  if (lastTen.length !== 10) return;
+
+  await pool.query(
+    `UPDATE conversation_threads
+     SET client_id    = COALESCE(client_id, ?),
+         client_name  = COALESCE(client_name, ?),
+         client_email = COALESCE(client_email, ?),
+         broker_id    = COALESCE(broker_id, ?),
+         updated_at   = NOW()
+     WHERE tenant_id = ?
+       AND client_id IS NULL
+       AND (
+         (conversation_id LIKE 'conv_phone_%'
+          AND RIGHT(REGEXP_REPLACE(conversation_id, '[^0-9]', ''), 10) = ?)
+         OR
+         (client_phone IS NOT NULL
+          AND RIGHT(REGEXP_REPLACE(client_phone, '[^0-9]', ''), 10) = ?)
+       )`,
+    [clientId, clientFullName, email, brokerId, tenantId, lastTen, lastTen],
+  );
+}
+
+function registerBulkImportRoutes(
+  expressApp: express.Application,
+  deps: BulkImportRouteDeps,
+): void {
+  const bulkImportAuth = [
+    deps.verifyBrokerSession,
+    requireBulkImportEnabled,
+    requireBulkImportAccess,
+  ];
+
+  expressApp.get(
+    "/api/admin/bulk-import/templates/clients.csv",
+    ...bulkImportAuth,
+    (_req, res) => {
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        'attachment; filename="tmp_clients_import_template.csv"',
+      );
+      res.send(buildClientTemplateCsv());
+    },
+  );
+
+  expressApp.get(
+    "/api/admin/bulk-import/templates/realtors.csv",
+    ...bulkImportAuth,
+    (_req, res) => {
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        'attachment; filename="tmp_realtors_import_template.csv"',
+      );
+      res.send(buildRealtorTemplateCsv());
+    },
+  );
+
+  expressApp.post(
+    "/api/admin/bulk-import/validate",
+    ...bulkImportAuth,
+    bulkImportUpload.single("file"),
+    async (req, res) => {
+      try {
+        await cleanupExpiredBulkImportJobs(deps.pool, deps.tenantId);
+
+        const brokerId = (req as express.Request & { brokerId?: number })
+          .brokerId!;
+        const brokerRole = (req as express.Request & { brokerRole?: string })
+          .brokerRole!;
+        const entity = (req.body?.entity ?? "") as BulkImportEntity;
+        if (entity !== "clients" && entity !== "realtors") {
+          return res.status(400).json({
+            success: false,
+            message: "entity must be clients or realtors",
+          });
+        }
+
+        const file = req.file;
+        if (!file?.buffer?.length) {
+          return res.status(400).json({
+            success: false,
+            message: "CSV file is required",
+          });
+        }
+
+        const text = file.buffer.toString("utf8");
+        let validation = parseAndValidateBulkCsv(text, entity);
+        if (!validation.success) {
+          return res.status(400).json({
+            success: false,
+            file_error: validation.file_error,
+            file_error_code: validation.file_error_code,
+            message: validation.file_error,
+          });
+        }
+
+        validation =
+          entity === "clients"
+            ? await applyClientDbPreflight(
+                deps.pool,
+                deps.tenantId,
+                validation,
+                brokerId,
+              )
+            : await applyRealtorDbPreflight(
+                deps.pool,
+                deps.tenantId,
+                validation,
+                brokerId,
+              );
+
+        validation = applyBulkImportImporterRestrictions(
+          validation,
+          brokerRole,
+        );
+
+        const fileSha = crypto
+          .createHash("sha256")
+          .update(file.buffer)
+          .digest("hex");
+        const expiresAt = new Date(Date.now() + BULK_IMPORT_JOB_TTL_MS);
+        const previewPayload = validationToPreviewPayload(validation);
+
+        const [ins] = await deps.pool.query<ResultSetHeader>(
+          `INSERT INTO bulk_import_jobs
+             (tenant_id, entity, uploaded_by_broker_id, file_name, file_sha256,
+              status, options_json, preview_json, row_count, created_count, skipped_count,
+              error_count, expires_at)
+           VALUES (?, ?, ?, ?, ?, 'validated', ?, ?, ?, 0, ?, ?, ?)`,
+          [
+            deps.tenantId,
+            entity,
+            brokerId,
+            file.originalname?.slice(0, 255) || "import.csv",
+            fileSha,
+            JSON.stringify({
+              link_phone_threads: true,
+              send_welcome_emails: false,
+            }),
+            JSON.stringify(previewPayload),
+            validation.row_count,
+            validation.skipped_count,
+            validation.error_count,
+            expiresAt,
+          ],
+        );
+
+        return res.json({
+          success: true,
+          job_id: ins.insertId,
+          entity,
+          file_name: file.originalname,
+          row_count: validation.row_count,
+          will_create_count: validation.will_create_count,
+          skipped_count: validation.skipped_count,
+          error_count: validation.error_count,
+          preview_rows: validation.preview_rows,
+          breakdown: validation.breakdown,
+          expires_at: expiresAt.toISOString(),
+        });
+      } catch (err) {
+        console.error("[bulk-import] validate error:", err);
+        return res.status(500).json({
+          success: false,
+          message: err instanceof Error ? err.message : "Validation failed",
+        });
+      }
+    },
+  );
+
+  expressApp.get(
+    "/api/admin/bulk-import/:jobId",
+    ...bulkImportAuth,
+    async (req, res) => {
+      try {
+        const brokerId = (req as express.Request & { brokerId?: number })
+          .brokerId!;
+        const jobId = parseInt(String(req.params.jobId), 10);
+        if (Number.isNaN(jobId)) {
+          return res
+            .status(400)
+            .json({ success: false, message: "Invalid job id" });
+        }
+
+        const [rows] = await deps.pool.query<RowDataPacket[]>(
+          `SELECT * FROM bulk_import_jobs
+           WHERE id = ? AND tenant_id = ? AND uploaded_by_broker_id = ?
+           LIMIT 1`,
+          [jobId, deps.tenantId, brokerId],
+        );
+        if (!rows.length) {
+          return res
+            .status(404)
+            .json({ success: false, message: "Job not found" });
+        }
+
+        const job = rows[0];
+        const preview = job.preview_json
+          ? typeof job.preview_json === "string"
+            ? JSON.parse(job.preview_json)
+            : job.preview_json
+          : {};
+        const results = job.result_json
+          ? typeof job.result_json === "string"
+            ? JSON.parse(job.result_json)
+            : job.result_json
+          : null;
+
+        return res.json({
+          success: true,
+          job: {
+            id: job.id,
+            entity: job.entity,
+            status: job.status,
+            file_name: job.file_name,
+            row_count: job.row_count,
+            created_count: job.created_count,
+            skipped_count: job.skipped_count,
+            error_count: job.error_count,
+            expires_at: job.expires_at,
+            committed_at: job.committed_at,
+            preview_rows: preview.preview_rows,
+            results: results?.results,
+          },
+        });
+      } catch (err) {
+        console.error("[bulk-import] get job error:", err);
+        return res
+          .status(500)
+          .json({ success: false, message: "Failed to load job" });
+      }
+    },
+  );
+
+  expressApp.post(
+    "/api/admin/bulk-import/:jobId/commit",
+    ...bulkImportAuth,
+    async (req, res) => {
+      try {
+        const brokerId = (req as express.Request & { brokerId?: number })
+          .brokerId!;
+        const brokerRole = (req as express.Request & { brokerRole?: string })
+          .brokerRole!;
+        const jobId = parseInt(String(req.params.jobId), 10);
+        if (Number.isNaN(jobId)) {
+          return res
+            .status(400)
+            .json({ success: false, message: "Invalid job id" });
+        }
+
+        const linkPhoneThreads = req.body?.link_phone_threads !== false;
+        const sendWelcomeEmails = req.body?.send_welcome_emails === true;
+
+        const [jobRows] = await deps.pool.query<RowDataPacket[]>(
+          `SELECT * FROM bulk_import_jobs
+           WHERE id = ? AND tenant_id = ? AND uploaded_by_broker_id = ?
+           LIMIT 1`,
+          [jobId, deps.tenantId, brokerId],
+        );
+        if (!jobRows.length) {
+          return res
+            .status(404)
+            .json({ success: false, message: "Job not found" });
+        }
+
+        const job = jobRows[0];
+        if (job.status === "committed") {
+          return res.status(409).json({
+            success: false,
+            message: "Job already committed",
+          });
+        }
+        if (job.status === "processing") {
+          return res.status(409).json({
+            success: false,
+            message: "Import is already in progress for this job",
+          });
+        }
+        if (new Date(job.expires_at as string) < new Date()) {
+          await deps.pool.query(
+            `UPDATE bulk_import_jobs SET status = 'expired' WHERE id = ?`,
+            [jobId],
+          );
+          return res.status(410).json({
+            success: false,
+            message: "Import job expired — please re-upload",
+          });
+        }
+
+        const [claim] = await deps.pool.query<ResultSetHeader>(
+          `UPDATE bulk_import_jobs SET status = 'processing'
+           WHERE id = ? AND tenant_id = ? AND uploaded_by_broker_id = ? AND status = 'validated'`,
+          [jobId, deps.tenantId, brokerId],
+        );
+        if (claim.affectedRows === 0) {
+          return res.status(409).json({
+            success: false,
+            message: "Job is no longer available to commit",
+          });
+        }
+
+        try {
+          const preview = job.preview_json
+            ? typeof job.preview_json === "string"
+              ? JSON.parse(job.preview_json)
+              : job.preview_json
+            : null;
+          if (!preview) {
+            await deps.pool.query(
+              `UPDATE bulk_import_jobs SET status = 'failed' WHERE id = ? AND status = 'processing'`,
+              [jobId],
+            );
+            return res
+              .status(400)
+              .json({ success: false, message: "Invalid job data" });
+          }
+
+          const entity = job.entity as BulkImportEntity;
+          const results: Array<{
+            row_number: number;
+            external_ref?: string | null;
+            status: "created" | "skipped" | "error";
+            entity_id?: number | null;
+            owner_broker_id?: number | null;
+            message?: string;
+          }> = [];
+
+          let createdCount = 0;
+          let skippedCount = 0;
+          let errorCount = 0;
+
+          const [[importer]] = await deps.pool.query<RowDataPacket[]>(
+            `SELECT first_name, last_name FROM brokers WHERE id = ? AND tenant_id = ? LIMIT 1`,
+            [brokerId, deps.tenantId],
+          );
+          const brokerFullName = importer
+            ? `${importer.first_name} ${importer.last_name}`.trim()
+            : "Your Loan Officer";
+
+          if (entity === "clients" && preview.normalized_clients) {
+            const rows =
+              preview.normalized_clients as NormalizedClientBulkRow[];
+            const willCreate = rows.filter((r) => r.status === "will_create");
+            const crmFlags = await getPerOwnerCrmFlags(
+              deps.pool,
+              deps.tenantId,
+              brokerId,
+            );
+            const phoneScope = resolveClientPhoneConflictScope(
+              crmFlags,
+              brokerId,
+            );
+            const [clientEmailDups, clientPhoneDups] = await Promise.all([
+              loadClientEmailConflicts(deps.pool, deps.tenantId, [
+                ...new Set(
+                  willCreate
+                    .map((r) => r.email)
+                    .filter((e): e is string => Boolean(e)),
+                ),
+              ]),
+              loadClientPhoneConflicts(
+                deps.pool,
+                deps.tenantId,
+                [
+                  ...new Set(
+                    willCreate
+                      .map((r) => r.normalized_phone)
+                      .filter((p): p is string => Boolean(p)),
+                  ),
+                ],
+                phoneScope,
+                brokerId,
+              ),
+            ]);
+
+            for (const row of rows) {
+              if (row.status === "error") {
+                errorCount++;
+                results.push({
+                  row_number: row.row_number,
+                  external_ref: row.external_ref,
+                  status: "error",
+                  message: row.message,
+                });
+                continue;
+              }
+              if (row.status === "skipped") {
+                skippedCount++;
+                results.push({
+                  row_number: row.row_number,
+                  external_ref: row.external_ref,
+                  status: "skipped",
+                  entity_id: row.conflict_client_id ?? null,
+                  message: row.message,
+                });
+                continue;
+              }
+
+              try {
+                const trimmedEmail = row.email;
+                if (trimmedEmail) {
+                  const dup = clientEmailDups.get(trimmedEmail.toLowerCase());
+                  if (dup) {
+                    skippedCount++;
+                    results.push({
+                      row_number: row.row_number,
+                      external_ref: row.external_ref,
+                      status: "skipped",
+                      entity_id: dup.id as number,
+                      message: "Email already exists",
+                    });
+                    continue;
+                  }
+                }
+
+                if (row.normalized_phone) {
+                  const dupPhone = clientPhoneDups.get(row.normalized_phone);
+                  if (dupPhone) {
+                    skippedCount++;
+                    results.push({
+                      row_number: row.row_number,
+                      external_ref: row.external_ref,
+                      status: "skipped",
+                      entity_id: dupPhone.id as number,
+                      message: "Phone already exists",
+                    });
+                    continue;
+                  }
+                }
+
+                const finalEmail =
+                  trimmedEmail ??
+                  `noemail_job${jobId}_r${row.row_number}_${crypto.randomBytes(4).toString("hex")}@noemail.placeholder`;
+
+                const [ins] = await deps.pool.query<ResultSetHeader>(
+                  `INSERT INTO clients
+                   (tenant_id, first_name, middle_name, last_name, email, phone, normalized_phone,
+                    alternate_phone, date_of_birth, address_street, address_unit, address_city,
+                    address_state, address_zip, citizenship_status, status, assigned_broker_id,
+                    income_type, source)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 'W-2', ?)`,
+                  [
+                    deps.tenantId,
+                    row.first_name,
+                    row.middle_name,
+                    row.last_name,
+                    finalEmail,
+                    row.phone,
+                    row.normalized_phone,
+                    row.alternate_phone,
+                    row.date_of_birth,
+                    row.address_street,
+                    row.address_unit,
+                    row.address_city,
+                    row.address_state,
+                    row.address_zip,
+                    row.citizenship_status,
+                    brokerId,
+                    row.lead_source,
+                  ],
+                );
+
+                const newId = ins.insertId;
+                createdCount++;
+                results.push({
+                  row_number: row.row_number,
+                  external_ref: row.external_ref,
+                  status: "created",
+                  entity_id: newId,
+                  owner_broker_id: brokerId,
+                });
+
+                const clientFullName =
+                  `${row.first_name} ${row.last_name}`.trim();
+                if (linkPhoneThreads) {
+                  await linkClientPhoneThreads(
+                    deps.pool,
+                    deps.tenantId,
+                    newId,
+                    brokerId,
+                    row.phone,
+                    trimmedEmail,
+                    clientFullName,
+                  );
+                }
+
+                if (
+                  sendWelcomeEmails &&
+                  deps.sendClientManualWelcomeEmail &&
+                  trimmedEmail &&
+                  !finalEmail.startsWith("noemail_")
+                ) {
+                  deps
+                    .sendClientManualWelcomeEmail(
+                      trimmedEmail,
+                      row.first_name,
+                      row.last_name,
+                      brokerFullName,
+                    )
+                    .catch(() => undefined);
+                }
+              } catch (rowErr) {
+                errorCount++;
+                results.push({
+                  row_number: row.row_number,
+                  external_ref: row.external_ref,
+                  status: "error",
+                  message:
+                    rowErr instanceof Error ? rowErr.message : "Insert failed",
+                });
+              }
+            }
+          } else if (entity === "realtors" && preview.normalized_realtors) {
+            const rows =
+              preview.normalized_realtors as NormalizedRealtorBulkRow[];
+            const willCreate = rows.filter((r) => r.status === "will_create");
+            const realtorEmailDups = await loadBrokerEmailConflicts(
+              deps.pool,
+              deps.tenantId,
+              [...new Set(willCreate.map((r) => r.email))],
+              brokerId,
+            );
+
+            for (const row of rows) {
+              if (row.status === "error") {
+                errorCount++;
+                results.push({
+                  row_number: row.row_number,
+                  external_ref: row.external_ref,
+                  status: "error",
+                  message: row.message,
+                });
+                continue;
+              }
+              if (row.status === "skipped") {
+                skippedCount++;
+                results.push({
+                  row_number: row.row_number,
+                  external_ref: row.external_ref,
+                  status: "skipped",
+                  entity_id: row.conflict_broker_id ?? null,
+                  message: row.message,
+                });
+                continue;
+              }
+
+              try {
+                if (
+                  brokerRole !== "platform_owner" &&
+                  (row.role === "admin" ||
+                    row.partner_type === "mortgage_banker")
+                ) {
+                  errorCount++;
+                  results.push({
+                    row_number: row.row_number,
+                    external_ref: row.external_ref,
+                    status: "error",
+                    message:
+                      "Mortgage bankers can only bulk-import realtor partners",
+                  });
+                  continue;
+                }
+
+                const dup = realtorEmailDups.get(row.email.toLowerCase());
+                if (dup) {
+                  skippedCount++;
+                  results.push({
+                    row_number: row.row_number,
+                    external_ref: row.external_ref,
+                    status: "skipped",
+                    entity_id: dup.id as number,
+                    message: "Email already exists",
+                  });
+                  continue;
+                }
+
+                const normPhone = row.phone
+                  ? String(row.phone).replace(/\D/g, "").slice(-10) || null
+                  : null;
+
+                const [ins] = await deps.pool.query<ResultSetHeader>(
+                  `INSERT INTO brokers
+                   (tenant_id, email, first_name, last_name, phone, normalized_phone, role, license_number,
+                    specializations, status, email_verified, created_by_broker_id, public_token)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, UUID())`,
+                  [
+                    deps.tenantId,
+                    row.email,
+                    row.first_name,
+                    row.last_name,
+                    row.phone,
+                    normPhone,
+                    row.role,
+                    row.license_number,
+                    row.specializations
+                      ? JSON.stringify(row.specializations)
+                      : null,
+                    brokerId,
+                  ],
+                );
+
+                const newBrokerId = ins.insertId;
+
+                const hasProfile =
+                  row.office_address ||
+                  row.office_city ||
+                  row.office_state ||
+                  row.office_zip ||
+                  row.bio;
+                if (hasProfile) {
+                  await deps.pool.query(
+                    `INSERT INTO broker_profiles
+                     (broker_id, bio, office_address, office_city, office_state, office_zip)
+                   VALUES (?, ?, ?, ?, ?, ?)`,
+                    [
+                      newBrokerId,
+                      row.bio,
+                      row.office_address,
+                      row.office_city,
+                      row.office_state,
+                      row.office_zip,
+                    ],
+                  );
+                }
+
+                createdCount++;
+                results.push({
+                  row_number: row.row_number,
+                  external_ref: row.external_ref,
+                  status: "created",
+                  entity_id: newBrokerId,
+                  owner_broker_id: brokerId,
+                });
+
+                if (sendWelcomeEmails && deps.sendBrokerManualWelcomeEmail) {
+                  deps
+                    .sendBrokerManualWelcomeEmail(
+                      row.email,
+                      row.first_name,
+                      row.last_name,
+                      row.role,
+                    )
+                    .catch(() => undefined);
+                }
+              } catch (rowErr) {
+                errorCount++;
+                results.push({
+                  row_number: row.row_number,
+                  external_ref: row.external_ref,
+                  status: "error",
+                  message:
+                    rowErr instanceof Error ? rowErr.message : "Insert failed",
+                });
+              }
+            }
+          }
+
+          const resultJson = { results };
+          await deps.pool.query(
+            `UPDATE bulk_import_jobs SET
+               status = 'committed',
+               created_count = ?,
+               skipped_count = ?,
+               error_count = ?,
+               result_json = ?,
+               committed_at = NOW(),
+               options_json = ?
+             WHERE id = ? AND tenant_id = ? AND status = 'processing'`,
+            [
+              createdCount,
+              skippedCount,
+              errorCount,
+              JSON.stringify(resultJson),
+              JSON.stringify({
+                link_phone_threads: linkPhoneThreads,
+                send_welcome_emails: sendWelcomeEmails,
+              }),
+              jobId,
+              deps.tenantId,
+            ],
+          );
+
+          await deps.createAuditLog({
+            actorType: "broker",
+            actorId: brokerId,
+            action:
+              entity === "clients"
+                ? "bulk_import_clients"
+                : "bulk_import_realtors",
+            entityType: "bulk_import_job",
+            entityId: jobId,
+            changes: {
+              created_count: createdCount,
+              skipped_count: skippedCount,
+              error_count: errorCount,
+              file_name: job.file_name,
+            },
+          });
+
+          return res.json({
+            success: true,
+            job_id: jobId,
+            created_count: createdCount,
+            skipped_count: skippedCount,
+            error_count: errorCount,
+            results,
+            message: `Imported ${createdCount} record(s)`,
+          });
+        } catch (commitErr) {
+          await deps.pool
+            .query(
+              `UPDATE bulk_import_jobs SET status = 'failed' WHERE id = ? AND status = 'processing'`,
+              [jobId],
+            )
+            .catch(() => undefined);
+          throw commitErr;
+        }
+      } catch (err) {
+        console.error("[bulk-import] commit error:", err);
+        return res.status(500).json({
+          success: false,
+          message: err instanceof Error ? err.message : "Commit failed",
+        });
+      }
+    },
+  );
+}
+
+// Pure note formatters inlined for Vercel serverless (keep in sync with
+// shared/calculator-save-note.ts). Do NOT import from shared/ at runtime.
+
+type CalculatorSaveKindInline =
+  | "fha"
+  | "va"
+  | "conventional"
+  | "investment"
+  | "mobile_home"
+  | "income";
+
+const CALCULATOR_SAVE_KINDS: CalculatorSaveKindInline[] = [
+  "fha",
+  "va",
+  "conventional",
+  "investment",
+  "mobile_home",
+  "income",
+];
+
+function calculatorKindLabelInline(kind: string): string {
+  switch (kind) {
+    case "fha":
+      return "FHA";
+    case "va":
+      return "VA";
+    case "conventional":
+      return "Conventional";
+    case "investment":
+      return "Investment Property";
+    case "mobile_home":
+      return "Mobile Home";
+    case "income":
+      return "Wage Earner Income";
+    default:
+      return String(kind);
+  }
+}
+
+function calculatorNoteMoneyInline(n: unknown): string {
+  const v = typeof n === "number" ? n : Number(n);
+  if (!Number.isFinite(v)) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 2,
+  }).format(v);
+}
+
+function calculatorNotePctInline(n: unknown): string {
+  const v = typeof n === "number" ? n : Number(n);
+  if (!Number.isFinite(v)) return "—";
+  return `${v.toFixed(3)}%`;
+}
+
+function formatCalculatorApplyNoteInline(input: {
+  kind: string;
+  title: string;
+  summary?: Record<string, unknown> | null;
+  payload?: Record<string, unknown> | null;
+  savedAt?: string | Date | null;
+  brokerName?: string | null;
+}): string {
+  const when = input.savedAt
+    ? new Date(input.savedAt).toLocaleString("en-US")
+    : new Date().toLocaleString("en-US");
+  const kindLabel = calculatorKindLabelInline(input.kind);
+  const summary = input.summary ?? {};
+  const payload = input.payload ?? {};
+  const lines: string[] = [
+    "——— Calculator snapshot ———",
+    `Kind: ${kindLabel}`,
+    `Title: ${input.title || "(untitled)"}`,
+    `Saved: ${when}`,
+  ];
+  if (input.brokerName?.trim()) {
+    lines.push(`By: ${input.brokerName.trim()}`);
+  }
+  if (input.kind === "income") {
+    const household =
+      summary.household_total ??
+      summary.householdTotal ??
+      (payload as { householdTotal?: number }).householdTotal;
+    lines.push(
+      `Household qualifying income (mo): ${calculatorNoteMoneyInline(household)}`,
+    );
+    const borrowers = Array.isArray(
+      (payload as { borrowers?: unknown }).borrowers,
+    )
+      ? (payload as { borrowers: Array<{ name?: string }> }).borrowers
+      : [];
+    borrowers.forEach((b, i) => {
+      const name = (b?.name ?? "").trim() || `Borrower ${i + 1}`;
+      lines.push(`  · ${name}`);
+    });
+  } else {
+    const sales =
+      summary.sales_price ??
+      summary.salesPrice ??
+      (payload as { salesPrice?: number }).salesPrice;
+    const payment =
+      summary.total_monthly_payment ??
+      summary.totalMonthlyPayment ??
+      summary.payment;
+    const loanAmt =
+      summary.total_loan ??
+      summary.totalLoan ??
+      (payload as { totalLoan?: number }).totalLoan;
+    const rate =
+      summary.interest_rate ??
+      summary.interestRate ??
+      (payload as { interestRate?: number }).interestRate;
+    const ltv = summary.ltv;
+    const front = summary.front_end_ratio ?? summary.frontEndRatio;
+    const back = summary.back_end_ratio ?? summary.backEndRatio;
+    lines.push(`Sales price: ${calculatorNoteMoneyInline(sales)}`);
+    if (loanAmt != null)
+      lines.push(`Total loan: ${calculatorNoteMoneyInline(loanAmt)}`);
+    if (rate != null) lines.push(`Rate: ${calculatorNotePctInline(rate)}`);
+    if (payment != null)
+      lines.push(`Est. monthly payment: ${calculatorNoteMoneyInline(payment)}`);
+    if (ltv != null) lines.push(`LTV: ${calculatorNotePctInline(ltv)}`);
+    if (front != null || back != null) {
+      lines.push(
+        `DTI: front ${front != null ? calculatorNotePctInline(front) : "—"} / back ${back != null ? calculatorNotePctInline(back) : "—"}`,
+      );
+    }
+  }
+  lines.push("——— end snapshot ———");
+  return lines.join("\n");
+}
+
+function appendCalculatorNoteToLoanNotesInline(
+  existingNotes: string | null | undefined,
+  snapshotBlock: string,
+): string {
+  const prev = (existingNotes ?? "").trimEnd();
+  if (!prev) return snapshotBlock;
+  return `${prev}\n\n${snapshotBlock}`;
+}
+
+function parseJsonColumnInline(value: unknown): unknown {
+  if (value == null) return null;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return value;
+}
+
+function mapCalculatorSaveRow(row: RowDataPacket) {
+  return {
+    id: row.id as number,
+    tenant_id: row.tenant_id as number,
+    broker_id: row.broker_id as number,
+    client_id: row.client_id as number,
+    loan_application_id: (row.loan_application_id as number | null) ?? null,
+    kind: row.kind as CalculatorSaveKindInline,
+    title: row.title as string,
+    summary_json: parseJsonColumnInline(row.summary_json) as Record<
+      string,
+      unknown
+    > | null,
+    payload_json: (parseJsonColumnInline(row.payload_json) ?? {}) as Record<
+      string,
+      unknown
+    >,
+    borrower_client_ids: parseJsonColumnInline(
+      row.borrower_client_ids,
+    ) as Array<number | null> | null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    client_first_name: row.client_first_name ?? null,
+    client_last_name: row.client_last_name ?? null,
+    client_email: row.client_email ?? null,
+    client_phone: row.client_phone ?? null,
+    broker_first_name: row.broker_first_name ?? null,
+    broker_last_name: row.broker_last_name ?? null,
+    application_number: row.application_number ?? null,
+  };
+}
+
+/** Client access for calculator saves: PO any; else assigned_broker_id = me (or legacy loan path). */
+async function assertCalculatorSaveAccess(
+  saveId: number,
+  brokerId: number,
+  brokerRole: string,
+): Promise<
+  | { ok: true; row: RowDataPacket }
+  | { ok: false; status: number; error: string }
+> {
+  const [[row]] = await pool.query<RowDataPacket[]>(
+    `SELECT bcs.*,
+            c.first_name AS client_first_name, c.last_name AS client_last_name,
+            c.email AS client_email, c.phone AS client_phone,
+            b.first_name AS broker_first_name, b.last_name AS broker_last_name,
+            la.application_number
+       FROM broker_calculator_saves bcs
+       JOIN clients c ON c.id = bcs.client_id AND c.tenant_id = bcs.tenant_id
+       JOIN brokers b ON b.id = bcs.broker_id AND b.tenant_id = bcs.tenant_id
+       LEFT JOIN loan_applications la ON la.id = bcs.loan_application_id
+      WHERE bcs.id = ? AND bcs.tenant_id = ?
+      LIMIT 1`,
+    [saveId, MORTGAGE_TENANT_ID],
+  );
+  if (!row) {
+    return { ok: false, status: 404, error: "Calculator save not found" };
+  }
+  if (brokerRole === "admin") {
+    return { ok: true, row };
+  }
+  if (Number(row.broker_id) !== brokerId) {
+    return { ok: false, status: 403, error: "Access denied" };
+  }
+  return { ok: true, row };
+}
+
+/**
+ * GET /api/calculator-saves
+ * PO: all tenant saves. Admin/broker: own broker_id only.
+ */
+const handleListCalculatorSaves: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const brokerRole = (req as any).brokerRole as string;
+    const isPO = brokerRole === "admin";
+    const {
+      page = "1",
+      limit = "25",
+      q,
+      kind,
+      client_id,
+      loan_id,
+      broker_id,
+      sortBy = "updated_at",
+      sortOrder = "DESC",
+    } = req.query;
+
+    let where = "WHERE bcs.tenant_id = ?";
+    const params: unknown[] = [MORTGAGE_TENANT_ID];
+
+    if (isPO) {
+      if (broker_id != null && String(broker_id).trim() !== "") {
+        const bid = parseInt(String(broker_id), 10);
+        if (Number.isFinite(bid)) {
+          where += " AND bcs.broker_id = ?";
+          params.push(bid);
+        }
+      }
+    } else {
+      where += " AND bcs.broker_id = ?";
+      params.push(brokerId);
+    }
+
+    if (kind && kind !== "all") {
+      if (!CALCULATOR_SAVE_KINDS.includes(kind as CalculatorSaveKindInline)) {
+        return res.status(400).json({ success: false, error: "Invalid kind" });
+      }
+      where += " AND bcs.kind = ?";
+      params.push(kind);
+    }
+
+    if (client_id != null && String(client_id).trim() !== "") {
+      const cid = parseInt(String(client_id), 10);
+      if (Number.isFinite(cid)) {
+        where += " AND bcs.client_id = ?";
+        params.push(cid);
+      }
+    }
+
+    if (loan_id != null && String(loan_id).trim() !== "") {
+      const lid = parseInt(String(loan_id), 10);
+      if (Number.isFinite(lid)) {
+        where += " AND bcs.loan_application_id = ?";
+        params.push(lid);
+      }
+    }
+
+    if (q && String(q).trim()) {
+      const term = `%${String(q).trim()}%`;
+      where += ` AND (
+        bcs.title LIKE ? OR
+        c.first_name LIKE ? OR
+        c.last_name LIKE ? OR
+        CONCAT(c.first_name, ' ', c.last_name) LIKE ? OR
+        la.application_number LIKE ?
+      )`;
+      params.push(term, term, term, term, term);
+    }
+
+    const validSort = ["updated_at", "created_at", "title", "kind"];
+    const sortCol = validSort.includes(String(sortBy))
+      ? String(sortBy)
+      : "updated_at";
+    const order = String(sortOrder).toUpperCase() === "ASC" ? "ASC" : "DESC";
+
+    const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
+    const limitNum = Math.min(
+      100,
+      Math.max(1, parseInt(String(limit), 10) || 25),
+    );
+    const offset = (pageNum - 1) * limitNum;
+
+    const [[countRow]] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total
+         FROM broker_calculator_saves bcs
+         JOIN clients c ON c.id = bcs.client_id AND c.tenant_id = bcs.tenant_id
+         LEFT JOIN loan_applications la ON la.id = bcs.loan_application_id
+       ${where}`,
+      params,
+    );
+    const total = Number(countRow?.total ?? 0);
+    const totalPages = Math.max(1, Math.ceil(total / limitNum));
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT bcs.*,
+              c.first_name AS client_first_name, c.last_name AS client_last_name,
+              c.email AS client_email, c.phone AS client_phone,
+              b.first_name AS broker_first_name, b.last_name AS broker_last_name,
+              la.application_number
+         FROM broker_calculator_saves bcs
+         JOIN clients c ON c.id = bcs.client_id AND c.tenant_id = bcs.tenant_id
+         JOIN brokers b ON b.id = bcs.broker_id AND b.tenant_id = bcs.tenant_id
+         LEFT JOIN loan_applications la ON la.id = bcs.loan_application_id
+       ${where}
+       ORDER BY bcs.${sortCol} ${order}
+       LIMIT ? OFFSET ?`,
+      [...params, limitNum, offset],
+    );
+
+    return res.json({
+      success: true,
+      saves: rows.map(mapCalculatorSaveRow),
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages,
+        hasNext: pageNum < totalPages,
+        hasPrev: pageNum > 1,
+      },
+    });
+  } catch (error) {
+    console.error("[calculator-saves] list error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to list calculator saves",
+    });
+  }
+};
+
+/**
+ * POST /api/calculator-saves
+ * client_id required; loan_application_id optional.
+ */
+const handleCreateCalculatorSave: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const brokerRole = (req as any).brokerRole as string;
+    const body = req.body ?? {};
+    const clientId = parseInt(String(body.client_id), 10);
+    if (!Number.isFinite(clientId)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "client_id is required" });
+    }
+    const kind = body.kind as string;
+    if (!CALCULATOR_SAVE_KINDS.includes(kind as CalculatorSaveKindInline)) {
+      return res.status(400).json({ success: false, error: "Invalid kind" });
+    }
+    const title = String(body.title ?? "").trim();
+    if (!title) {
+      return res
+        .status(400)
+        .json({ success: false, error: "title is required" });
+    }
+    if (
+      body.payload_json == null ||
+      typeof body.payload_json !== "object" ||
+      Array.isArray(body.payload_json)
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, error: "payload_json is required" });
+    }
+
+    const clientAccess = await assertCalculatorClientAccess(
+      clientId,
+      brokerId,
+      brokerRole,
+    );
+    if (clientAccess.ok === false) {
+      return res
+        .status(clientAccess.status)
+        .json({ success: false, error: clientAccess.error });
+    }
+
+    let loanId: number | null = null;
+    if (
+      body.loan_application_id != null &&
+      String(body.loan_application_id).trim() !== ""
+    ) {
+      loanId = parseInt(String(body.loan_application_id), 10);
+      if (!Number.isFinite(loanId)) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Invalid loan_application_id" });
+      }
+      const loanAccess = await assertLoanAccess(brokerId, brokerRole, loanId);
+      if (loanAccess.ok === false) {
+        return res
+          .status(loanAccess.status)
+          .json({ success: false, error: loanAccess.error });
+      }
+      const [[loanClient]] = await pool.query<RowDataPacket[]>(
+        `SELECT client_user_id FROM loan_applications
+          WHERE id = ? AND tenant_id = ? LIMIT 1`,
+        [loanId, MORTGAGE_TENANT_ID],
+      );
+      if (!loanClient || Number(loanClient.client_user_id) !== clientId) {
+        return res.status(400).json({
+          success: false,
+          error: "Loan does not belong to the selected client",
+        });
+      }
+    }
+
+    const [result] = await pool.query<ResultSetHeader>(
+      `INSERT INTO broker_calculator_saves
+         (tenant_id, broker_id, client_id, loan_application_id, kind, title,
+          summary_json, payload_json, borrower_client_ids)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        MORTGAGE_TENANT_ID,
+        brokerId,
+        clientId,
+        loanId,
+        kind,
+        title.slice(0, 255),
+        body.summary_json != null ? JSON.stringify(body.summary_json) : null,
+        JSON.stringify(body.payload_json),
+        body.borrower_client_ids != null
+          ? JSON.stringify(body.borrower_client_ids)
+          : null,
+      ],
+    );
+
+    // Creator always owns the new row
+    const [[row]] = await pool.query<RowDataPacket[]>(
+      `SELECT bcs.*,
+              c.first_name AS client_first_name, c.last_name AS client_last_name,
+              c.email AS client_email, c.phone AS client_phone,
+              b.first_name AS broker_first_name, b.last_name AS broker_last_name,
+              la.application_number
+         FROM broker_calculator_saves bcs
+         JOIN clients c ON c.id = bcs.client_id AND c.tenant_id = bcs.tenant_id
+         JOIN brokers b ON b.id = bcs.broker_id AND b.tenant_id = bcs.tenant_id
+         LEFT JOIN loan_applications la ON la.id = bcs.loan_application_id
+        WHERE bcs.id = ? AND bcs.tenant_id = ?
+        LIMIT 1`,
+      [result.insertId, MORTGAGE_TENANT_ID],
+    );
+
+    return res.status(201).json({
+      success: true,
+      save: mapCalculatorSaveRow(row),
+    });
+  } catch (error) {
+    console.error("[calculator-saves] create error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to create calculator save",
+    });
+  }
+};
+
+const handleGetCalculatorSave: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const brokerRole = (req as any).brokerRole as string;
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ success: false, error: "Invalid id" });
+    }
+    const access = await assertCalculatorSaveAccess(id, brokerId, brokerRole);
+    if (access.ok === false) {
+      return res
+        .status(access.status)
+        .json({ success: false, error: access.error });
+    }
+    return res.json({ success: true, save: mapCalculatorSaveRow(access.row) });
+  } catch (error) {
+    console.error("[calculator-saves] get error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to load calculator save",
+    });
+  }
+};
+
+const handleUpdateCalculatorSave: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const brokerRole = (req as any).brokerRole as string;
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ success: false, error: "Invalid id" });
+    }
+    const access = await assertCalculatorSaveAccess(id, brokerId, brokerRole);
+    if (access.ok === false) {
+      return res
+        .status(access.status)
+        .json({ success: false, error: access.error });
+    }
+
+    const body = req.body ?? {};
+    const updates: string[] = [];
+    const values: unknown[] = [];
+
+    if (body.client_id != null) {
+      const clientId = parseInt(String(body.client_id), 10);
+      if (!Number.isFinite(clientId)) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Invalid client_id" });
+      }
+      const clientAccess = await assertCalculatorClientAccess(
+        clientId,
+        brokerId,
+        brokerRole,
+      );
+      if (clientAccess.ok === false) {
+        return res
+          .status(clientAccess.status)
+          .json({ success: false, error: clientAccess.error });
+      }
+      updates.push("client_id = ?");
+      values.push(clientId);
+    }
+
+    if (body.loan_application_id !== undefined) {
+      if (
+        body.loan_application_id == null ||
+        String(body.loan_application_id).trim() === ""
+      ) {
+        updates.push("loan_application_id = NULL");
+      } else {
+        const loanId = parseInt(String(body.loan_application_id), 10);
+        if (!Number.isFinite(loanId)) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid loan_application_id" });
+        }
+        const loanAccess = await assertLoanAccess(brokerId, brokerRole, loanId);
+        if (loanAccess.ok === false) {
+          return res
+            .status(loanAccess.status)
+            .json({ success: false, error: loanAccess.error });
+        }
+        const effectiveClientId =
+          body.client_id != null
+            ? parseInt(String(body.client_id), 10)
+            : Number(access.row.client_id);
+        const [[loanClient]] = await pool.query<RowDataPacket[]>(
+          `SELECT client_user_id FROM loan_applications
+            WHERE id = ? AND tenant_id = ? LIMIT 1`,
+          [loanId, MORTGAGE_TENANT_ID],
+        );
+        if (
+          !loanClient ||
+          Number(loanClient.client_user_id) !== effectiveClientId
+        ) {
+          return res.status(400).json({
+            success: false,
+            error: "Loan does not belong to the selected client",
+          });
+        }
+        updates.push("loan_application_id = ?");
+        values.push(loanId);
+      }
+    } else if (body.client_id != null) {
+      // Client changed without an explicit loan update — keep or clear loan
+      const existingLoanId = access.row.loan_application_id
+        ? Number(access.row.loan_application_id)
+        : null;
+      if (existingLoanId) {
+        const newClientId = parseInt(String(body.client_id), 10);
+        const [[loanClient]] = await pool.query<RowDataPacket[]>(
+          `SELECT client_user_id FROM loan_applications
+            WHERE id = ? AND tenant_id = ? LIMIT 1`,
+          [existingLoanId, MORTGAGE_TENANT_ID],
+        );
+        if (!loanClient || Number(loanClient.client_user_id) !== newClientId) {
+          updates.push("loan_application_id = NULL");
+        }
+      }
+    }
+
+    if (body.kind != null) {
+      if (
+        !CALCULATOR_SAVE_KINDS.includes(body.kind as CalculatorSaveKindInline)
+      ) {
+        return res.status(400).json({ success: false, error: "Invalid kind" });
+      }
+      updates.push("kind = ?");
+      values.push(body.kind);
+    }
+    if (body.title != null) {
+      const title = String(body.title).trim();
+      if (!title) {
+        return res
+          .status(400)
+          .json({ success: false, error: "title cannot be empty" });
+      }
+      updates.push("title = ?");
+      values.push(title.slice(0, 255));
+    }
+    if (body.summary_json !== undefined) {
+      updates.push("summary_json = ?");
+      values.push(
+        body.summary_json != null ? JSON.stringify(body.summary_json) : null,
+      );
+    }
+    if (body.payload_json !== undefined) {
+      if (
+        body.payload_json == null ||
+        typeof body.payload_json !== "object" ||
+        Array.isArray(body.payload_json)
+      ) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Invalid payload_json" });
+      }
+      updates.push("payload_json = ?");
+      values.push(JSON.stringify(body.payload_json));
+    }
+    if (body.borrower_client_ids !== undefined) {
+      updates.push("borrower_client_ids = ?");
+      values.push(
+        body.borrower_client_ids != null
+          ? JSON.stringify(body.borrower_client_ids)
+          : null,
+      );
+    }
+
+    if (updates.length === 0) {
+      return res.json({
+        success: true,
+        save: mapCalculatorSaveRow(access.row),
+      });
+    }
+
+    values.push(id, MORTGAGE_TENANT_ID);
+    await pool.query(
+      `UPDATE broker_calculator_saves SET ${updates.join(", ")}
+        WHERE id = ? AND tenant_id = ?`,
+      values,
+    );
+
+    const refreshed = await assertCalculatorSaveAccess(
+      id,
+      brokerId,
+      brokerRole,
+    );
+    if (refreshed.ok === false) {
+      return res
+        .status(refreshed.status)
+        .json({ success: false, error: refreshed.error });
+    }
+    return res.json({
+      success: true,
+      save: mapCalculatorSaveRow(refreshed.row),
+    });
+  } catch (error) {
+    console.error("[calculator-saves] update error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to update calculator save",
+    });
+  }
+};
+
+const handleDeleteCalculatorSave: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const brokerRole = (req as any).brokerRole as string;
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ success: false, error: "Invalid id" });
+    }
+    const access = await assertCalculatorSaveAccess(id, brokerId, brokerRole);
+    if (access.ok === false) {
+      return res
+        .status(access.status)
+        .json({ success: false, error: access.error });
+    }
+    await pool.query(
+      `DELETE FROM broker_calculator_saves WHERE id = ? AND tenant_id = ?`,
+      [id, MORTGAGE_TENANT_ID],
+    );
+    return res.json({ success: true, message: "Calculator save deleted" });
+  } catch (error) {
+    console.error("[calculator-saves] delete error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to delete calculator save",
+    });
+  }
+};
+
+/**
+ * POST /api/calculator-saves/:id/apply-note
+ * Append formatted snapshot to loan_applications.notes only (never overwrite income).
+ */
+const handleApplyCalculatorSaveNote: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const brokerRole = (req as any).brokerRole as string;
+    const id = parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ success: false, error: "Invalid id" });
+    }
+    const access = await assertCalculatorSaveAccess(id, brokerId, brokerRole);
+    if (access.ok === false) {
+      return res
+        .status(access.status)
+        .json({ success: false, error: access.error });
+    }
+
+    const bodyLoanId =
+      req.body?.loan_application_id != null
+        ? parseInt(String(req.body.loan_application_id), 10)
+        : null;
+    const loanId =
+      bodyLoanId && Number.isFinite(bodyLoanId)
+        ? bodyLoanId
+        : access.row.loan_application_id != null
+          ? Number(access.row.loan_application_id)
+          : null;
+
+    if (!loanId || !Number.isFinite(loanId)) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "loan_application_id is required on the save or in the request body",
+      });
+    }
+
+    const loanAccess = await assertLoanAccess(brokerId, brokerRole, loanId);
+    if (loanAccess.ok === false) {
+      return res
+        .status(loanAccess.status)
+        .json({ success: false, error: loanAccess.error });
+    }
+    const [[loanRow]] = await pool.query<RowDataPacket[]>(
+      `SELECT client_user_id, notes FROM loan_applications
+        WHERE id = ? AND tenant_id = ? LIMIT 1`,
+      [loanId, MORTGAGE_TENANT_ID],
+    );
+    if (!loanRow) {
+      return res.status(404).json({ success: false, error: "Loan not found" });
+    }
+    if (Number(loanRow.client_user_id) !== Number(access.row.client_id)) {
+      return res.status(400).json({
+        success: false,
+        error: "Loan does not belong to the linked client",
+      });
+    }
+
+    const brokerName = [
+      access.row.broker_first_name,
+      access.row.broker_last_name,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    const snapshot = formatCalculatorApplyNoteInline({
+      kind: String(access.row.kind),
+      title: String(access.row.title),
+      summary: parseJsonColumnInline(access.row.summary_json) as Record<
+        string,
+        unknown
+      > | null,
+      payload: parseJsonColumnInline(access.row.payload_json) as Record<
+        string,
+        unknown
+      > | null,
+      savedAt: access.row.updated_at ?? access.row.created_at,
+      brokerName,
+    });
+
+    const existingNotes = (loanRow.notes as string | null | undefined) ?? null;
+    const nextNotes = appendCalculatorNoteToLoanNotesInline(
+      existingNotes,
+      snapshot,
+    );
+
+    await pool.query(
+      `UPDATE loan_applications SET notes = ? WHERE id = ? AND tenant_id = ?`,
+      [nextNotes, loanId, MORTGAGE_TENANT_ID],
+    );
+
+    // Persist loan link on the save when applying from body
+    if (
+      access.row.loan_application_id == null ||
+      Number(access.row.loan_application_id) !== loanId
+    ) {
+      await pool.query(
+        `UPDATE broker_calculator_saves
+            SET loan_application_id = ?
+          WHERE id = ? AND tenant_id = ?`,
+        [loanId, id, MORTGAGE_TENANT_ID],
+      );
+    }
+
+    return res.json({
+      success: true,
+      loan_application_id: loanId,
+      notes: nextNotes,
+      message: "Calculator snapshot appended to loan notes",
+    });
+  } catch (error) {
+    console.error("[calculator-saves] apply-note error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to append calculator note",
+    });
+  }
+};
+
+/**
+ * GET /api/clients/:clientId/open-loans
+ * Lightweight loan list for calculator matching (application_number, property_value).
+ */
+
 const handleInboundEmail: RequestHandler = async (req, res) => {
   try {
     // Verify shared secret to reject unauthenticated POSTs
@@ -28992,7 +32348,7 @@ const handleBroadcastUnsubscribe: RequestHandler = async (req, res) => {
       );
     }
     return res.status(200).send(
-      `<html><body style="font-family:sans-serif;padding:40px;max-width:500px;margin:auto;">
+      `<html><body style="font-family:'DM Sans',Arial,sans-serif;padding:40px;max-width:500px;margin:auto;">
         <h2>You've been unsubscribed.</h2>
         <p>You will no longer receive broadcast emails from The Mortgage Professionals.</p>
       </body></html>`,
@@ -29119,6 +32475,11 @@ const handleInboundSMS: RequestHandler = async (req, res) => {
         .send(
           "<Response><Message>You have been unsubscribed from broadcast messages. Reply START to opt back in.</Message></Response>",
         );
+    }
+
+    if (await checkAndCountBlockedPhone(MORTGAGE_TENANT_ID, fromPhone, "sms")) {
+      res.set("Content-Type", "text/xml");
+      return res.status(200).send("<Response></Response>");
     }
 
     const toPhone = toRaw.replace(/[^\d+]/g, "") || null; // The Twilio number that received this SMS
@@ -32373,7 +35734,7 @@ function buildVoicemailEmailHtml(params: {
   const transcriptBlock =
     transcriptionText.trim().length > 0
       ? transcriptionText.trim()
-      : '<em style="color:#94a3b8;">No transcript available.</em>';
+      : '<em style="color:#9AA5B1;">No transcript available.</em>';
 
   const mp3Url = recordingUrl.endsWith(".mp3")
     ? recordingUrl
@@ -32381,16 +35742,16 @@ function buildVoicemailEmailHtml(params: {
 
   return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>New Voicemail</title></head>
-<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:Arial,Helvetica,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f1f5f9;padding:32px 16px;">
+<head>${EMAIL_FONT_LINK}<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>New Voicemail</title></head>
+<body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:32px 16px;">
     <tr>
       <td align="center">
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;background-color:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
 
           <!-- Header banner -->
           <tr>
-            <td style="background-color:#0f172a;padding:24px 32px;">
+            <td style="background-color:#0A2F52;padding:24px 32px;">
               <table width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
                   <td>
@@ -32398,7 +35759,7 @@ function buildVoicemailEmailHtml(params: {
                     <p style="margin:4px 0 0;color:#ffffff;font-size:20px;font-weight:700;">🎙️ New Voicemail Received</p>
                   </td>
                   <td style="text-align:right;vertical-align:top;">
-                    <p style="margin:0;color:#94a3b8;font-size:12px;">${companyName}</p>
+                    <p style="margin:0;color:#9AA5B1;font-size:12px;">${companyName}</p>
                   </td>
                 </tr>
               </table>
@@ -32409,27 +35770,27 @@ function buildVoicemailEmailHtml(params: {
           <tr>
             <td style="padding:28px 32px 0;">
 
-              <p style="margin:0 0 20px;color:#475569;font-size:14px;line-height:1.6;">
-                Hi <strong style="color:#0f172a;">${bankerName}</strong>, you have a new voicemail on your personal line.
+              <p style="margin:0 0 20px;color:#3E4C59;font-size:14px;line-height:1.6;">
+                Hi <strong style="color:#1F2933;">${bankerName}</strong>, you have a new voicemail on your personal line.
               </p>
 
               <!-- Caller info card -->
               <table width="100%" cellpadding="0" cellspacing="0" border="0"
-                     style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:20px;">
+                     style="background-color:#F5F8FA;border:1px solid #E8EFF4;border-radius:12px;margin-bottom:20px;">
                 <tr>
                   <td style="padding:20px 24px;">
                     <table width="100%" cellpadding="0" cellspacing="0" border="0">
                       <tr>
-                        <td style="padding:5px 0;color:#64748b;font-size:13px;width:120px;">Caller</td>
-                        <td style="padding:5px 0;color:#0f172a;font-size:15px;font-weight:700;">${callerNumber}</td>
+                        <td style="padding:5px 0;color:#64748B;font-size:13px;width:120px;">Caller</td>
+                        <td style="padding:5px 0;color:#1F2933;font-size:15px;font-weight:700;">${callerNumber}</td>
                       </tr>
                       <tr>
-                        <td style="padding:5px 0;color:#64748b;font-size:13px;">Received</td>
-                        <td style="padding:5px 0;color:#0f172a;font-size:14px;">${timeFormatted} PT</td>
+                        <td style="padding:5px 0;color:#64748B;font-size:13px;">Received</td>
+                        <td style="padding:5px 0;color:#1F2933;font-size:14px;">${timeFormatted} PT</td>
                       </tr>
                       <tr>
-                        <td style="padding:5px 0;color:#64748b;font-size:13px;">Duration</td>
-                        <td style="padding:5px 0;color:#0f172a;font-size:14px;">${durationLabel}</td>
+                        <td style="padding:5px 0;color:#64748B;font-size:13px;">Duration</td>
+                        <td style="padding:5px 0;color:#1F2933;font-size:14px;">${durationLabel}</td>
                       </tr>
                     </table>
                   </td>
@@ -32437,8 +35798,8 @@ function buildVoicemailEmailHtml(params: {
               </table>
 
               <!-- Transcript -->
-              <p style="margin:0 0 8px;color:#0f172a;font-size:14px;font-weight:700;">Transcript</p>
-              <div style="background-color:#f8fafc;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:16px 20px;margin-bottom:24px;font-size:14px;color:#334155;line-height:1.7;">
+              <p style="margin:0 0 8px;color:#1F2933;font-size:14px;font-weight:700;">Transcript</p>
+              <div style="background-color:#F5F8FA;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:16px 20px;margin-bottom:24px;font-size:14px;color:#3E4C59;line-height:1.7;">
                 ${transcriptBlock}
               </div>
 
@@ -32459,8 +35820,8 @@ function buildVoicemailEmailHtml(params: {
 
           <!-- Footer -->
           <tr>
-            <td style="background-color:#0f172a;padding:18px 32px;border-radius:0 0 16px 16px;text-align:center;">
-              <p style="margin:0;color:#94a3b8;font-size:12px;">
+            <td style="background-color:#0A2F52;padding:18px 32px;border-radius:0 0 16px 16px;text-align:center;">
+              <p style="margin:0;color:#9AA5B1;font-size:12px;">
                 This notification was sent by ${companyName} CRM. The full voicemail thread is available in your Conversations inbox.
               </p>
             </td>
@@ -32887,6 +36248,16 @@ const handleVoiceIncoming: RequestHandler = async (req, res) => {
     // The Twilio number that was dialled (E.164 or local format)
     const calledNumber =
       (req.body?.To as string) || (req.body?.Called as string) || "";
+
+    const blockedCaller =
+      (req.body?.From as string) || (req.body?.Caller as string) || "";
+    if (
+      await checkAndCountBlockedPhone(MORTGAGE_TENANT_ID, blockedCaller, "call")
+    ) {
+      const rejectTwiml = new twilio.twiml.VoiceResponse();
+      rejectTwiml.reject({ reason: "busy" });
+      return res.send(rejectTwiml.toString());
+    }
 
     // ---------- determine which brokers should ring ----------
 
@@ -34823,6 +38194,7 @@ const handleAdminInit: RequestHandler = async (req, res) => {
       profile,
       controls,
       rolePermissions: await fetchRoleSectionPermissionRows(),
+      bulk_csv_import_enabled: resolveBulkCsvImportEnabled(),
     });
   } catch (error) {
     console.error("Error in admin init:", error);
@@ -34842,8 +38214,8 @@ const handleAdminInit: RequestHandler = async (req, res) => {
  */
 function buildSignatureSectionHtml(letter: Record<string, any>): string {
   const brokerPhotoHtml = letter.broker_photo_url
-    ? `<div style="width:72px; height:72px; border-radius:50%; overflow:hidden; border:3px solid #1a3a5c; box-sizing:border-box;"><img src="${letter.broker_photo_url}" style="width:100%; height:100%; object-fit:cover; display:block;" /></div>`
-    : `<div style="width:72px; height:72px; border-radius:50%; background:#e8edf5; border:3px solid #1a3a5c; text-align:center; line-height:72px; font-size:24px; font-weight:bold; color:#1a3a5c; box-sizing:border-box;">${(letter.broker_first_name?.[0] ?? "") + (letter.broker_last_name?.[0] ?? "")}</div>`;
+    ? `<div style="width:72px; height:72px; border-radius:50%; overflow:hidden; border:3px solid #0A2F52; box-sizing:border-box;"><img src="${letter.broker_photo_url}" style="width:100%; height:100%; object-fit:cover; display:block;" /></div>`
+    : `<div style="width:72px; height:72px; border-radius:50%; background:#F5F8FA; border:3px solid #0A2F52; text-align:center; line-height:72px; font-size:24px; font-weight:bold; color:#0A2F52; box-sizing:border-box;">${(letter.broker_first_name?.[0] ?? "") + (letter.broker_last_name?.[0] ?? "")}</div>`;
 
   const mbLicenseHtml = letter.broker_license_number
     ? `<p style="margin:3px 0; font-size:13px; color:#555;">NMLS# ${letter.broker_license_number}</p>`
@@ -34857,12 +38229,12 @@ function buildSignatureSectionHtml(letter: Record<string, any>): string {
       ? `<p style="margin:3px 0; font-size:13px; color:#555;">NMLS# ${letter.partner_license_number}</p>`
       : "";
     const partnerPhotoHtml = letter.partner_photo_url
-      ? `<div style="width:72px; height:72px; border-radius:50%; overflow:hidden; border:3px solid #1a3a5c; box-sizing:border-box;"><img src="${letter.partner_photo_url}" style="width:100%; height:100%; object-fit:cover; display:block;" /></div>`
-      : `<div style="width:72px; height:72px; border-radius:50%; background:#e8edf5; border:3px solid #1a3a5c; text-align:center; line-height:72px; font-size:24px; font-weight:bold; color:#1a3a5c; box-sizing:border-box;">${(letter.partner_first_name?.[0] ?? "") + (letter.partner_last_name?.[0] ?? "")}</div>`;
+      ? `<div style="width:72px; height:72px; border-radius:50%; overflow:hidden; border:3px solid #0A2F52; box-sizing:border-box;"><img src="${letter.partner_photo_url}" style="width:100%; height:100%; object-fit:cover; display:block;" /></div>`
+      : `<div style="width:72px; height:72px; border-radius:50%; background:#F5F8FA; border:3px solid #0A2F52; text-align:center; line-height:72px; font-size:24px; font-weight:bold; color:#0A2F52; box-sizing:border-box;">${(letter.partner_first_name?.[0] ?? "") + (letter.partner_last_name?.[0] ?? "")}</div>`;
     return `<table style="width: 100%; border-collapse: collapse;">
   <tr>
     <td style="vertical-align: top; width: 88px;">${brokerPhotoHtml}</td>
-    <td style="vertical-align: top; padding-left: 16px; padding-right: 28px; font-size: 13px; border-right: 1px solid #e5e7eb;">
+    <td style="vertical-align: top; padding-left: 16px; padding-right: 28px; font-size: 13px; border-right: 1px solid #E8EFF4;">
       <p style="margin: 0 0 3px;"><strong>${letter.broker_first_name ?? ""} ${letter.broker_last_name ?? ""}</strong></p>
       <p style="margin: 0 0 3px; color: #444;">Mortgage Banker</p>
       ${mbLicenseHtml}
@@ -34898,7 +38270,7 @@ function buildSignatureSectionHtml(letter: Record<string, any>): string {
 }
 
 function buildDefaultPreApprovalHtml(): string {
-  return `<div style="font-family: Arial, Helvetica, sans-serif; width: 100%; box-sizing: border-box; padding: 48px; background: #fff; color: #222;">
+  return `<div style="font-family: 'DM Sans', Arial, Helvetica, sans-serif; width: 100%; box-sizing: border-box; padding: 48px; background: #fff; color: #222;">
 
   <!-- HEADER: Logo left, company info right -->
   <table style="width: 100%; margin-bottom: 20px; border-collapse: collapse;">
@@ -35006,25 +38378,25 @@ function buildDefaultPreApprovalEmailHtml(params: {
 
   const customBlock = customMessage?.trim()
     ? `<tr><td style="padding:0 0 20px 0;">
-        <div style="background:#f8fafc;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:14px 18px;font-size:14px;color:#333;line-height:1.6;">${customMessage.trim()}</div>
+        <div style="background:#F5F8FA;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:14px 18px;font-size:14px;color:#333;line-height:1.6;">${customMessage.trim()}</div>
        </td></tr>`
     : "";
 
   const expiresRow = expiresShort
     ? `<tr>
-         <td style="padding:6px 0;color:#64748b;font-size:13px;width:160px;">Valid Until</td>
-         <td style="padding:6px 0;color:#0f172a;font-size:14px;">${expiresShort}</td>
+         <td style="padding:6px 0;color:#64748B;font-size:13px;width:160px;">Valid Until</td>
+         <td style="padding:6px 0;color:#1F2933;font-size:14px;">${expiresShort}</td>
        </tr>`
     : "";
 
   const brokerPhoneLine = brokerPhone
-    ? `<p style="margin:2px 0 0;color:#475569;font-size:13px;">📞 ${brokerPhone}</p>`
+    ? `<p style="margin:2px 0 0;color:#3E4C59;font-size:13px;">📞 ${brokerPhone}</p>`
     : "";
   const brokerEmailLine = brokerEmail
-    ? `<p style="margin:2px 0 0;color:#475569;font-size:13px;">✉ ${brokerEmail}</p>`
+    ? `<p style="margin:2px 0 0;color:#3E4C59;font-size:13px;">✉ ${brokerEmail}</p>`
     : "";
   const brokerNmlsLine = brokerNmls
-    ? `<p style="margin:2px 0 0;color:#94a3b8;font-size:12px;">NMLS# ${brokerNmls}</p>`
+    ? `<p style="margin:2px 0 0;color:#9AA5B1;font-size:12px;">NMLS# ${brokerNmls}</p>`
     : "";
 
   const attachNote = hasPdf
@@ -35041,13 +38413,13 @@ function buildDefaultPreApprovalEmailHtml(params: {
 
   return `<!DOCTYPE html>
 <html lang="en">
-<head>
+<head>${EMAIL_FONT_LINK}
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Pre-Approval Letter</title>
 </head>
-<body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+<body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
     <tr><td align="center">
       <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
         <tr>
@@ -35061,32 +38433,32 @@ function buildDefaultPreApprovalEmailHtml(params: {
               ${customBlock}
               <tr>
                 <td style="padding:0 0 8px 0;">
-                  <h2 style="margin:0;color:#0f172a;font-size:22px;font-weight:700;">Congratulations, ${clientFirstName || "Applicant"}!</h2>
+                  <h2 style="margin:0;color:#1F2933;font-size:22px;font-weight:700;">Congratulations, ${clientFirstName || "Applicant"}!</h2>
                 </td>
               </tr>
               <tr>
-                <td style="padding:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">
+                <td style="padding:0 0 24px 0;color:#3E4C59;font-size:15px;line-height:1.6;">
                   Your pre-approval letter is ready. Please find it attached to this email as a PDF.
                 </td>
               </tr>
               <tr>
                 <td style="padding:0 0 20px 0;">
-                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;border:1px solid #E8EFF4;border-radius:12px;">
                     <tr>
                       <td style="padding:20px 24px;">
                         <table width="100%" cellpadding="0" cellspacing="0" border="0">
                           <tr>
-                            <td style="padding:6px 0;color:#64748b;font-size:13px;width:160px;">Pre-Approved Amount</td>
+                            <td style="padding:6px 0;color:#64748B;font-size:13px;width:160px;">Pre-Approved Amount</td>
                             <td style="padding:6px 0;color:#0A2F52;font-size:18px;font-weight:700;">${amountFormatted}</td>
                           </tr>
                           <tr>
-                            <td style="padding:6px 0;color:#64748b;font-size:13px;">Letter Date</td>
-                            <td style="padding:6px 0;color:#0f172a;font-size:14px;">${letterDateFormatted}</td>
+                            <td style="padding:6px 0;color:#64748B;font-size:13px;">Letter Date</td>
+                            <td style="padding:6px 0;color:#1F2933;font-size:14px;">${letterDateFormatted}</td>
                           </tr>
                           ${expiresRow}
                           <tr>
-                            <td style="padding:6px 0;color:#64748b;font-size:13px;">Property</td>
-                            <td style="padding:6px 0;color:#0f172a;font-size:14px;">${propertyAddr || "TBD"}</td>
+                            <td style="padding:6px 0;color:#64748B;font-size:13px;">Property</td>
+                            <td style="padding:6px 0;color:#1F2933;font-size:14px;">${propertyAddr || "TBD"}</td>
                           </tr>
                         </table>
                       </td>
@@ -35097,10 +38469,10 @@ function buildDefaultPreApprovalEmailHtml(params: {
               ${attachNote}
               <tr>
                 <td style="padding:20px 0 0;">
-                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;border:1px solid #E8EFF4;border-radius:12px;">
                     <tr>
                       <td style="padding:16px 20px;">
-                        <p style="margin:0 0 2px;color:#0f172a;font-size:14px;font-weight:600;">${brokerName}</p>
+                        <p style="margin:0 0 2px;color:#1F2933;font-size:14px;font-weight:600;">${brokerName}</p>
                         ${brokerPhoneLine}
                         ${brokerEmailLine}
                         ${brokerNmlsLine}
@@ -35113,9 +38485,9 @@ function buildDefaultPreApprovalEmailHtml(params: {
           </td>
         </tr>
         <tr>
-          <td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+          <td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
             <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">${companyName}</p>
-            <p style="margin:0;color:#94a3b8;font-size:12px;">${companyAddress}</p>
+            <p style="margin:0;color:#9AA5B1;font-size:12px;">${companyAddress}</p>
           </td>
         </tr>
       </table>
@@ -35710,11 +39082,11 @@ const handleSendPreApprovalLetterEmail: RequestHandler = async (req, res) => {
 
     const logoHtml = letter.company_logo_url
       ? `<img src="${letter.company_logo_url}" alt="${letter.company_name ?? "Company"} Logo" style="max-height:64px; max-width:200px; object-fit:contain;" />`
-      : `<div style="font-size:20px; font-weight:bold; color:#1a3a5c;">${letter.company_name ?? "The Mortgage Professionals"}</div>`;
+      : `<div style="font-size:20px; font-weight:bold; color:#0A2F52;">${letter.company_name ?? "The Mortgage Professionals"}</div>`;
 
     const brokerPhotoHtml = letter.broker_photo_url
-      ? `<img src="${letter.broker_photo_url}" alt="${letter.broker_first_name ?? ""} ${letter.broker_last_name ?? ""}" style="width:72px; height:72px; border-radius:50%; object-fit:cover; border:3px solid #1a3a5c;" />`
-      : `<div style="width:72px; height:72px; border-radius:50%; background:#e8edf5; border:3px solid #1a3a5c; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:bold; color:#1a3a5c;">${(letter.broker_first_name?.[0] ?? "") + (letter.broker_last_name?.[0] ?? "")}</div>`;
+      ? `<img src="${letter.broker_photo_url}" alt="${letter.broker_first_name ?? ""} ${letter.broker_last_name ?? ""}" style="width:72px; height:72px; border-radius:50%; object-fit:cover; border:3px solid #0A2F52;" />`
+      : `<div style="width:72px; height:72px; border-radius:50%; background:#F5F8FA; border:3px solid #0A2F52; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:bold; color:#0A2F52;">${(letter.broker_first_name?.[0] ?? "") + (letter.broker_last_name?.[0] ?? "")}</div>`;
 
     const brokerLicenseHtml = letter.broker_license_number
       ? `<p style="margin:4px 0 0; font-size:13px; color:#555;">NMLS# ${letter.broker_license_number}</p>`
@@ -37406,7 +40778,24 @@ function createServer() {
     handleStripeTopUpGranted,
   );
 
+  registerBulkImportRoutes(expressApp, {
+    pool,
+    tenantId: MORTGAGE_TENANT_ID,
+    verifyBrokerSession,
+    createAuditLog,
+    sendClientManualWelcomeEmail,
+    sendBrokerManualWelcomeEmail,
+  });
+  expressApp.get("/api/calculator-saves", verifyBrokerSession, handleListCalculatorSaves);
+  expressApp.post("/api/calculator-saves", verifyBrokerSession, handleCreateCalculatorSave);
+  expressApp.get("/api/calculator-saves/:id", verifyBrokerSession, handleGetCalculatorSave);
+  expressApp.put("/api/calculator-saves/:id", verifyBrokerSession, handleUpdateCalculatorSave);
+  expressApp.delete("/api/calculator-saves/:id", verifyBrokerSession, handleDeleteCalculatorSave);
+  expressApp.post("/api/calculator-saves/:id/apply-note", verifyBrokerSession, handleApplyCalculatorSaveNote);
   expressApp.get("/api/realtor-broadcasts/unsubscribe", handleBroadcastUnsubscribe);
+  expressApp.get("/api/blocked-numbers", verifyBrokerSession, handleListBlockedNumbers);
+  expressApp.post("/api/blocked-numbers", verifyBrokerSession, handleCreateBlockedNumber);
+  expressApp.delete("/api/blocked-numbers/:id", verifyBrokerSession, handleDeleteBlockedNumber);
   expressApp.get("/api/admin/role-section-permissions", verifyBrokerSession, handleGetRoleSectionPermissions);
   expressApp.put("/api/admin/role-section-permissions", verifyBrokerSession, handleUpdateRoleSectionPermissions);
   expressApp.get("/api/documents/:documentId/download", verifyBrokerSession, handleDownloadTaskDocument);
@@ -38535,27 +41924,27 @@ function createServer() {
       ? opts.videoRoomUrl
         ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;">
             <tr>
-              <td style="background-color:#e8f4fd;border-left:4px solid #2D8CFF;border-radius:0 8px 8px 0;padding:14px 18px;">
-                <p style="margin:0 0 6px 0;color:#0f172a;font-size:14px;font-weight:700;">🎥 ${videoProviderLabel} Video Call Link</p>
-                <a href="${opts.videoRoomUrl}" style="color:#2D8CFF;font-size:14px;word-break:break-all;">${opts.videoRoomUrl}</a>
-                ${opts.videoHostUrl ? `<p style="margin:8px 0 4px 0;color:#0f172a;font-size:13px;font-weight:700;">Host Link</p><a href="${opts.videoHostUrl}" style="color:#2D8CFF;font-size:13px;word-break:break-all;">${opts.videoHostUrl}</a>` : ""}
-                <p style="margin:6px 0 0 0;color:#64748b;font-size:12px;">Click the link above at meeting time — no download required if using a browser.</p>
+              <td style="background-color:#F5F8FA;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:14px 18px;">
+                <p style="margin:0 0 6px 0;color:#1F2933;font-size:14px;font-weight:700;">🎥 ${videoProviderLabel} Video Call Link</p>
+                <a href="${opts.videoRoomUrl}" style="color:#0A2F52;font-size:14px;word-break:break-all;">${opts.videoRoomUrl}</a>
+                ${opts.videoHostUrl ? `<p style="margin:8px 0 4px 0;color:#1F2933;font-size:13px;font-weight:700;">Host Link</p><a href="${opts.videoHostUrl}" style="color:#0A2F52;font-size:13px;word-break:break-all;">${opts.videoHostUrl}</a>` : ""}
+                <p style="margin:6px 0 0 0;color:#64748B;font-size:12px;">Click the link above at meeting time — no download required if using a browser.</p>
               </td>
             </tr>
           </table>`
         : `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;">
             <tr>
-              <td style="background-color:#fff7ed;border-left:4px solid #f97316;border-radius:0 8px 8px 0;padding:14px 18px;">
-                <p style="margin:0 0 6px 0;color:#0f172a;font-size:14px;font-weight:700;">🎥 ${videoProviderLabel} Video Call</p>
-                <p style="margin:0;color:#475569;font-size:13px;">Join link is being generated. Please contact your mortgage banker if you don't receive a join link shortly.</p>
+              <td style="background-color:#FFF8EB;border-left:4px solid #F9A826;border-radius:0 8px 8px 0;padding:14px 18px;">
+                <p style="margin:0 0 6px 0;color:#1F2933;font-size:14px;font-weight:700;">🎥 ${videoProviderLabel} Video Call</p>
+                <p style="margin:0;color:#3E4C59;font-size:13px;">Join link is being generated. Please contact your mortgage banker if you don't receive a join link shortly.</p>
               </td>
             </tr>
           </table>`
       : `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;">
             <tr>
-              <td style="background-color:#f0f9ff;border-left:4px solid #0ea5e9;border-radius:0 8px 8px 0;padding:14px 18px;">
-                <p style="margin:0 0 4px 0;color:#0f172a;font-size:14px;font-weight:700;">📞 Phone Call</p>
-                <p style="margin:0;color:#475569;font-size:13px;">Your mortgage banker will call you at your provided phone number at the scheduled time.${opts.brokerPhone ? ` You can also reach them at <strong>${opts.brokerPhone}</strong>.` : ""}</p>
+              <td style="background-color:#F5F8FA;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:14px 18px;">
+                <p style="margin:0 0 4px 0;color:#1F2933;font-size:14px;font-weight:700;">📞 Phone Call</p>
+                <p style="margin:0;color:#3E4C59;font-size:13px;">Your mortgage banker will call you at your provided phone number at the scheduled time.${opts.brokerPhone ? ` You can also reach them at <strong>${opts.brokerPhone}</strong>.` : ""}</p>
               </td>
             </tr>
           </table>`;
@@ -38596,38 +41985,38 @@ function createServer() {
           content: icsAttachment,
           contentType: "text/calendar; method=REQUEST",
         }],
-      html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head>
-      <body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+      html: `<!DOCTYPE html><html lang="en"><head>${EMAIL_FONT_LINK}<meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head>
+      <body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
           <tr><td align="center">
             <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
               <tr><td style="background-color:#ffffff;padding:24px 32px;border-radius:16px 16px 0 0;border-bottom:3px solid #0A2F52;text-align:center;">
                 <img src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png" alt="The Mortgage Professionals" style="height:52px;width:auto;display:inline-block;"/>
               </td></tr>
               <tr><td style="background-color:#ffffff;padding:40px 32px 32px;">
-                <h2 style="margin:0 0 8px 0;color:#0f172a;font-size:22px;font-weight:700;">Hi ${opts.clientName},</h2>
-                <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">Your meeting with <strong>${opts.brokerName}</strong> has been confirmed. Here are your details:</p>
+                <h2 style="margin:0 0 8px 0;color:#1F2933;font-size:22px;font-weight:700;">Hi ${opts.clientName},</h2>
+                <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;line-height:1.6;">Your meeting with <strong>${opts.brokerName}</strong> has been confirmed. Here are your details:</p>
                 <table width="100%" cellpadding="0" cellspacing="0" border="0">
                   <tr><td style="background-color:#FFF8EB;border:2px solid #0A2F52;border-radius:12px;padding:24px;">
                     <table width="100%" cellpadding="0" cellspacing="0" border="0">
                       <tr><td style="padding:6px 0;border-bottom:1px solid #F9A826;">
-                        <span style="color:#64748b;font-size:13px;display:inline-block;width:130px;">📅 Date</span>
-                        <strong style="color:#0f172a;font-size:14px;">${formattedDate}</strong>
+                        <span style="color:#64748B;font-size:13px;display:inline-block;width:130px;">📅 Date</span>
+                        <strong style="color:#1F2933;font-size:14px;">${formattedDate}</strong>
                       </td></tr>
                       <tr><td style="padding:6px 0;border-bottom:1px solid #F9A826;">
-                        <span style="color:#64748b;font-size:13px;display:inline-block;width:130px;">⏰ Time</span>
-                        <strong style="color:#0f172a;font-size:14px;">${timeLabel(opts.meetingTime)} – ${timeLabel(opts.meetingEndTime)}</strong>
-                        <strong style="color:#0f172a;font-size:14px;">${opts.brokerName}</strong>
+                        <span style="color:#64748B;font-size:13px;display:inline-block;width:130px;">⏰ Time</span>
+                        <strong style="color:#1F2933;font-size:14px;">${timeLabel(opts.meetingTime)} – ${timeLabel(opts.meetingEndTime)}</strong>
+                        <strong style="color:#1F2933;font-size:14px;">${opts.brokerName}</strong>
                       </td></tr>
                       <tr><td style="padding:6px 0;">
-                        <span style="color:#64748b;font-size:13px;display:inline-block;width:130px;">📡 Method</span>
-                        <strong style="color:#0f172a;font-size:14px;">${isVideoMeeting ? `${videoProviderLabel} Video Call` : "Phone Call"}</strong>
+                        <span style="color:#64748B;font-size:13px;display:inline-block;width:130px;">📡 Method</span>
+                        <strong style="color:#1F2933;font-size:14px;">${isVideoMeeting ? `${videoProviderLabel} Video Call` : "Phone Call"}</strong>
                       </td></tr>
                     </table>
                   </td></tr>
                 </table>
                 ${connectionHtml}
-                ${opts.notes ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;"><tr><td style="background-color:#f8fafc;border-radius:8px;padding:14px 18px;"><p style="margin:0 0 4px 0;color:#64748b;font-size:12px;font-weight:700;text-transform:uppercase;">Your Notes</p><p style="margin:0;color:#475569;font-size:14px;">${opts.notes}</p></td></tr></table>` : ""}
+                ${opts.notes ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;"><tr><td style="background-color:#F5F8FA;border-radius:8px;padding:14px 18px;"><p style="margin:0 0 4px 0;color:#64748B;font-size:12px;font-weight:700;text-transform:uppercase;">Your Notes</p><p style="margin:0;color:#3E4C59;font-size:14px;">${opts.notes}</p></td></tr></table>` : ""}
                 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;">
                   <tr>
                     <td align="center" style="padding-bottom:10px;">
@@ -38636,20 +42025,20 @@ function createServer() {
                   </tr>
                   <tr>
                     <td align="center" style="padding-bottom:10px;">
-                      <a href="${cancelUrl}" style="display:inline-block;background-color:#f1f5f9;color:#64748b;text-decoration:none;padding:12px 32px;border-radius:8px;font-size:13px;border:1px solid #e2e8f0;">Cancel Meeting</a>
+                      <a href="${cancelUrl}" style="display:inline-block;background-color:#F5F8FA;color:#64748B;text-decoration:none;padding:12px 32px;border-radius:8px;font-size:13px;border:1px solid #E8EFF4;">Cancel Meeting</a>
                     </td>
                   </tr>
                   <tr>
                     <td align="center">
-                      <p style="margin:0;color:#94a3b8;font-size:11px;">A calendar invite (.ics) is attached — open it to save this meeting to your calendar app.</p>
+                      <p style="margin:0;color:#9AA5B1;font-size:11px;">A calendar invite (.ics) is attached — open it to save this meeting to your calendar app.</p>
                     </td>
                   </tr>
                 </table>
-                <p style="margin:20px 0 0 0;color:#94a3b8;font-size:12px;text-align:center;">Questions? Reply to this email and we'll get back to you.</p>
+                <p style="margin:20px 0 0 0;color:#9AA5B1;font-size:12px;text-align:center;">Questions? Reply to this email and we'll get back to you.</p>
               </td></tr>
-              <tr><td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+              <tr><td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
                 <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">The Mortgage Professionals</p>
-                <p style="margin:0;color:#94a3b8;font-size:12px;">Your partner on the path to your new home</p>
+                <p style="margin:0;color:#9AA5B1;font-size:12px;">Your partner on the path to your new home</p>
               </td></tr>
             </table>
           </td></tr>
@@ -38708,54 +42097,54 @@ function createServer() {
       from: process.env.SMTP_FROM,
       to: opts.brokerEmail,
       subject: `New Meeting Scheduled — ${opts.clientName} on ${formattedDate}`,
-      html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/></head>
-      <body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+      html: `<!DOCTYPE html><html lang="en"><head>${EMAIL_FONT_LINK}<meta charset="UTF-8"/></head>
+      <body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
           <tr><td align="center">
             <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
               <tr><td style="background-color:#ffffff;padding:24px 32px;border-radius:16px 16px 0 0;border-bottom:3px solid #0A2F52;text-align:center;">
                 <img src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png" alt="The Mortgage Professionals" style="height:52px;width:auto;display:inline-block;"/>
               </td></tr>
               <tr><td style="background-color:#ffffff;padding:40px 32px 32px;">
-                <h2 style="margin:0 0 8px 0;color:#0f172a;font-size:22px;font-weight:700;">Hi ${opts.brokerName},</h2>
-                <p style="margin:0 0 24px 0;color:#475569;font-size:15px;">A new meeting has been scheduled:</p>
+                <h2 style="margin:0 0 8px 0;color:#1F2933;font-size:22px;font-weight:700;">Hi ${opts.brokerName},</h2>
+                <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;">A new meeting has been scheduled:</p>
                 <table width="100%" cellpadding="0" cellspacing="0" border="0">
                   <tr><td style="background-color:#FFF8EB;border:2px solid #0A2F52;border-radius:12px;padding:20px;">
                     <table width="100%" cellpadding="0" cellspacing="0" border="0">
                       <tr><td style="padding:6px 0;border-bottom:1px solid #F9A826;">
-                        <span style="color:#64748b;font-size:13px;width:140px;display:inline-block;">👤 Client</span>
-                        <strong style="color:#0f172a;font-size:14px;">${opts.clientName}</strong>
+                        <span style="color:#64748B;font-size:13px;width:140px;display:inline-block;">👤 Client</span>
+                        <strong style="color:#1F2933;font-size:14px;">${opts.clientName}</strong>
                       </td></tr>
                       <tr><td style="padding:6px 0;border-bottom:1px solid #F9A826;">
-                        <span style="color:#64748b;font-size:13px;width:140px;display:inline-block;">✉️ Email</span>
-                        <span style="color:#0f172a;font-size:14px;">${opts.clientEmail}</span>
+                        <span style="color:#64748B;font-size:13px;width:140px;display:inline-block;">✉️ Email</span>
+                        <span style="color:#1F2933;font-size:14px;">${opts.clientEmail}</span>
                       </td></tr>
-                      ${opts.clientPhone ? `<tr><td style="padding:6px 0;border-bottom:1px solid #F9A826;"><span style="color:#64748b;font-size:13px;width:140px;display:inline-block;">📱 Phone</span><span style="color:#0f172a;font-size:14px;">${opts.clientPhone}</span></td></tr>` : ""}
+                      ${opts.clientPhone ? `<tr><td style="padding:6px 0;border-bottom:1px solid #F9A826;"><span style="color:#64748B;font-size:13px;width:140px;display:inline-block;">📱 Phone</span><span style="color:#1F2933;font-size:14px;">${opts.clientPhone}</span></td></tr>` : ""}
                       <tr><td style="padding:6px 0;border-bottom:1px solid #F9A826;">
-                        <span style="color:#64748b;font-size:13px;width:140px;display:inline-block;">📅 Date</span>
-                        <strong style="color:#0f172a;font-size:14px;">${formattedDate}</strong>
+                        <span style="color:#64748B;font-size:13px;width:140px;display:inline-block;">📅 Date</span>
+                        <strong style="color:#1F2933;font-size:14px;">${formattedDate}</strong>
                       </td></tr>
                       <tr><td style="padding:6px 0;border-bottom:1px solid #F9A826;">
-                        <span style="color:#64748b;font-size:13px;width:140px;display:inline-block;">⏰ Time</span>
-                        <strong style="color:#0f172a;font-size:14px;">${timeLabel(opts.meetingTime)} – ${timeLabel(opts.meetingEndTime)}</strong>
+                        <span style="color:#64748B;font-size:13px;width:140px;display:inline-block;">⏰ Time</span>
+                        <strong style="color:#1F2933;font-size:14px;">${timeLabel(opts.meetingTime)} – ${timeLabel(opts.meetingEndTime)}</strong>
                       </td></tr>
                       <tr><td style="padding:6px 0;">
-                        <span style="color:#64748b;font-size:13px;width:140px;display:inline-block;">📡 Method</span>
-                        <strong style="color:#0f172a;font-size:14px;">${isVideoMeeting ? `${videoProviderLabel} Video Call` : "Phone Call"}</strong>
+                        <span style="color:#64748B;font-size:13px;width:140px;display:inline-block;">📡 Method</span>
+                        <strong style="color:#1F2933;font-size:14px;">${isVideoMeeting ? `${videoProviderLabel} Video Call` : "Phone Call"}</strong>
                       </td></tr>
                     </table>
                   </td></tr>
                 </table>
-                ${opts.videoRoomUrl ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;"><tr><td style="background-color:#e8f4fd;border-left:4px solid #2D8CFF;border-radius:0 8px 8px 0;padding:12px 16px;"><p style="margin:0 0 4px 0;color:#0f172a;font-size:13px;font-weight:700;">🎥 ${videoProviderLabel} — Client Join Link</p><a href="${opts.videoRoomUrl}" style="color:#2D8CFF;font-size:13px;">${opts.videoRoomUrl}</a>${opts.videoHostUrl ? `<p style="margin:8px 0 4px 0;color:#0f172a;font-size:13px;font-weight:700;">Host Link</p><a href="${opts.videoHostUrl}" style="color:#2D8CFF;font-size:13px;">Open host link</a>` : ""}</td></tr></table>` : ""}
-                ${opts.notes ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;"><tr><td style="background-color:#f8fafc;border-radius:8px;padding:12px 16px;"><p style="margin:0 0 4px 0;color:#64748b;font-size:12px;font-weight:700;text-transform:uppercase;">Client Notes</p><p style="margin:0;color:#475569;font-size:14px;">${opts.notes}</p></td></tr></table>` : ""}
+                ${opts.videoRoomUrl ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;"><tr><td style="background-color:#F5F8FA;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:12px 16px;"><p style="margin:0 0 4px 0;color:#1F2933;font-size:13px;font-weight:700;">🎥 ${videoProviderLabel} — Client Join Link</p><a href="${opts.videoRoomUrl}" style="color:#0A2F52;font-size:13px;">${opts.videoRoomUrl}</a>${opts.videoHostUrl ? `<p style="margin:8px 0 4px 0;color:#1F2933;font-size:13px;font-weight:700;">Host Link</p><a href="${opts.videoHostUrl}" style="color:#0A2F52;font-size:13px;">Open host link</a>` : ""}</td></tr></table>` : ""}
+                ${opts.notes ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;"><tr><td style="background-color:#F5F8FA;border-radius:8px;padding:12px 16px;"><p style="margin:0 0 4px 0;color:#64748B;font-size:12px;font-weight:700;text-transform:uppercase;">Client Notes</p><p style="margin:0;color:#3E4C59;font-size:14px;">${opts.notes}</p></td></tr></table>` : ""}
                 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;">
                   <tr><td align="center">
                     <a href="${adminUrl}" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">View in Scheduler</a>
                   </td></tr>
                 </table>
               </td></tr>
-              <tr><td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
-                <p style="margin:0;color:#94a3b8;font-size:12px;">The Mortgage Professionals Admin</p>
+              <tr><td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+                <p style="margin:0;color:#9AA5B1;font-size:12px;">The Mortgage Professionals Admin</p>
               </td></tr>
             </table>
           </td></tr>
@@ -38803,27 +42192,27 @@ function createServer() {
       from: process.env.SMTP_FROM,
       to: opts.email,
       subject: `Meeting Cancelled — ${formattedDate}`,
-      html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/></head>
-      <body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+      html: `<!DOCTYPE html><html lang="en"><head>${EMAIL_FONT_LINK}<meta charset="UTF-8"/></head>
+      <body style="margin:0;padding:0;background-color:#F5F8FA;font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#F5F8FA;padding:40px 16px;">
           <tr><td align="center">
             <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
               <tr><td style="background-color:#ffffff;padding:24px 32px;border-radius:16px 16px 0 0;border-bottom:3px solid #0A2F52;text-align:center;">
                 <img src="https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png" alt="The Mortgage Professionals" style="height:52px;width:auto;display:inline-block;"/>
               </td></tr>
               <tr><td style="background-color:#ffffff;padding:40px 32px 32px;">
-                <h2 style="margin:0 0 8px 0;color:#0f172a;font-size:22px;font-weight:700;">Hi ${opts.clientName},</h2>
-                <p style="margin:0 0 24px 0;color:#475569;font-size:15px;">Your meeting scheduled for <strong>${formattedDate} at ${timeLabel(opts.meetingTime)}</strong> with <strong>${opts.brokerName}</strong> has been cancelled${opts.cancelledBy === "broker" ? " by your mortgage banker" : ""}.</p>
-                ${opts.reason ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background-color:#fef2f2;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:14px 18px;"><p style="margin:0 0 4px 0;color:#0f172a;font-size:14px;font-weight:700;">Reason</p><p style="margin:0;color:#475569;font-size:14px;">${opts.reason}</p></td></tr></table>` : ""}
+                <h2 style="margin:0 0 8px 0;color:#1F2933;font-size:22px;font-weight:700;">Hi ${opts.clientName},</h2>
+                <p style="margin:0 0 24px 0;color:#3E4C59;font-size:15px;">Your meeting scheduled for <strong>${formattedDate} at ${timeLabel(opts.meetingTime)}</strong> with <strong>${opts.brokerName}</strong> has been cancelled${opts.cancelledBy === "broker" ? " by your mortgage banker" : ""}.</p>
+                ${opts.reason ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;"><tr><td style="background-color:#fef2f2;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:14px 18px;"><p style="margin:0 0 4px 0;color:#1F2933;font-size:14px;font-weight:700;">Reason</p><p style="margin:0;color:#3E4C59;font-size:14px;">${opts.reason}</p></td></tr></table>` : ""}
                 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;">
                   <tr><td align="center">
                     <a href="${scheduleUrl}" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Schedule a New Meeting</a>
                   </td></tr>
                 </table>
               </td></tr>
-              <tr><td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+              <tr><td style="background-color:#0A2F52;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
                 <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">The Mortgage Professionals</p>
-                <p style="margin:0;color:#94a3b8;font-size:12px;">Your partner on the path to your new home</p>
+                <p style="margin:0;color:#9AA5B1;font-size:12px;">Your partner on the path to your new home</p>
               </td></tr>
             </table>
           </td></tr>
@@ -42624,950 +46013,6 @@ function createServer() {
       }
     },
   );
-
-  // ─── Mortgi AI Assistant ──────────────────────────────────────────────────
-
-  // Helper: load Mortgi config from system_settings
-  async function getMortgiConfig(): Promise<Record<string, string>> {
-    const [rows] = await pool.query<any[]>(
-      `SELECT setting_key, setting_value FROM system_settings
-        WHERE tenant_id = ? AND setting_key LIKE 'mortgi_%'`,
-      [MORTGAGE_TENANT_ID],
-    );
-    const cfg: Record<string, string> = {};
-    for (const r of rows) cfg[r.setting_key] = r.setting_value ?? "";
-    return cfg;
-  }
-
-  // Helper: upsert a system_setting
-  async function upsertSetting(
-    key: string,
-    value: string,
-    type: string,
-    description: string,
-  ) {
-    await pool.query(
-      `INSERT INTO system_settings (tenant_id, setting_key, setting_value, setting_type, description)
-       VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), setting_type = VALUES(setting_type)`,
-      [MORTGAGE_TENANT_ID, key, value, type, description],
-    );
-  }
-
-  // Broker tool definitions (what the AI can call)
-  const BROKER_TOOL_DEFINITIONS: Groq.Chat.Completions.ChatCompletionTool[] = [
-    {
-      type: "function",
-      function: {
-        name: "get_pipeline_summary",
-        description:
-          "Get a count of loan applications grouped by status for today's pipeline overview.",
-        parameters: { type: "object", properties: {}, required: [] },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "get_overdue_tasks",
-        description:
-          "Get a list of tasks that are past their due date and not yet completed.",
-        parameters: { type: "object", properties: {}, required: [] },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "get_client_list",
-        description:
-          "Get a summary list of recent clients with their loan status.",
-        parameters: {
-          type: "object",
-          properties: {
-            limit: {
-              type: "number",
-              description:
-                "Max number of clients to return (default 10, max 25)",
-            },
-          },
-          required: [],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "get_monthly_metrics",
-        description:
-          "Get key metrics for the current month: total applications, closings, leads, and conversion rate.",
-        parameters: { type: "object", properties: {}, required: [] },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "get_recent_leads",
-        description: "Get the most recent leads with their source and status.",
-        parameters: {
-          type: "object",
-          properties: {
-            limit: {
-              type: "number",
-              description: "Max number of leads to return (default 10, max 25)",
-            },
-          },
-          required: [],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "get_communication_activity",
-        description:
-          "Get a count of SMS, email, messages sent in the last 7 days.",
-        parameters: { type: "object", properties: {}, required: [] },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "get_realtor_prospects",
-        description: "Get a summary of realtor prospecting pipeline by stage.",
-        parameters: { type: "object", properties: {}, required: [] },
-      },
-    }];
-
-  // Client tool definitions (strictly scoped to the authenticated client)
-  const CLIENT_TOOL_DEFINITIONS: Groq.Chat.Completions.ChatCompletionTool[] = [
-    {
-      type: "function",
-      function: {
-        name: "get_my_loan_status",
-        description:
-          "Get the status and details of the client's loan application(s).",
-        parameters: { type: "object", properties: {}, required: [] },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "get_my_pending_tasks",
-        description:
-          "Get a list of tasks the client still needs to complete for their loan.",
-        parameters: { type: "object", properties: {}, required: [] },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "get_my_documents",
-        description:
-          "Get the list of documents the client has uploaded and their status.",
-        parameters: { type: "object", properties: {}, required: [] },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "get_my_next_meeting",
-        description:
-          "Get information about the client's next scheduled meeting with their broker.",
-        parameters: { type: "object", properties: {}, required: [] },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "get_pre_approval_info",
-        description:
-          "Get the client's pre-approval letter details including approved amount.",
-        parameters: { type: "object", properties: {}, required: [] },
-      },
-    }];
-
-  // Execute a broker tool call safely (read-only, scoped to tenant)
-  async function executeBrokerTool(
-    toolName: string,
-    toolArgs: any,
-    brokerId: number,
-  ): Promise<string> {
-    const limit = Math.min(parseInt(toolArgs?.limit ?? "10", 10) || 10, 25);
-    try {
-      switch (toolName) {
-        case "get_pipeline_summary": {
-          const [rows] = await pool.query<any[]>(
-            `SELECT status, COUNT(*) AS count
-               FROM loan_applications
-              WHERE tenant_id = ?
-              GROUP BY status
-              ORDER BY count DESC`,
-            [MORTGAGE_TENANT_ID],
-          );
-          return JSON.stringify({ pipeline: rows });
-        }
-        case "get_overdue_tasks": {
-          const [rows] = await pool.query<any[]>(
-            `SELECT t.id, t.title, t.due_date, t.priority,
-                    la.application_number,
-                    CONCAT(c.first_name, ' ', c.last_name) AS client_name
-               FROM tasks t
-               JOIN loan_applications la ON la.id = t.application_id
-               JOIN clients c ON c.id = la.client_id
-              WHERE la.tenant_id = ?
-                AND t.status NOT IN ('completed','approved','cancelled')
-                AND t.due_date < CURDATE()
-              ORDER BY t.due_date ASC
-              LIMIT 20`,
-            [MORTGAGE_TENANT_ID],
-          );
-          return JSON.stringify({ overdue_tasks: rows, count: rows.length });
-        }
-        case "get_client_list": {
-          const [rows] = await pool.query<any[]>(
-            `SELECT c.id, CONCAT(c.first_name, ' ', c.last_name) AS name,
-                    c.email, c.phone, c.status, c.created_at,
-                    la.status AS loan_status, la.application_number
-               FROM clients c
-               LEFT JOIN loan_applications la ON la.client_id = c.id AND la.tenant_id = ?
-              WHERE c.tenant_id = ?
-              ORDER BY c.created_at DESC
-              LIMIT ?`,
-            [MORTGAGE_TENANT_ID, MORTGAGE_TENANT_ID, limit],
-          );
-          return JSON.stringify({ clients: rows });
-        }
-        case "get_monthly_metrics": {
-          const [rows] = await pool.query<any[]>(
-            `SELECT
-               COUNT(*) AS total_applications,
-               SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closings,
-               SUM(CASE WHEN status = 'funded' THEN 1 ELSE 0 END) AS funded,
-               SUM(CASE WHEN status IN ('pending','processing','approved') THEN 1 ELSE 0 END) AS in_progress
-             FROM loan_applications
-            WHERE tenant_id = ?
-              AND YEAR(created_at) = YEAR(CURDATE())
-              AND MONTH(created_at) = MONTH(CURDATE())`,
-            [MORTGAGE_TENANT_ID],
-          );
-          const [leadsRows] = await pool.query<any[]>(
-            `SELECT COUNT(*) AS total_leads
-               FROM leads
-              WHERE tenant_id = ?
-                AND YEAR(created_at) = YEAR(CURDATE())
-                AND MONTH(created_at) = MONTH(CURDATE())`,
-            [MORTGAGE_TENANT_ID],
-          );
-          return JSON.stringify({ metrics: rows[0], leads: leadsRows[0] });
-        }
-        case "get_recent_leads": {
-          const [rows] = await pool.query<any[]>(
-            `SELECT id, CONCAT(first_name, ' ', last_name) AS name,
-                    email, phone, lead_source, status, created_at
-               FROM leads
-              WHERE tenant_id = ?
-              ORDER BY created_at DESC
-              LIMIT ?`,
-            [MORTGAGE_TENANT_ID, limit],
-          );
-          return JSON.stringify({ leads: rows });
-        }
-        case "get_communication_activity": {
-          const [rows] = await pool.query<any[]>(
-            `SELECT communication_type, direction, COUNT(*) AS count
-               FROM communications
-              WHERE tenant_id = ?
-                AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-              GROUP BY communication_type, direction`,
-            [MORTGAGE_TENANT_ID],
-          );
-          return JSON.stringify({ activity_last_7_days: rows });
-        }
-        case "get_realtor_prospects": {
-          const [rows] = await pool.query<any[]>(
-            `SELECT stage, COUNT(*) AS count
-               FROM realtor_prospects
-              WHERE tenant_id = ?
-              GROUP BY stage
-              ORDER BY count DESC`,
-            [MORTGAGE_TENANT_ID],
-          );
-          return JSON.stringify({ realtor_pipeline: rows });
-        }
-        default:
-          return JSON.stringify({ error: "Unknown tool" });
-      }
-    } catch (err: any) {
-      console.error(`Mortgi broker tool error [${toolName}]:`, err);
-      return JSON.stringify({ error: "Failed to retrieve data" });
-    }
-  }
-
-  // Execute a client tool call safely (strictly scoped to client's own data)
-  async function executeClientTool(
-    toolName: string,
-    _toolArgs: any,
-    clientId: number,
-  ): Promise<string> {
-    try {
-      switch (toolName) {
-        case "get_my_loan_status": {
-          const [rows] = await pool.query<any[]>(
-            `SELECT la.id, la.application_number, la.status, la.loan_type,
-                    la.loan_amount, la.property_address, la.created_at,
-                    la.estimated_close_date,
-                    CONCAT(b.first_name, ' ', b.last_name) AS broker_name,
-                    b.email AS broker_email, b.phone AS broker_phone
-               FROM loan_applications la
-               LEFT JOIN brokers b ON b.id = la.broker_id
-              WHERE la.client_id = ? AND la.tenant_id = ?
-              ORDER BY la.created_at DESC
-              LIMIT 5`,
-            [clientId, MORTGAGE_TENANT_ID],
-          );
-          return JSON.stringify({ loans: rows });
-        }
-        case "get_my_pending_tasks": {
-          const [rows] = await pool.query<any[]>(
-            `SELECT t.id, t.title, t.description, t.status, t.priority, t.due_date
-               FROM tasks t
-               JOIN loan_applications la ON la.id = t.application_id
-              WHERE la.client_id = ? AND la.tenant_id = ?
-                AND t.status NOT IN ('completed','approved','cancelled')
-              ORDER BY t.due_date ASC
-              LIMIT 20`,
-            [clientId, MORTGAGE_TENANT_ID],
-          );
-          return JSON.stringify({ pending_tasks: rows, count: rows.length });
-        }
-        case "get_my_documents": {
-          const [rows] = await pool.query<any[]>(
-            `SELECT d.id, d.document_type, d.file_url, d.created_at,
-                    t.title AS task_title
-               FROM documents d
-               JOIN tasks t ON t.id = d.task_id
-               JOIN loan_applications la ON la.id = t.application_id
-              WHERE la.client_id = ? AND la.tenant_id = ?
-              ORDER BY d.created_at DESC
-              LIMIT 25`,
-            [clientId, MORTGAGE_TENANT_ID],
-          );
-          return JSON.stringify({ documents: rows, count: rows.length });
-        }
-        case "get_my_next_meeting": {
-          const [rows] = await pool.query<any[]>(
-            `SELECT sm.id, sm.start_time, sm.end_time, sm.meeting_type,
-                    sm.notes, sm.meeting_url,
-                    CONCAT(b.first_name, ' ', b.last_name) AS broker_name
-               FROM scheduled_meetings sm
-               LEFT JOIN brokers b ON b.id = sm.broker_id
-              WHERE sm.client_id = ? AND sm.tenant_id = ?
-                AND sm.start_time >= NOW()
-                AND sm.status = 'confirmed'
-              ORDER BY sm.start_time ASC
-              LIMIT 1`,
-            [clientId, MORTGAGE_TENANT_ID],
-          );
-          return JSON.stringify({ next_meeting: rows[0] ?? null });
-        }
-        case "get_pre_approval_info": {
-          const [rows] = await pool.query<any[]>(
-            `SELECT pal.id, pal.approved_amount, pal.expiry_date,
-                    pal.created_at, la.application_number
-               FROM pre_approval_letters pal
-               JOIN loan_applications la ON la.id = pal.application_id
-              WHERE la.client_id = ? AND la.tenant_id = ?
-              ORDER BY pal.created_at DESC
-              LIMIT 1`,
-            [clientId, MORTGAGE_TENANT_ID],
-          );
-          return JSON.stringify({ pre_approval: rows[0] ?? null });
-        }
-        default:
-          return JSON.stringify({ error: "Unknown tool" });
-      }
-    } catch (err: any) {
-      console.error(`Mortgi client tool error [${toolName}]:`, err);
-      return JSON.stringify({ error: "Failed to retrieve data" });
-    }
-  }
-
-  // POST /api/ai/chat — unified for broker and client (tries broker JWT, then client JWT)
-  expressApp.post("/api/ai/chat", async (req, res) => {
-    try {
-      const authHeader = req.headers.authorization;
-      if (!authHeader?.startsWith("Bearer ")) {
-        return res.status(401).json({ success: false, error: "Unauthorized" });
-      }
-      const token = authHeader.substring(7);
-
-      let userType: "broker" | "client";
-      let userId: number;
-      let userName: string = "User";
-
-      // Decode JWT to determine user type
-      let decoded: any;
-      try {
-        decoded = jwt.verify(token, JWT_SECRET, {
-          algorithms: ["HS256"],
-        }) as any;
-      } catch {
-        return res.status(401).json({ success: false, error: "Invalid token" });
-      }
-
-      if (decoded.userType === "broker") {
-        userType = "broker";
-        userId = decoded.brokerId;
-        // Quick broker lookup
-        const [brokerRows] = await pool.query<any[]>(
-          `SELECT first_name, last_name, role FROM brokers WHERE id = ? AND status = 'active' AND tenant_id = ?`,
-          [userId, MORTGAGE_TENANT_ID],
-        );
-        if (!brokerRows.length)
-          return res
-            .status(401)
-            .json({ success: false, error: "Broker not found" });
-        userName = `${brokerRows[0].first_name} ${brokerRows[0].last_name}`;
-      } else if (decoded.userType === "client") {
-        userType = "client";
-        userId = decoded.clientId;
-        const [clientRows] = await pool.query<any[]>(
-          `SELECT first_name, last_name FROM clients WHERE id = ? AND status = 'active' AND tenant_id = ?`,
-          [userId, MORTGAGE_TENANT_ID],
-        );
-        if (!clientRows.length)
-          return res
-            .status(401)
-            .json({ success: false, error: "Client not found" });
-        userName = `${clientRows[0].first_name} ${clientRows[0].last_name}`;
-      } else {
-        return res.status(403).json({ success: false, error: "Access denied" });
-      }
-
-      // Validate request body
-      const { message, session_key } = req.body as {
-        message: string;
-        session_key: string;
-      };
-      if (!message?.trim() || message.length > 2000) {
-        return res
-          .status(400)
-          .json({ success: false, error: "Invalid message" });
-      }
-      if (!session_key?.trim() || session_key.length > 64) {
-        return res
-          .status(400)
-          .json({ success: false, error: "Invalid session_key" });
-      }
-
-      // Load Mortgi config
-      const cfg = await getMortgiConfig();
-      if (cfg.mortgi_enabled === "false") {
-        return res.status(503).json({
-          success: false,
-          error: "Mortgi assistant is currently disabled.",
-        });
-      }
-      if (userType === "broker" && cfg.mortgi_broker_enabled === "false") {
-        return res.status(503).json({
-          success: false,
-          error: "Mortgi is disabled for the admin portal.",
-        });
-      }
-      if (userType === "client" && cfg.mortgi_client_enabled === "false") {
-        return res.status(503).json({
-          success: false,
-          error: "Mortgi is disabled for the client portal.",
-        });
-      }
-
-      // Daily rate limit
-      const dailyLimit =
-        parseInt(cfg.mortgi_daily_message_limit ?? "50", 10) || 50;
-      const [limitRows] = await pool.query<any[]>(
-        `SELECT COALESCE(SUM(JSON_LENGTH(messages) / 2), 0) AS msg_count
-           FROM ai_chat_sessions
-          WHERE user_type = ? AND user_id = ? AND tenant_id = ?
-            AND DATE(created_at) = CURDATE()`,
-        [userType, userId, MORTGAGE_TENANT_ID],
-      );
-      const todayCount = Number(limitRows[0]?.msg_count ?? 0);
-      if (todayCount >= dailyLimit) {
-        return res.status(429).json({
-          success: false,
-          error: `Daily message limit of ${dailyLimit} reached. Please try again tomorrow.`,
-        });
-      }
-
-      if (!groqClient) {
-        return res.status(503).json({
-          success: false,
-          error:
-            "AI service not configured. Please contact your administrator.",
-        });
-      }
-
-      // Load or create session
-      const [sessionRows] = await pool.query<any[]>(
-        `SELECT id, messages FROM ai_chat_sessions WHERE session_key = ? AND user_type = ? AND user_id = ?`,
-        [session_key, userType, userId],
-      );
-
-      let sessionId: number | null = null;
-      let history: Array<{ role: string; content: string }> = [];
-
-      if (sessionRows.length > 0) {
-        sessionId = sessionRows[0].id;
-        try {
-          history = JSON.parse(sessionRows[0].messages ?? "[]");
-        } catch {
-          history = [];
-        }
-      }
-
-      // Keep history bounded (last 20 exchanges = 40 messages)
-      if (history.length > 40) history = history.slice(-40);
-
-      // Build system prompt
-      const enabledBrokerTools: string[] = (() => {
-        try {
-          return JSON.parse(cfg.mortgi_broker_tools ?? "[]");
-        } catch {
-          return [];
-        }
-      })();
-      const enabledClientTools: string[] = (() => {
-        try {
-          return JSON.parse(cfg.mortgi_client_tools ?? "[]");
-        } catch {
-          return [];
-        }
-      })();
-
-      const customPrompt = cfg.mortgi_system_prompt?.trim();
-      const todayStr = new Date().toLocaleDateString("en-US", {
-        weekday: "long",
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      });
-
-      const brokerSystemPrompt =
-        customPrompt ||
-        `You are Mortgi, an intelligent AI assistant for mortgage professionals. Today is ${todayStr}. You are helping ${userName}, a mortgage banker/broker. You have access to real-time data from the platform through tool calls. Be concise, professional, and data-driven. Format numbers nicely (e.g., dollar amounts with $, percentages). When showing lists, use brief bullet points. Never make up data — always use tools to fetch real information.`;
-
-      const clientSystemPrompt =
-        customPrompt ||
-        `You are Mortgi, a friendly AI assistant for home buyers. Today is ${todayStr}. You are helping ${userName} with their mortgage application. You can look up their loan status, pending tasks, and documents. Be warm, clear, and reassuring. Avoid jargon — use simple language. Never reveal information about other clients. Only answer mortgage-related questions.`;
-
-      const systemPrompt =
-        userType === "broker" ? brokerSystemPrompt : clientSystemPrompt;
-
-      // Filter tools by enabled config
-      const availableTools =
-        userType === "broker"
-          ? BROKER_TOOL_DEFINITIONS.filter((t) =>
-              enabledBrokerTools.includes(t.function.name),
-            )
-          : CLIENT_TOOL_DEFINITIONS.filter((t) =>
-              enabledClientTools.includes(t.function.name),
-            );
-
-      // Build messages for Groq
-      const messages: Groq.Chat.Completions.ChatCompletionMessageParam[] = [
-        { role: "system", content: systemPrompt },
-        ...history.map((h) => ({ role: h.role as any, content: h.content })),
-        { role: "user", content: message.trim() }];
-
-      // First Groq call (may include tool calls)
-      let completion = await groqClient.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
-        messages,
-        tools: availableTools.length > 0 ? availableTools : undefined,
-        tool_choice: availableTools.length > 0 ? "auto" : undefined,
-        max_tokens: 1024,
-        temperature: 0.3,
-      });
-
-      let finalReply = "";
-      let tokensUsed = completion.usage?.total_tokens ?? 0;
-
-      // Handle tool calls (up to 5 rounds to prevent infinite loops)
-      let rounds = 0;
-      while (
-        completion.choices[0]?.finish_reason === "tool_calls" &&
-        rounds < 5
-      ) {
-        rounds++;
-        const assistantMessage = completion.choices[0].message;
-        messages.push(assistantMessage as any);
-
-        // Execute each tool call
-        const toolResults: Groq.Chat.Completions.ChatCompletionToolMessageParam[] =
-          [];
-        for (const toolCall of assistantMessage.tool_calls ?? []) {
-          let args: any = {};
-          try {
-            args = JSON.parse(toolCall.function.arguments ?? "{}");
-          } catch {}
-
-          const result =
-            userType === "broker"
-              ? await executeBrokerTool(toolCall.function.name, args, userId)
-              : await executeClientTool(toolCall.function.name, args, userId);
-
-          toolResults.push({
-            role: "tool",
-            tool_call_id: toolCall.id,
-            content: result,
-          });
-        }
-
-        messages.push(...toolResults);
-
-        // Follow-up call with tool results
-        completion = await groqClient.chat.completions.create({
-          model: "llama-3.3-70b-versatile",
-          messages,
-          tools: availableTools.length > 0 ? availableTools : undefined,
-          tool_choice: availableTools.length > 0 ? "auto" : undefined,
-          max_tokens: 1024,
-          temperature: 0.3,
-        });
-        tokensUsed += completion.usage?.total_tokens ?? 0;
-      }
-
-      finalReply =
-        completion.choices[0]?.message?.content?.trim() ??
-        "I'm sorry, I couldn't generate a response. Please try again.";
-
-      // Update conversation history (store only user/assistant turns, not tool calls)
-      const newHistory = [
-        ...history,
-        { role: "user", content: message.trim() },
-        { role: "assistant", content: finalReply }];
-
-      // Upsert session
-      if (sessionId) {
-        await pool.query(
-          `UPDATE ai_chat_sessions SET messages = ?, tokens_used = tokens_used + ?, updated_at = NOW()
-            WHERE id = ?`,
-          [JSON.stringify(newHistory), tokensUsed, sessionId],
-        );
-      } else {
-        await pool.query(
-          `INSERT INTO ai_chat_sessions (tenant_id, user_type, user_id, session_key, messages, tokens_used)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-          [
-            MORTGAGE_TENANT_ID,
-            userType,
-            userId,
-            session_key,
-            JSON.stringify(newHistory),
-            tokensUsed],
-        );
-      }
-
-      return res.json({
-        success: true,
-        reply: finalReply,
-        session_key,
-        tokens_used: tokensUsed,
-      });
-    } catch (error: any) {
-      // Groq rate limit / quota exceeded — auto-disable Mortgi
-      if (error?.status === 429) {
-        try {
-          await upsertSetting(
-            "mortgi_enabled",
-            "false",
-            "boolean",
-            "Master switch for Mortgi AI assistant",
-          );
-          await upsertSetting(
-            "mortgi_quota_exceeded",
-            "true",
-            "boolean",
-            "Auto-set to true when Groq API rate limit is hit",
-          );
-          await upsertSetting(
-            "mortgi_quota_exceeded_at",
-            new Date().toISOString(),
-            "string",
-            "ISO timestamp of when the quota was last exceeded",
-          );
-        } catch {
-          /* ignore */
-        }
-        return res.status(503).json({
-          success: false,
-          error:
-            "AI quota exhausted. Mortgi has been automatically disabled. Please contact your system administrator to restore access.",
-        });
-      }
-      console.error("Mortgi chat error:", error);
-      return res.status(500).json({
-        success: false,
-        error: "Failed to process your message. Please try again.",
-      });
-    }
-  });
-
-  // GET /api/ai/config — get Mortgi configuration (broker only)
-  expressApp.get("/api/ai/config", verifyBrokerSession, async (req, res) => {
-    try {
-      const cfg = await getMortgiConfig();
-      return res.json({
-        success: true,
-        config: {
-          mortgi_enabled: cfg.mortgi_enabled !== "false",
-          mortgi_client_enabled: cfg.mortgi_client_enabled !== "false",
-          mortgi_broker_enabled: cfg.mortgi_broker_enabled !== "false",
-          mortgi_system_prompt: cfg.mortgi_system_prompt ?? "",
-          mortgi_daily_message_limit:
-            parseInt(cfg.mortgi_daily_message_limit ?? "50", 10) || 50,
-          mortgi_broker_tools: (() => {
-            try {
-              return JSON.parse(cfg.mortgi_broker_tools ?? "[]");
-            } catch {
-              return [];
-            }
-          })(),
-          mortgi_client_tools: (() => {
-            try {
-              return JSON.parse(cfg.mortgi_client_tools ?? "[]");
-            } catch {
-              return [];
-            }
-          })(),
-          mortgi_quota_exceeded: cfg.mortgi_quota_exceeded === "true",
-          mortgi_quota_exceeded_at: cfg.mortgi_quota_exceeded_at ?? "",
-        },
-      });
-    } catch (error: any) {
-      console.error("Mortgi config fetch error:", error);
-      return res
-        .status(500)
-        .json({ success: false, error: "Failed to load Mortgi config" });
-    }
-  });
-
-  // PUT /api/ai/config — update Mortgi configuration (broker only)
-  expressApp.put("/api/ai/config", verifyBrokerSession, async (req, res) => {
-    try {
-      const broker = (req as any).broker;
-      if (broker.role !== "admin") {
-        return res.status(403).json({
-          success: false,
-          error: "Only admins can update Mortgi config",
-        });
-      }
-
-      const body = req.body as {
-        mortgi_enabled?: boolean;
-        mortgi_client_enabled?: boolean;
-        mortgi_broker_enabled?: boolean;
-        mortgi_system_prompt?: string;
-        mortgi_daily_message_limit?: number;
-        mortgi_broker_tools?: string[];
-        mortgi_client_tools?: string[];
-      };
-
-      const updates: Array<[string, string, string, string]> = [];
-
-      if (body.mortgi_enabled !== undefined)
-        updates.push([
-          "mortgi_enabled",
-          String(body.mortgi_enabled),
-          "boolean",
-          "Master switch for Mortgi AI assistant"]);
-      if (body.mortgi_client_enabled !== undefined)
-        updates.push([
-          "mortgi_client_enabled",
-          String(body.mortgi_client_enabled),
-          "boolean",
-          "Enable Mortgi for client portal"]);
-      if (body.mortgi_broker_enabled !== undefined)
-        updates.push([
-          "mortgi_broker_enabled",
-          String(body.mortgi_broker_enabled),
-          "boolean",
-          "Enable Mortgi for admin/broker portal"]);
-      if (body.mortgi_system_prompt !== undefined)
-        updates.push([
-          "mortgi_system_prompt",
-          body.mortgi_system_prompt.slice(0, 2000),
-          "string",
-          "Custom system prompt override"]);
-      if (body.mortgi_daily_message_limit !== undefined)
-        updates.push([
-          "mortgi_daily_message_limit",
-          String(Math.max(1, Math.min(500, body.mortgi_daily_message_limit))),
-          "number",
-          "Max messages per user per day"]);
-      if (body.mortgi_broker_tools !== undefined)
-        updates.push([
-          "mortgi_broker_tools",
-          JSON.stringify(body.mortgi_broker_tools),
-          "json",
-          "Enabled broker tools"]);
-      if (body.mortgi_client_tools !== undefined)
-        updates.push([
-          "mortgi_client_tools",
-          JSON.stringify(body.mortgi_client_tools),
-          "json",
-          "Enabled client tools"]);
-
-      for (const [key, value, type, desc] of updates) {
-        await upsertSetting(key, value, type, desc);
-      }
-
-      // If re-enabling Mortgi, clear the quota-exceeded flag
-      if (body.mortgi_enabled === true) {
-        await upsertSetting(
-          "mortgi_quota_exceeded",
-          "false",
-          "boolean",
-          "Auto-set to true when Groq API rate limit is hit",
-        );
-        await upsertSetting(
-          "mortgi_quota_exceeded_at",
-          "",
-          "string",
-          "ISO timestamp of when the quota was last exceeded",
-        );
-      }
-
-      return res.json({
-        success: true,
-        message: "Mortgi configuration updated",
-      });
-    } catch (error: any) {
-      console.error("Mortgi config update error:", error);
-      return res
-        .status(500)
-        .json({ success: false, error: "Failed to update Mortgi config" });
-    }
-  });
-
-  // GET /api/ai/history — get recent chat sessions (broker only)
-  expressApp.get("/api/ai/history", verifyBrokerSession, async (req, res) => {
-    try {
-      const page = Math.max(1, parseInt((req.query.page as string) || "1", 10));
-      const limit = Math.min(
-        50,
-        parseInt((req.query.limit as string) || "20", 10),
-      );
-      const offset = (page - 1) * limit;
-
-      const [rows] = await pool.query<any[]>(
-        `SELECT s.id, s.user_type, s.user_id, s.tokens_used,
-                JSON_LENGTH(s.messages) AS messages_count,
-                s.created_at, s.updated_at,
-                CASE s.user_type
-                  WHEN 'broker' THEN CONCAT(b.first_name, ' ', b.last_name)
-                  WHEN 'client' THEN CONCAT(c.first_name, ' ', c.last_name)
-                  ELSE 'Unknown'
-                END AS user_name
-           FROM ai_chat_sessions s
-           LEFT JOIN brokers b ON b.id = s.user_id AND s.user_type = 'broker'
-           LEFT JOIN clients c ON c.id = s.user_id AND s.user_type = 'client'
-          WHERE s.tenant_id = ?
-          ORDER BY s.updated_at DESC
-          LIMIT ? OFFSET ?`,
-        [MORTGAGE_TENANT_ID, limit, offset],
-      );
-
-      const [countRows] = await pool.query<any[]>(
-        `SELECT COUNT(*) AS total FROM ai_chat_sessions WHERE tenant_id = ?`,
-        [MORTGAGE_TENANT_ID],
-      );
-
-      return res.json({
-        success: true,
-        sessions: rows.map((r) => ({
-          id: r.id,
-          user_type: r.user_type,
-          user_id: r.user_id,
-          user_name: r.user_name,
-          messages_count: Math.floor((r.messages_count ?? 0) / 2),
-          tokens_used: r.tokens_used,
-          created_at: r.created_at,
-          updated_at: r.updated_at,
-        })),
-        total: countRows[0]?.total ?? 0,
-      });
-    } catch (error: any) {
-      console.error("Mortgi history fetch error:", error);
-      return res
-        .status(500)
-        .json({ success: false, error: "Failed to fetch chat history" });
-    }
-  });
-
-  // DELETE /api/ai/history/:id — delete a chat session (broker admin only)
-  expressApp.delete(
-    "/api/ai/history/:id",
-    verifyBrokerSession,
-    async (req, res) => {
-      try {
-        const broker = (req as any).broker;
-        if (broker.role !== "admin") {
-          return res.status(403).json({
-            success: false,
-            error: "Only admins can delete chat sessions",
-          });
-        }
-        const sessionId = parseInt(req.params.id as string, 10);
-        if (!Number.isFinite(sessionId))
-          return res
-            .status(400)
-            .json({ success: false, error: "Invalid session id" });
-
-        await pool.query(
-          `DELETE FROM ai_chat_sessions WHERE id = ? AND tenant_id = ?`,
-          [sessionId, MORTGAGE_TENANT_ID],
-        );
-        return res.json({ success: true });
-      } catch (error: any) {
-        console.error("Mortgi delete session error:", error);
-        return res
-          .status(500)
-          .json({ success: false, error: "Failed to delete session" });
-      }
-    },
-  );
-
-  // GET /api/ai/usage — aggregated token and session stats (broker only)
-  expressApp.get("/api/ai/usage", verifyBrokerSession, async (req, res) => {
-    try {
-      const [rows] = await pool.query<any[]>(
-        `SELECT
-           COALESCE(SUM(tokens_used), 0)                                                              AS tokens_total,
-           COALESCE(SUM(CASE WHEN DATE(updated_at) = CURDATE() THEN tokens_used ELSE 0 END), 0)      AS tokens_today,
-           COUNT(*)                                                                                    AS sessions_total,
-           COALESCE(SUM(CASE WHEN DATE(updated_at) = CURDATE() THEN 1 ELSE 0 END), 0)               AS sessions_today
-         FROM ai_chat_sessions WHERE tenant_id = ?`,
-        [MORTGAGE_TENANT_ID],
-      );
-      const cfg = await getMortgiConfig();
-      return res.json({
-        success: true,
-        usage: {
-          tokens_total: Number(rows[0]?.tokens_total ?? 0),
-          tokens_today: Number(rows[0]?.tokens_today ?? 0),
-          sessions_total: Number(rows[0]?.sessions_total ?? 0),
-          sessions_today: Number(rows[0]?.sessions_today ?? 0),
-        },
-        quota_exceeded: cfg.mortgi_quota_exceeded === "true",
-        quota_exceeded_at: cfg.mortgi_quota_exceeded_at ?? "",
-      });
-    } catch (error: any) {
-      console.error("Mortgi usage fetch error:", error);
-      return res
-        .status(500)
-        .json({ success: false, error: "Failed to load usage stats" });
-    }
-  });
 
   // 404 handler - only for API routes
   expressApp.use("/api", (_req, res, next) => {

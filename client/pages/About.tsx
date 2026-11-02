@@ -8,8 +8,6 @@ import {
   Home,
   Star,
   ArrowRight,
-  MapPin,
-  Phone,
   Mail,
   Shield,
   TrendingUp,
@@ -20,47 +18,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { MetaHelmet } from "@/components/MetaHelmet";
 
-// ─── Team data (sourced from broker_profiles + brokers) ─────────────────────
-
-// Team and stats are hidden until the company confirms them (they came from the
-// real-state template). Set to true once this content has been verified.
+// Stats are hidden until the company confirms them.
 const SHOW_UNVERIFIED_COMPANY_CONTENT = false;
-
-const TEAM = [
-  {
-    name: "Daniel Carrillo",
-    title: "Mortgage Banker",
-    nmls: "380277",
-    bio: "Sharing my expertise to personally assist thousands of families with sustainable home financing for the past 24 years. Daniel's deep roots in the local community make him the go-to advisor for first-time buyers and seasoned investors alike.",
-    years: 24,
-    avatar:
-      "https://disruptinglabs.com/data/api/data/encore-profiles/profile-3/main_image/69a914674dc84_1772688487.png",
-    address: "15111 Whittier Blvd Suite 101-B, Whittier, CA 90603",
-    specialties: ["FHA", "VA", "Conventional", "Self-Employed"],
-  },
-  {
-    name: "Alex Gomez",
-    title: "Mortgage Banker",
-    nmls: null,
-    bio: "Alex brings a passion for technology-driven mortgage solutions that simplify the homebuying journey. With deep expertise in FHA programs, Alex has helped hundreds of families achieve homeownership across Southern California.",
-    years: null,
-    avatar:
-      "https://disruptinglabs.com/data/api/data/encore-profiles/profile-1/main_image/69a6138f45544_1772491663.png",
-    address: "3301 Lyon St, San Francisco, CA 94123",
-    specialties: ["FHA Loans", "First-Time Buyers", "Digital Mortgage"],
-  },
-  {
-    name: "Hebert Montecinos",
-    title: "Mortgage Banker",
-    nmls: null,
-    bio: "Hebert specializes in investment properties and refinancing strategies that unlock equity and maximize wealth for his clients. His analytical approach and market knowledge have helped investors grow their portfolios with smart financing.",
-    years: null,
-    avatar:
-      "https://disruptinglabs.com/data/api/data/encore-profiles/profile-4/main_image/69a635b968a3d_1772500409.png",
-    address: null,
-    specialties: ["Investment Properties", "Refinancing", "Jumbo Loans"],
-  },
-];
 
 const VALUES = [
   {
@@ -104,7 +63,7 @@ const About: React.FC = () => {
       <MetaHelmet
         title="About Us | The Mortgage Professionals"
         description="Learn about The Mortgage Professionals's story, our team of experienced mortgage bankers, and our mission to make homeownership accessible to every family."
-        keywords="The Mortgage Professionals, about us, mortgage banker, Whittier CA, home loans team"
+        keywords="The Mortgage Professionals, about us, mortgage banker, home loans team"
       />
 
       {/* Hero */}
@@ -126,7 +85,7 @@ const About: React.FC = () => {
               </Badge>
               <h1 className="text-4xl font-black tracking-tight sm:text-5xl md:text-6xl mb-6">
                 Built for{" "}
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-red-600">
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-accent">
                   Your Community
                 </span>
               </h1>
@@ -235,105 +194,6 @@ const About: React.FC = () => {
         </div>
       </section>
 
-      {/* Team */}
-      {SHOW_UNVERIFIED_COMPANY_CONTENT && (
-      <section className="py-16 md:py-24 bg-muted/30">
-        <div className="container">
-          <div className="text-center mb-12">
-            <Badge className="mb-3 bg-primary/10 text-primary border-primary/20">
-              <Award className="mr-2 h-3.5 w-3.5" />
-              Meet the Team
-            </Badge>
-            <h2 className="text-3xl font-bold tracking-tight md:text-4xl mb-3">
-              Your Mortgage Bankers
-            </h2>
-            <p className="text-muted-foreground max-w-xl mx-auto">
-              Real people with real expertise — dedicated to your homeownership
-              journey.
-            </p>
-          </div>
-          <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3 items-stretch">
-            {TEAM.map((member, i) => (
-              <motion.div
-                key={member.name}
-                className="h-full"
-                initial={{ opacity: 0, y: 24 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.15 }}
-              >
-                <Card className="overflow-hidden hover:shadow-xl transition-all group text-center h-full flex flex-col">
-                  {/* Circle avatar */}
-                  <div className="flex flex-col items-center pt-8 pb-4 bg-gradient-to-b from-primary/5 to-transparent shrink-0">
-                    <div className="h-32 w-32 rounded-full overflow-hidden ring-4 ring-white dark:ring-background border-[3px] border-primary shadow-lg transition-transform duration-300 group-hover:scale-105">
-                      {member.avatar ? (
-                        <img
-                          src={member.avatar}
-                          alt={member.name}
-                          className="h-full w-full object-cover object-top"
-                        />
-                      ) : (
-                        <div className="h-full w-full bg-primary flex items-center justify-center text-white text-3xl font-bold">
-                          {member.name
-                            .split(" ")
-                            .map((n) => n[0])
-                            .join("")}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <CardContent className="px-5 pb-6 pt-2 space-y-3 flex flex-col flex-1">
-                    <div>
-                      <h3 className="text-lg font-bold">{member.name}</h3>
-                      <p className="text-sm text-primary font-semibold">
-                        {member.title}
-                      </p>
-                      {member.nmls && (
-                        <p className="text-xs text-muted-foreground">
-                          NMLS #{member.nmls}
-                        </p>
-                      )}
-                    </div>
-                    <p className="text-sm text-muted-foreground leading-relaxed">
-                      {member.bio}
-                    </p>
-
-                    {/* Specialties */}
-                    <div className="flex flex-wrap gap-1.5 justify-center">
-                      {member.specialties.map((s) => (
-                        <span
-                          key={s}
-                          className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary"
-                        >
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-
-                    {/* Contact info */}
-                    <div className="pt-2 border-t border-border/50 space-y-1.5 mt-auto">
-                      {member.years && (
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <Star className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-                          <span>{member.years} years of experience</span>
-                        </div>
-                      )}
-                      {member.address && (
-                        <div className="flex items-start gap-2 text-xs text-muted-foreground">
-                          <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5 text-primary" />
-                          <span>{member.address}</span>
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-      )}
-
       {/* CTA */}
       <section className="py-16 md:py-24">
         <div className="container">
@@ -351,11 +211,9 @@ const About: React.FC = () => {
                   Apply Now <ArrowRight className="h-4 w-4" />
                 </Button>
               </Link>
-              <a href="tel:+15623370000">
-                <Button size="lg" variant="secondary" className="gap-2">
-                  <Phone className="h-4 w-4" /> (562) 337-0000
-                </Button>
-              </a>
+              <Link to="/contact">
+                <Button size="lg" variant="secondary" className="gap-2">Contact Us</Button>
+              </Link>
             </div>
           </div>
         </div>

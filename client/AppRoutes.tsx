@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import Index from "./pages/Index";
+import LoanCalculator from "./pages/admin/LoanCalculator";
 import Billing from "./pages/admin/Billing";
 import BrokerLogin from "./pages/BrokerLogin";
 import ClientLogin from "./pages/ClientLogin";
@@ -381,6 +382,22 @@ const AppRoutes = () => (
       element={
         <AdminLayout>
           <Brokers />
+        </AdminLayout>
+      }
+    />
+    <Route
+      path="/admin/loan-calculator"
+      element={
+        <AdminLayout>
+          <LoanCalculator />
+        </AdminLayout>
+      }
+    />
+    <Route
+      path="/admin/loan-calculator/:kind"
+      element={
+        <AdminLayout>
+          <LoanCalculator />
         </AdminLayout>
       }
     />

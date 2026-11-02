@@ -2,18 +2,18 @@
 export const STRIPE_APPEARANCE = {
   theme: "stripe" as const,
   variables: {
-    colorPrimary: "#e8192c",
+    colorPrimary: "#0A2F52",
     colorBackground: "hsl(var(--card))",
     colorText: "hsl(var(--foreground))",
     colorDanger: "hsl(var(--destructive))",
-    fontFamily: "Inter, system-ui, sans-serif",
+    fontFamily: "'DM Sans', system-ui, sans-serif",
     borderRadius: "12px",
     spacingUnit: "4px",
   },
   rules: {
     ".Input": { border: "1px solid hsl(var(--border))", boxShadow: "none" },
     ".Tab": { border: "1px solid hsl(var(--border))" },
-    ".Tab--selected": { borderColor: "#e8192c" },
+    ".Tab--selected": { borderColor: "#0A2F52" },
   },
 };
 

@@ -2332,6 +2332,7 @@ export interface AdminInitResponse {
   profile: BrokerProfileDetails;
   controls: AdminSectionControl[];
   rolePermissions?: RoleSectionPermission[];
+  bulk_csv_import_enabled?: boolean;
 }
 
 export interface RoleSectionPermission {
@@ -2787,94 +2788,6 @@ export interface UpdateRealtorProspectResponse {
 export interface DeleteRealtorProspectResponse {
   success: boolean;
   message?: string;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Mortgi AI Assistant
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type MortgiUserType = "broker" | "client";
-
-export interface MortgiMessage {
-  role: "user" | "assistant" | "system";
-  content: string;
-}
-
-export interface MortgiChatRequest {
-  message: string;
-  session_key: string;
-  /** Passed by the server based on verified JWT — not provided by client */
-  user_type?: MortgiUserType;
-}
-
-export interface MortgiChatResponse {
-  success: boolean;
-  reply: string;
-  session_key: string;
-  tokens_used?: number;
-}
-
-export interface MortgiConfig {
-  mortgi_enabled: boolean;
-  mortgi_client_enabled: boolean;
-  mortgi_broker_enabled: boolean;
-  mortgi_system_prompt: string;
-  mortgi_daily_message_limit: number;
-  mortgi_broker_tools: string[];
-  mortgi_client_tools: string[];
-  mortgi_quota_exceeded: boolean;
-  mortgi_quota_exceeded_at: string;
-}
-
-export interface GetMortgiConfigResponse {
-  success: boolean;
-  config: MortgiConfig;
-}
-
-export interface UpdateMortgiConfigRequest {
-  mortgi_enabled?: boolean;
-  mortgi_client_enabled?: boolean;
-  mortgi_broker_enabled?: boolean;
-  mortgi_system_prompt?: string;
-  mortgi_daily_message_limit?: number;
-  mortgi_broker_tools?: string[];
-  mortgi_client_tools?: string[];
-}
-
-export interface UpdateMortgiConfigResponse {
-  success: boolean;
-  message: string;
-}
-
-export interface MortgiChatHistoryEntry {
-  id: number;
-  user_type: MortgiUserType;
-  user_id: number;
-  user_name: string;
-  messages_count: number;
-  tokens_used: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface GetMortgiHistoryResponse {
-  success: boolean;
-  sessions: MortgiChatHistoryEntry[];
-  total: number;
-}
-
-export interface MortgiUsage {
-  tokens_total: number;
-  tokens_today: number;
-  sessions_total: number;
-  sessions_today: number;
-}
-
-export interface GetMortgiUsageResponse {
-  success: boolean;
-  usage: MortgiUsage;
-  quota_exceeded: boolean;
-  quota_exceeded_at: string;
 }
 
 // ─── Broker notification preferences ─────────────────────────────────────────
@@ -3569,4 +3482,236 @@ export interface UnifiedQuotaSummary {
   email_sends: QuotaUsageSlice;
   scheduler_bookings: QuotaUsageSlice;
   mortgi_ai_tokens: QuotaUsageSlice;
+}
+
+/** Tenant-wide blocked caller/sender. Matching uses the last 10 digits. */
+export interface BlockedPhoneNumber {
+  id: number;
+  phone_e164: string;
+  normalized_phone: string;
+  block_calls: boolean;
+  block_sms: boolean;
+  reason: string | null;
+  blocked_by_broker_id: number | null;
+  blocked_by_name: string | null;
+  blocked_call_count: number;
+  blocked_sms_count: number;
+  last_blocked_at: string | null;
+  created_at: string;
+}
+
+export interface ListBlockedPhoneNumbersResponse {
+  success: boolean;
+  blocked_numbers: BlockedPhoneNumber[];
+  error?: string;
+}
+
+export interface CreateBlockedPhoneNumberRequest {
+  phone: string;
+  reason?: string | null;
+  block_calls?: boolean;
+  block_sms?: boolean;
+}
+
+export interface CreateBlockedPhoneNumberResponse {
+  success: boolean;
+  blocked_number?: BlockedPhoneNumber;
+  error?: string;
+}
+
+export interface DeleteBlockedPhoneNumberResponse {
+  success: boolean;
+  error?: string;
+}
+
+// ─── Bulk CSV import (mortgage banker + platform owner) ─────────────────────
+
+export type BulkImportEntityType = "clients" | "realtors";
+
+export interface BulkImportCommitOptions {
+  link_phone_threads?: boolean;
+  send_welcome_emails?: boolean;
+}
+
+export interface BulkImportRowPreviewDto {
+  row_number: number;
+  status: "will_create" | "skipped" | "error";
+  message?: string;
+  external_ref?: string | null;
+  display_name: string;
+  email?: string | null;
+  phone?: string | null;
+  badge?: string | null;
+  conflict_entity_id?: number | null;
+}
+
+export interface BulkImportValidateResponse {
+  success: boolean;
+  message?: string;
+  file_error?: string;
+  file_error_code?: string;
+  job_id?: number;
+  entity?: BulkImportEntityType;
+  file_name?: string;
+  row_count?: number;
+  will_create_count?: number;
+  skipped_count?: number;
+  error_count?: number;
+  preview_rows?: BulkImportRowPreviewDto[];
+  breakdown?: Record<string, number>;
+  expires_at?: string;
+}
+
+export interface BulkImportCommitResultRow {
+  row_number: number;
+  external_ref?: string | null;
+  status: "created" | "skipped" | "error";
+  entity_id?: number | null;
+  owner_broker_id?: number | null;
+  message?: string;
+}
+
+export interface BulkImportCommitResponse {
+  success: boolean;
+  message?: string;
+  job_id?: number;
+  created_count?: number;
+  skipped_count?: number;
+  error_count?: number;
+  results?: BulkImportCommitResultRow[];
+}
+
+export interface BulkImportJobResponse {
+  success: boolean;
+  job?: {
+    id: number;
+    entity: BulkImportEntityType;
+    status: string;
+    file_name: string;
+    row_count: number;
+    created_count: number;
+    skipped_count: number;
+    error_count: number;
+    expires_at: string;
+    committed_at?: string | null;
+    preview_rows?: BulkImportRowPreviewDto[];
+    results?: BulkImportCommitResultRow[];
+  };
+}
+
+// ─── Broker calculator saves (CRM-linked worksheets) ─────────────────────────
+
+export type CalculatorSaveKind =
+  | "fha"
+  | "va"
+  | "conventional"
+  | "investment"
+  | "mobile_home"
+  | "income";
+
+export interface BrokerCalculatorSave {
+  id: number;
+  tenant_id: number;
+  broker_id: number;
+  client_id: number;
+  loan_application_id: number | null;
+  kind: CalculatorSaveKind;
+  title: string;
+  summary_json: Record<string, unknown> | null;
+  payload_json: Record<string, unknown>;
+  borrower_client_ids: Array<number | null> | null;
+  created_at: string;
+  updated_at: string;
+  /** Joined display fields (list/detail) */
+  client_first_name?: string | null;
+  client_last_name?: string | null;
+  client_email?: string | null;
+  client_phone?: string | null;
+  broker_first_name?: string | null;
+  broker_last_name?: string | null;
+  application_number?: string | null;
+}
+
+export interface ListCalculatorSavesRequest {
+  page?: number;
+  limit?: number;
+  q?: string;
+  kind?: CalculatorSaveKind | "all";
+  client_id?: number;
+  loan_id?: number;
+  broker_id?: number;
+  sortBy?: string;
+  sortOrder?: "ASC" | "DESC";
+}
+
+export interface ListCalculatorSavesResponse {
+  success: boolean;
+  saves: BrokerCalculatorSave[];
+  pagination: PaginationInfo;
+}
+
+export interface CreateCalculatorSaveRequest {
+  client_id: number;
+  loan_application_id?: number | null;
+  kind: CalculatorSaveKind;
+  title: string;
+  summary_json?: Record<string, unknown> | null;
+  payload_json: Record<string, unknown>;
+  borrower_client_ids?: Array<number | null> | null;
+}
+
+export interface UpdateCalculatorSaveRequest {
+  client_id?: number;
+  loan_application_id?: number | null;
+  kind?: CalculatorSaveKind;
+  title?: string;
+  summary_json?: Record<string, unknown> | null;
+  payload_json?: Record<string, unknown>;
+  borrower_client_ids?: Array<number | null> | null;
+}
+
+export interface CalculatorSaveResponse {
+  success: boolean;
+  save: BrokerCalculatorSave;
+}
+
+export interface DeleteCalculatorSaveResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface ApplyCalculatorSaveNoteRequest {
+  /** Required when the save row has no loan_application_id */
+  loan_application_id?: number;
+}
+
+export interface ApplyCalculatorSaveNoteResponse {
+  success: boolean;
+  loan_application_id: number;
+  notes: string;
+  message?: string;
+}
+
+export interface ClientOpenLoanSummary {
+  id: number;
+  application_number: string;
+  loan_type: string;
+  loan_amount: number;
+  property_value: number | null;
+  status: string;
+  interest_rate: number | null;
+  created_at: string;
+}
+
+export interface GetClientOpenLoansResponse {
+  success: boolean;
+  loans: ClientOpenLoanSummary[];
+}
+
+export interface ClientConflictInfo {
+  client_id: number;
+  client_name: string;
+  broker_id: number | null;
+  broker_name: string | null;
+  conflict_field: "email" | "phone";
 }

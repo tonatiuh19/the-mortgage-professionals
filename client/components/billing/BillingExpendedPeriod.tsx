@@ -62,12 +62,6 @@ export function BillingExpendedPeriod({
   );
   const smsPct = usagePctAgainstCapacity(usage.totalSmsSegments, smsIncluded);
   const broadcastSmsPct = usagePctAgainstCapacity(broadcast.smsSegments, smsIncluded);
-  const mortgiIncluded = resolveQuotaIncluded(
-    quota,
-    "mortgi_ai_tokens",
-    plan.includedMortgiAiTokens,
-  );
-  const mortgiPct = usagePctAgainstCapacity(usage.mortgiAiTokens, mortgiIncluded);
 
   return (
     <Card className={cn("overflow-hidden border-primary/15", className)}>
@@ -102,23 +96,8 @@ export function BillingExpendedPeriod({
         <p className="text-xs text-muted-foreground">
           SMS split: {usage.convoSmsSegments.toLocaleString()} conversational ·{" "}
           {usage.broadcastSmsSegments.toLocaleString()} broadcast ·{" "}
-          {usage.schedulerBookings.toLocaleString()} scheduler bookings · Mortgi{" "}
-          {usage.mortgiAiTokens.toLocaleString()} tokens ({usage.mortgiSessions} sessions)
+          {usage.schedulerBookings.toLocaleString()} scheduler bookings
         </p>
-
-        <BillingUsageMeter
-          label="Mortgi AI tokens"
-          used={usage.mortgiAiTokens}
-          included={mortgiIncluded}
-          pct={mortgiPct}
-          tone="purple"
-          formatValue={(n) => n.toLocaleString()}
-          detail={
-            showInternalEconomics
-              ? `COGS ${formatUsd(expenditure.mortgiCogsUsd)}`
-              : undefined
-          }
-        />
 
         <div className="rounded-xl border border-orange-500/25 bg-orange-500/5 p-4 space-y-4">
           <div className="flex flex-wrap items-center gap-2">

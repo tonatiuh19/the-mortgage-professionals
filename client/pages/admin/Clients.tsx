@@ -1,10 +1,12 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import { Users, Search, Phone, Trash2, Plus } from "lucide-react";
+import { Users, Search, Phone, Trash2, Plus, Upload } from "lucide-react";
 import PhoneLink from "@/components/PhoneLink";
 import EmailLink from "@/components/EmailLink";
 import ClientFormDialog from "@/components/ClientFormDialog";
 import ClientDetailPanel from "@/components/ClientDetailPanel";
 import { MetaHelmet } from "@/components/MetaHelmet";
+import BulkImportWizard from "@/components/bulk-import/BulkImportWizard";
+import { openBulkImportWizard } from "@/store/slices/bulkImportSlice";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { adminPageMeta } from "@/lib/seo-helpers";
 import { Button } from "@/components/ui/button";
@@ -45,6 +47,10 @@ const Clients = () => {
     pagination,
   } = useAppSelector((state) => state.clients);
   const { user } = useAppSelector((state) => state.brokerAuth);
+  const bulkCsvImportEnabled = useAppSelector(
+    (state) => state.bulkImport.bulkCsvImportEnabled,
+  );
+  const canBulkImport = user?.role === "admin" && bulkCsvImportEnabled;
   const isPartner = user?.role === "broker";
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<any>(null);
@@ -312,6 +318,16 @@ const Clients = () => {
                   New Client
                 </Button>
               )}
+              {canBulkImport && (
+                <Button
+                  variant="outline"
+                  className="gap-1.5 whitespace-nowrap"
+                  onClick={() => dispatch(openBulkImportWizard("clients"))}
+                >
+                  <Upload className="h-4 w-4" />
+                  Import
+                </Button>
+              )}
             </div>
           }
         />
@@ -508,6 +524,7 @@ const Clients = () => {
           </AlertDialogContent>
         </AlertDialog>
       </div>
+      {canBulkImport && <BulkImportWizard entity="clients" />}
     </>
   );
 };

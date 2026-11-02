@@ -21,7 +21,6 @@ const PACK_BY_LABEL: Record<string, string> = {
   Email: "email_1k",
   Voice: "voice_1k",
   Scheduler: "scheduler_50",
-  "Mortgi AI": "mortgi_100k",
 };
 
 type QuotaDimensionSlice = {
@@ -71,12 +70,6 @@ function dimensionSlices(
       pack: "scheduler_50",
       slice: quota?.scheduler_bookings,
       expenditurePct: expenditure?.pctScheduler,
-    },
-    {
-      label: "Mortgi AI",
-      pack: "mortgi_100k",
-      slice: quota?.mortgi_ai_tokens,
-      expenditurePct: expenditure?.pctMortgiAiTokens,
     },
   ];
 }

@@ -11,6 +11,7 @@ import {
   AlertCircle,
   Phone,
   Tag,
+  Ban,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { MetaHelmet } from "@/components/MetaHelmet";
@@ -20,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { BlockedNumbersCard } from "@/components/BlockedNumbersCard";
 import { RolePermissionsPanel } from "@/components/RolePermissionsPanel";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -487,9 +489,19 @@ const Settings = () => {
                 </div>
               </SettingsSection>
 
+              <SettingsSection
+                index={3}
+                icon={Ban}
+                title="Blocked Numbers"
+                description="Stop spam and robocalls on every line. Blocked calls are rejected and texts are dropped."
+                accent="bg-red-50/60"
+              >
+                <BlockedNumbersCard canEdit={isAdmin} />
+              </SettingsSection>
+
               {isAdmin && (
                 <SettingsSection
-                  index={3}
+                  index={4}
                   icon={FileCheck2}
                   title="Role Visibility"
                   description="Choose which sidebar sections each role can see. Admins always see everything."

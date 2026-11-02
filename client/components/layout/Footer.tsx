@@ -2,7 +2,6 @@ import React from "react";
 import { Link } from "react-router-dom";
 import {
   Mail,
-  Phone,
   MapPin,
   Twitter,
   Linkedin,
@@ -130,10 +129,6 @@ const Footer = () => {
                 <Mail className="h-4 w-4" />
                 <span>info@themortgageprofessionals.net</span>
               </li>
-              <li className="flex items-center space-x-2 text-muted-foreground">
-                <Phone className="h-4 w-4" />
-                <span>(562) 337-0000</span>
-              </li>
               <li className="flex items-center space-x-2 text-muted-foreground text-pretty">
                 <MapPin className="h-4 w-4 shrink-0" />
                 <span>Serving clients nationwide</span>
@@ -144,7 +139,6 @@ const Footer = () => {
         <div className="mt-12 border-t pt-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-muted-foreground">
           <p>
             © {new Date().getFullYear()} The Mortgage Professionals. All rights reserved.
-            NMLS #1105497
           </p>
           <Link
             to="/broker-login"

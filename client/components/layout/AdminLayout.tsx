@@ -165,6 +165,12 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
       hidden: isPartner,
     },
     {
+      id: "loan-calculator",
+      label: "Loan Calculator",
+      icon: <Calculator className="h-4 w-4" />,
+      path: "/admin/loan-calculator",
+    },
+    {
       id: "billing",
       label: "Billing",
       icon: <CreditCard className="h-4 w-4" />,

@@ -17,7 +17,7 @@ const LOCK_SECONDS = 10;
 const PAUSES = [
   "Outbound SMS, MMS & WhatsApp",
   "Outbound email and broadcasts",
-  "Outbound calls, Mortgi AI and scheduler bookings",
+  "Outbound calls and scheduler bookings",
 ];
 
 /**

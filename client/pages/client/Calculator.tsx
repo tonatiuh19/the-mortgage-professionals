@@ -390,7 +390,11 @@ function NumericInput({
 
 // ─── Main Component ───────────────────────────────────────────────────────
 
-const CalculatorPage = () => {
+interface CalculatorPageProps {
+  hideApplyCta?: boolean;
+}
+
+const CalculatorPage = ({ hideApplyCta = false }: CalculatorPageProps) => {
   const [searchParams] = useSearchParams();
 
   // ── Inputs ──

@@ -7,8 +7,6 @@ import { submitContactForm } from "@/store/slices/contactSubmissionsSlice";
 import {
   Phone,
   Mail,
-  MapPin,
-  Clock,
   Send,
   CheckCircle2,
   MessageSquare,
@@ -90,7 +88,7 @@ const Contact: React.FC = () => {
       <MetaHelmet
         title="Contact Us | The Mortgage Professionals"
         description="Get in touch with The Mortgage Professionals. Call, email, or send us a message — our loan officers are ready to help you find the right mortgage."
-        keywords="contact The Mortgage Professionals, mortgage banker, Whittier CA, (562) 337-0000, mortgage questions"
+        keywords="contact The Mortgage Professionals, mortgage banker, mortgage questions"
       />
 
       {/* Hero */}
@@ -111,7 +109,7 @@ const Contact: React.FC = () => {
             </Badge>
             <h1 className="text-4xl font-black tracking-tight sm:text-5xl md:text-6xl mb-4">
               We're{" "}
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-red-600">
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-accent">
                 Here to Help
               </span>
             </h1>
@@ -142,30 +140,7 @@ const Contact: React.FC = () => {
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                {/* Phone */}
-                <Card className="h-full">
-                  <CardContent className="pt-5 pb-5 flex flex-col gap-2 h-full">
-                    <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                      <Phone className="h-5 w-5 text-primary" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-1">
-                        Phone
-                      </p>
-                      <a
-                        href="tel:(562)337-0000"
-                        className="text-base font-bold hover:text-primary transition-colors"
-                      >
-                        (562) 337-0000
-                      </a>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Direct line to a loan officer
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-
+              <div className="grid gap-3">
                 {/* Email */}
                 <Card className="h-full">
                   <CardContent className="pt-5 pb-5 flex flex-col gap-2 h-full">
@@ -189,46 +164,6 @@ const Contact: React.FC = () => {
                   </CardContent>
                 </Card>
 
-                {/* Address */}
-                <Card className="h-full">
-                  <CardContent className="pt-5 pb-5 flex flex-col gap-2 h-full">
-                    <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                      <MapPin className="h-5 w-5 text-primary" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-1">
-                        Office
-                      </p>
-                      <p className="text-sm font-bold">15111 Whittier Blvd</p>
-                      <p className="text-sm font-bold">Suite 101-B</p>
-                      <p className="text-sm text-muted-foreground">
-                        Whittier, CA 90603
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Hours */}
-                <Card className="h-full">
-                  <CardContent className="pt-5 pb-5 flex flex-col gap-2 h-full">
-                    <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                      <Clock className="h-5 w-5 text-primary" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-1">
-                        Hours
-                      </p>
-                      <p className="text-sm font-bold">Monday – Friday</p>
-                      <p className="text-sm text-muted-foreground">
-                        7:00 AM – 8:00 PM PST
-                      </p>
-                      <p className="text-sm font-bold mt-1">Saturday</p>
-                      <p className="text-sm text-muted-foreground">
-                        By appointment
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
               </div>
 
               {/* Quick apply CTA */}
@@ -435,25 +370,6 @@ const Contact: React.FC = () => {
         </div>
       </section>
 
-      {/* Map embed placeholder */}
-      <section className="pb-16">
-        <div className="container">
-          <div className="rounded-2xl overflow-hidden border border-border h-64 bg-muted/40 flex items-center justify-center">
-            <a
-              href="https://maps.google.com/?q=15111+Whittier+Blvd+Suite+101-B+Whittier+CA+90603"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex flex-col items-center gap-2 text-muted-foreground hover:text-primary transition-colors"
-            >
-              <MapPin className="h-8 w-8" />
-              <span className="font-semibold">
-                15111 Whittier Blvd Suite 101-B, Whittier CA 90603
-              </span>
-              <span className="text-xs underline">Open in Google Maps</span>
-            </a>
-          </div>
-        </div>
-      </section>
     </div>
   );
 };

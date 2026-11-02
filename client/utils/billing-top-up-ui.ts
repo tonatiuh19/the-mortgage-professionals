@@ -8,7 +8,6 @@ export const TOP_UP_DIMENSION_ORDER: UsageDimension[] = [
   "voice_minutes",
   "email_sends",
   "scheduler_bookings",
-  "mortgi_ai_tokens",
 ];
 
 export function resolveInitialTopUpSelection(params: {
@@ -30,7 +29,6 @@ export function resolveInitialTopUpSelection(params: {
       { dimension: "voice_minutes", pct: quota.voice_minutes.pct },
       { dimension: "email_sends", pct: quota.email_sends.pct },
       { dimension: "scheduler_bookings", pct: quota.scheduler_bookings.pct },
-      { dimension: "mortgi_ai_tokens", pct: quota.mortgi_ai_tokens.pct },
     ];
     pcts.sort((a, b) => b.pct - a.pct);
     const top = pcts[0];
