@@ -262,6 +262,8 @@ export function StripePlatformSubscription({ hideHeader = false }: Props) {
     config?.stripePlatformSubscriptionConfigured ?? false;
   const stripeSubscriptionActive = config?.stripeSubscriptionActive ?? false;
   const subscriptionComplete = stripeSubscriptionActive || justSubscribed;
+  // The local row stores trials as "active", so ask Stripe's status.
+  const isTrialing = config?.stripeSubscriptionStatus === "trialing";
 
   const includedQuotas = useMemo(
     () =>
@@ -384,7 +386,7 @@ export function StripePlatformSubscription({ hideHeader = false }: Props) {
             <div className="space-y-1.5 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="font-semibold text-foreground">
-                  Subscription active
+                  {isTrialing ? "Free trial active" : "Subscription active"}
                 </p>
                 <Badge variant="secondary" className="text-xs">
                   {config?.subscription?.status ??
@@ -408,6 +410,12 @@ export function StripePlatformSubscription({ hideHeader = false }: Props) {
                   <> · included quotas renew each billing period</>
                 )}
               </p>
+              {isTrialing && config?.subscription?.periodEnd ? (
+                <p className="text-sm font-medium text-foreground">
+                  Free until {config.subscription.periodEnd}. Add a card before then to keep your plan at{" "}
+                  {formatUsd(platformFee)}/month.
+                </p>
+              ) : null}
               {config?.subscription?.periodStart ? (
                 <p className="text-xs text-muted-foreground">
                   Current period{" "}

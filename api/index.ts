@@ -25781,6 +25781,10 @@ async function sendBillingSubscriptionReceiptEmail(
   subscription: Record<string, unknown>,
   recipientEmail?: string | null,
 ): Promise<{ sent: boolean; skipped?: string; error?: string }> {
+  // A trial's $0 invoice is not a payment.
+  if (String(subscription.status ?? "") === "trialing") {
+    return { sent: false, skipped: "trialing" };
+  }
   const invoiceId = invoiceIdFromStripeSubscription(subscription);
   if (!invoiceId) {
     return { sent: false, skipped: "no_invoice_id" };
@@ -26205,6 +26209,8 @@ async function syncStripeSubscriptionToDb(
 ): Promise<void> {
   await ensureTenantSubscription(pool, tenantId);
   const subId = String(subscription.id ?? "");
+  const customerId =
+    typeof subscription.customer === "string" ? subscription.customer : null;
   const mapped = mapStripeSubscriptionStatus(
     String(subscription.status ?? "inactive"),
   );
@@ -26220,12 +26226,13 @@ async function syncStripeSubscriptionToDb(
   await pool.query(
     `UPDATE tenant_subscription
      SET stripe_subscription_id = COALESCE(?, stripe_subscription_id),
+         stripe_customer_id = COALESCE(?, stripe_customer_id),
          status = ?,
          period_start = COALESCE(?, period_start),
          period_end = COALESCE(?, period_end),
          updated_at = UTC_TIMESTAMP()
      WHERE tenant_id = ?`,
-    [subId || null, mapped, periodStart, periodEnd, tenantId],
+    [subId || null, customerId, mapped, periodStart, periodEnd, tenantId],
   );
 
   if (mapped === "active" || mapped === "trialing") {
