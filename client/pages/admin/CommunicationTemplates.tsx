@@ -9,7 +9,6 @@ import {
   Save,
   X,
 } from "lucide-react";
-import { FaWhatsapp } from "react-icons/fa";
 import { MetaHelmet } from "@/components/MetaHelmet";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { adminPageMeta } from "@/lib/seo-helpers";
@@ -62,9 +61,6 @@ import {
   createSmsTemplate,
   updateSmsTemplate,
   deleteSmsTemplate,
-  createWhatsappTemplate,
-  updateWhatsappTemplate,
-  deleteWhatsappTemplate,
 } from "@/store/slices/communicationTemplatesSlice";
 import type { CommunicationType } from "@shared/api";
 import ReactQuill from "react-quill";
@@ -91,7 +87,7 @@ const CHANNELS: {
 
 const CommunicationTemplates = () => {
   const dispatch = useAppDispatch();
-  const { emailTemplates, smsTemplates, whatsappTemplates, isLoading } =
+  const { emailTemplates, smsTemplates, isLoading } =
     useAppSelector((state) => state.communicationTemplates);
   const { toast } = useToast();
 
@@ -125,13 +121,6 @@ const CommunicationTemplates = () => {
     is_active: true,
   });
 
-  // WhatsApp form
-  const [waFormData, setWaFormData] = useState({
-    name: "",
-    body: "",
-    template_type: "custom" as string,
-    is_active: true,
-  });
 
   useEffect(() => {
     dispatch(fetchEmailTemplates());
@@ -192,17 +181,6 @@ const CommunicationTemplates = () => {
             }
           : { name: "", body: "", template_type: "custom", is_active: true },
       );
-    } else {
-      setWaFormData(
-        template
-          ? {
-              name: template.name,
-              body: template.body,
-              template_type: template.template_type,
-              is_active: template.is_active,
-            }
-          : { name: "", body: "", template_type: "custom", is_active: true },
-      );
     }
     setIsEditorOpen(true);
   };
@@ -234,14 +212,6 @@ const CommunicationTemplates = () => {
         } else {
           await dispatch(createSmsTemplate(smsFormData)).unwrap();
         }
-      } else {
-        if (editingTemplate) {
-          await dispatch(
-            updateWhatsappTemplate({ id: editingTemplate.id, ...waFormData }),
-          ).unwrap();
-        } else {
-          await dispatch(createWhatsappTemplate(waFormData)).unwrap();
-        }
       }
       toast({
         title: "Success",
@@ -269,8 +239,6 @@ const CommunicationTemplates = () => {
         await dispatch(deleteEmailTemplate(templateToDelete.id)).unwrap();
       } else if (templateToDelete.type === "sms") {
         await dispatch(deleteSmsTemplate(templateToDelete.id)).unwrap();
-      } else {
-        await dispatch(deleteWhatsappTemplate(templateToDelete.id)).unwrap();
       }
       toast({ title: "Success", description: "Template deleted" });
     } catch (error: any) {
@@ -391,7 +359,7 @@ const CommunicationTemplates = () => {
       <MetaHelmet
         {...adminPageMeta(
           "Communication Templates",
-          "Manage email, SMS and WhatsApp templates",
+          "Manage email and SMS templates",
         )}
       />
       <div className="p-4 sm:p-6 lg:p-8">
@@ -404,8 +372,7 @@ const CommunicationTemplates = () => {
 
         <Card className="mb-6 border-amber-200 bg-amber-50/70">
           <CardContent className="py-3 text-sm text-amber-900">
-            SMS and WhatsApp templates are temporarily disabled across the
-            platform.
+            SMS templates are temporarily disabled across the platform.
           </CardContent>
         </Card>
 
@@ -459,9 +426,7 @@ const CommunicationTemplates = () => {
               <DialogDescription>
                 {(editingTemplate?.type || channelTab) === "email"
                   ? "Rich HTML email template with full formatting support"
-                  : (editingTemplate?.type || channelTab) === "sms"
-                    ? "Plain-text SMS template (max 1600 characters)"
-                    : "WhatsApp message template (supports emoji and *bold* formatting)"}
+                  : "Plain-text SMS template (max 1600 characters)"}
               </DialogDescription>
             </DialogHeader>
 
@@ -625,69 +590,6 @@ const CommunicationTemplates = () => {
                     checked={smsFormData.is_active}
                     onCheckedChange={(v) =>
                       setSmsFormData({ ...smsFormData, is_active: v })
-                    }
-                  />
-                  <Label>Active</Label>
-                </div>
-              </div>
-            )}
-
-            {/* WHATSAPP FORM */}
-            {(editingTemplate?.type || channelTab) === "whatsapp" && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Template Name</Label>
-                    <Input
-                      value={waFormData.name}
-                      onChange={(e) =>
-                        setWaFormData({ ...waFormData, name: e.target.value })
-                      }
-                      placeholder="e.g., Application Update"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Template Type</Label>
-                    <Select
-                      value={waFormData.template_type}
-                      onValueChange={(v) =>
-                        setWaFormData({ ...waFormData, template_type: v })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="reminder">Reminder</SelectItem>
-                        <SelectItem value="update">Status Update</SelectItem>
-                        <SelectItem value="follow_up">Follow Up</SelectItem>
-                        <SelectItem value="custom">Custom</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Message</Label>
-                  <Textarea
-                    value={waFormData.body}
-                    onChange={(e) =>
-                      setWaFormData({ ...waFormData, body: e.target.value })
-                    }
-                    placeholder={
-                      "Hi {{client_name}} 👋\n\nYour application has been updated…"
-                    }
-                    className="h-48 resize-none"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Supports emoji and *bold* text. Variables:{" "}
-                    {"{{client_name}}"}, {"{{status}}"}, {"{{broker_name}}"}
-                  </p>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    checked={waFormData.is_active}
-                    onCheckedChange={(v) =>
-                      setWaFormData({ ...waFormData, is_active: v })
                     }
                   />
                   <Label>Active</Label>

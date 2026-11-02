@@ -63,7 +63,6 @@ import {
   FileAudio,
   Voicemail,
 } from "lucide-react";
-import { FaWhatsapp } from "react-icons/fa";
 import { uploadMMSMedia } from "@/lib/cdn-upload";
 import { logger } from "@/lib/logger";
 import { MetaHelmet } from "@/components/MetaHelmet";
@@ -165,15 +164,11 @@ import { fetchBrokers } from "@/store/slices/brokersSlice";
 import {
   setVoiceAvailable,
   startOutboundCall,
-  fetchAblyToken,
   checkRecordingUrl,
 } from "@/store/slices/voiceSlice";
 import type { DeviceStatus } from "@/store/slices/voiceSlice";
 import { cn, stripHtml } from "@/lib/utils";
-import {
-  SMS_CHANNEL_ENABLED,
-  WHATSAPP_CHANNEL_ENABLED,
-} from "@/lib/channelAvailability";
+import { SMS_CHANNEL_ENABLED } from "@/lib/channelAvailability";
 import type {
   ConversationThread,
   Communication,
@@ -188,8 +183,7 @@ const CHANNEL_TABS: { key: ChannelFilter; label: string }[] = [
   { key: "calls", label: "Calls" },
 ];
 
-const MESSAGE_CHANNELS_ENABLED =
-  SMS_CHANNEL_ENABLED || WHATSAPP_CHANNEL_ENABLED;
+const MESSAGE_CHANNELS_ENABLED = SMS_CHANNEL_ENABLED;
 
 const Conversations = () => {
   const dispatch = useAppDispatch();
@@ -221,7 +215,7 @@ const Conversations = () => {
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
   const [isNewConversationOpen, setIsNewConversationOpen] = useState(false);
   const [messageText, setMessageText] = useState("");
-  const [messageType, setMessageType] = useState<"sms" | "whatsapp">("sms");
+  const [messageType, setMessageType] = useState<"sms">("sms");
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [messageSubject, setMessageSubject] = useState("");
   const [mobilePanel, setMobilePanel] = useState<"list" | "chat">("list");
@@ -263,18 +257,22 @@ const Conversations = () => {
   // Stable refs so Ably callbacks always see the latest state without stale closures
   const threadsRef = useRef(threads);
   const threadsFiltersRef = useRef(threadsFilters);
+  const currentThreadRef = useRef(currentThread);
   useEffect(() => {
     threadsRef.current = threads;
   }, [threads]);
   useEffect(() => {
     threadsFiltersRef.current = threadsFilters;
   }, [threadsFilters]);
+  useEffect(() => {
+    currentThreadRef.current = currentThread;
+  }, [currentThread]);
 
   // Optimistic messages: show immediately while API is in-flight
   type OptimisticMsg = {
     tempId: string;
     body: string;
-    type: "sms" | "whatsapp";
+    type: "sms";
     status: "sending" | "sent" | "failed";
     ts: Date;
     /** DB id returned by the send API — used to suppress the optimistic once the real message arrives */
@@ -295,9 +293,6 @@ const Conversations = () => {
   // Track whether this thread has had its messages loaded at least once
   // so background refreshes don't flash the full-area spinner.
   const initialLoadedThreadRef = useRef<string | null>(null);
-  // Tracks phone numbers we've already dispatched a WhatsApp availability check
-  // for. Without this guard, rapid thread switches re-dispatch the same check
-  // while the first promise is still in-flight (multiple identical API calls).
 
   // Save unknown contact state
   const [isSaveContactOpen, setIsSaveContactOpen] = useState(false);
@@ -456,7 +451,7 @@ const Conversations = () => {
   const filteredThreads =
     channelFilter === "all"
       ? threads.filter((t) => t.last_message_type !== "email")
-      : threads.filter((t) => t.last_message_type === channelFilter);
+      : threads;
 
   // Show all messages regardless of channel — channel tabs only filter the thread list
   const filteredMessages = messages;
@@ -511,14 +506,15 @@ const Conversations = () => {
 
         // Subscribe to thread-list changes so the sidebar stays fresh.
         // Apply patches in-place — no full refetch — to keep the UI feeling
-        // smooth and instant (WhatsApp/Telegram-style).
+        // smooth and instant.
         allChannel = ablyClient.channels.get("conversations:all");
         allChannel.subscribe("thread-updated", (msg) => {
           const { conversationId, thread } = (msg.data ?? {}) as {
             conversationId?: string;
             thread?: any;
           };
-          if (conversationId && thread) {
+          if (!conversationId) return;
+          if (thread) {
             dispatch(threadUpdatedRealtime({ conversationId, thread }));
             // If the thread was previously closed and filtered out of the list,
             // it won't be in state.threads — do a refresh so it reappears.
@@ -530,6 +526,9 @@ const Conversations = () => {
                 dispatch(fetchConversationThreads(threadsFiltersRef.current));
               }
             }
+          } else {
+            // Sparse payload (legacy) — refetch list so we don't miss new threads.
+            dispatch(fetchConversationThreads(threadsFiltersRef.current));
           }
         });
         allChannel.subscribe("thread-read", (msg) => {
@@ -555,6 +554,38 @@ const Conversations = () => {
             }
           }
         });
+        allChannel.subscribe("thread-deleted", (msg) => {
+          const { conversationId } = (msg.data ?? {}) as {
+            conversationId?: string;
+          };
+          if (conversationId) dispatch(removeThread(conversationId));
+        });
+        allChannel.subscribe("sms-delivery-failed", (msg) => {
+          const data = (msg.data ?? {}) as {
+            conversationId?: string | null;
+            errorMessage?: string | null;
+            errorCode?: string | number | null;
+          };
+          toast({
+            title: "SMS delivery failed",
+            description:
+              data.errorMessage ||
+              (data.errorCode
+                ? `Twilio error ${data.errorCode}`
+                : "A message could not be delivered."),
+            variant: "destructive",
+          });
+          if (
+            data.conversationId &&
+            currentThreadRef.current?.conversation_id === data.conversationId
+          ) {
+            dispatch(
+              fetchConversationMessages({
+                conversationId: data.conversationId,
+              }),
+            );
+          }
+        });
       } catch {
         // Real-time unavailable — graceful degradation
       }
@@ -566,7 +597,7 @@ const Conversations = () => {
       // Only detach event listeners — keep the shared connection alive
       allChannel?.unsubscribe();
     };
-  }, [dispatch, sessionToken]);
+  }, [dispatch, sessionToken, toast, currentUser?.id, threadsFilters]);
 
   // Re-subscribe to per-conversation channel when the active thread changes.
   // Uses the shared Ably singleton — only the channel subscription changes,
@@ -805,7 +836,7 @@ const Conversations = () => {
     if (!MESSAGE_CHANNELS_ENABLED) {
       toast({
         title: "Messaging paused",
-        description: "SMS and WhatsApp sending are temporarily disabled.",
+        description: "SMS sending is temporarily disabled.",
         variant: "destructive",
       });
       return;
@@ -984,7 +1015,7 @@ const Conversations = () => {
   };
 
   const handleNewConversation = async (data: {
-    communication_type: "email" | "sms" | "whatsapp";
+    communication_type: "email" | "sms";
     recipient_phone?: string;
     recipient_email?: string;
     subject?: string;
@@ -1038,8 +1069,6 @@ const Conversations = () => {
         return <Mail className={className} />;
       case "sms":
         return <MessageSquare className={className} />;
-      case "whatsapp":
-        return <FaWhatsapp className={className} />;
       case "call":
         return <Phone className={className} />;
       default:
@@ -1053,8 +1082,6 @@ const Conversations = () => {
         return "text-blue-500";
       case "sms":
         return "text-primary";
-      case "whatsapp":
-        return "text-[#25D366]";
       default:
         return "text-muted-foreground";
     }
@@ -1136,7 +1163,7 @@ const Conversations = () => {
       <MetaHelmet
         {...adminPageMeta(
           "Conversations",
-          "Manage client communications via SMS, WhatsApp, and Email",
+          "Manage client communications via SMS and Email",
         )}
       />
 
@@ -1147,7 +1174,7 @@ const Conversations = () => {
           <MessageCircle className="h-5 w-5 md:h-6 md:w-6 text-primary flex-shrink-0" />
         }
         title="Conversations"
-        description="Manage client communications via SMS, WhatsApp & Email"
+        description="Manage client communications via SMS & Email"
         mobileBack={
           mobilePanel === "chat" ? () => setMobilePanel("list") : undefined
         }
@@ -1338,12 +1365,10 @@ const Conversations = () => {
               {/* Channel tabs — scrollable on mobile */}
               <div className="flex rounded-lg bg-muted p-0.5 gap-0.5 overflow-x-auto scrollbar-hide">
                 {CHANNEL_TABS.map(({ key, label }) => {
-                  const locked = key === "whatsapp";
                   return (
                     <button
                       key={key}
                       onClick={() => {
-                        if (locked) return;
                         setChannelFilter(key);
                         if (key === "calls") {
                           dispatch(clearCurrentThread());
@@ -1351,24 +1376,15 @@ const Conversations = () => {
                           setSelectedCall(null);
                         }
                       }}
-                      disabled={locked}
-                      title={locked ? "WhatsApp coming soon" : undefined}
                       className={cn(
                         "flex-1 min-w-[2.5rem] relative inline-flex items-center justify-center gap-1 text-xs font-medium py-1 px-2 rounded-md transition-all whitespace-nowrap",
-                        locked
-                          ? "opacity-50 cursor-not-allowed text-muted-foreground"
-                          : channelFilter === key
-                            ? "bg-card text-foreground shadow-sm"
-                            : "text-muted-foreground hover:text-foreground",
+                        channelFilter === key
+                          ? "bg-card text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground",
                       )}
                     >
-                      <span className="sm:hidden">
-                        {key === "whatsapp" ? "WA" : label}
-                      </span>
+                      <span className="sm:hidden">{label}</span>
                       <span className="hidden sm:inline">{label}</span>
-                      {locked && (
-                        <Lock className="h-2.5 w-2.5 shrink-0 text-muted-foreground/70" />
-                      )}
                     </button>
                   );
                 })}
@@ -1492,11 +1508,7 @@ const Conversations = () => {
                     <p className="text-sm">
                       {selectedStatus === "closed"
                         ? "No closed conversations"
-                        : `No ${
-                            channelFilter !== "all"
-                              ? channelFilter.toUpperCase() + " "
-                              : ""
-                          }conversations`}
+                        : "No conversations"}
                     </p>
                     {selectedStatus === "closed" && (
                       <button
@@ -1943,11 +1955,7 @@ const Conversations = () => {
                   <div className="text-center py-12 text-muted-foreground">
                     <MessageCircle className="h-10 w-10 mx-auto mb-2 opacity-30" />
                     <p className="text-sm">
-                      No{" "}
-                      {channelFilter !== "all"
-                        ? channelFilter.toUpperCase()
-                        : ""}{" "}
-                      messages yet
+                      No messages yet
                     </p>
                   </div>
                 ) : (
@@ -2337,8 +2345,7 @@ const Conversations = () => {
                   <div className="mb-2.5 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                     <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-700" />
                     <p className="text-[11px] text-amber-900 leading-snug">
-                      SMS and WhatsApp sending are temporarily disabled across
-                      the platform.
+                      SMS sending is temporarily disabled across the platform.
                     </p>
                   </div>
                 )}
@@ -3241,11 +3248,9 @@ const Conversations = () => {
                   <div
                     className={cn(
                       "p-1.5 rounded-md flex-shrink-0",
-                      currentThread.last_message_type === "whatsapp"
-                        ? "bg-[#25D366]/10"
-                        : currentThread.last_message_type === "email"
-                          ? "bg-blue-50"
-                          : "bg-primary/10",
+                      currentThread.last_message_type === "email"
+                        ? "bg-blue-50"
+                        : "bg-primary/10",
                     )}
                   >
                     <span

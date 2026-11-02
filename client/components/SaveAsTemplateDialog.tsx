@@ -26,11 +26,10 @@ import { useAppDispatch } from "@/store/hooks";
 import {
   createEmailTemplate,
   createSmsTemplate,
-  createWhatsappTemplate,
 } from "@/store/slices/communicationTemplatesSlice";
 import { fetchConversationTemplates } from "@/store/slices/conversationsSlice";
 
-type ChannelType = "sms" | "email" | "whatsapp";
+type ChannelType = "sms" | "email";
 
 const CATEGORY_OPTIONS = [
   { value: "welcome", label: "Welcome" },
@@ -102,15 +101,6 @@ const SaveAsTemplateDialog = ({
               is_active: true,
             }),
           ).unwrap();
-        } else {
-          await dispatch(
-            createWhatsappTemplate({
-              name: values.name,
-              body: values.body,
-              template_type: category,
-              is_active: true,
-            }),
-          ).unwrap();
         }
 
         // Refresh the templates dropdown in compose boxes
@@ -150,11 +140,7 @@ const SaveAsTemplateDialog = ({
   }, [isOpen, defaultBody, defaultSubject]);
 
   const channelLabel =
-    channelType === "sms"
-      ? "SMS"
-      : channelType === "email"
-        ? "Email"
-        : "WhatsApp";
+    channelType === "sms" ? "SMS" : "Email";
 
   return (
     <Dialog open={isOpen} onOpenChange={(o) => !o && onClose()}>

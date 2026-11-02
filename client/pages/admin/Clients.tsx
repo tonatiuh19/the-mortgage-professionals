@@ -477,7 +477,7 @@ const Clients = () => {
                               {clientToDelete.total_conversations}
                             </strong>{" "}
                             conversation thread(s) and all associated messages
-                            (emails, SMS, WhatsApp)
+                            (emails, SMS)
                           </li>
                         )}
                         <li>All client profile data and documents</li>

@@ -43,6 +43,8 @@ tags:
     description: Pre-approval letter generation and delivery
   - name: Clients
     description: Client directory (admin view)
+  - name: CRM
+    description: Per-owner CRM — people view, links, transfers (flag-gated)
   - name: Voice
     description: Browser-based calling via Twilio Voice SDK
   - name: Brokers
@@ -55,8 +57,6 @@ tags:
     description: Email communication templates
   - name: SMS Templates
     description: SMS communication templates
-  - name: WhatsApp Templates
-    description: WhatsApp communication templates
   - name: Pipeline Step Templates
     description: Per-step communication templates for the pipeline
   - name: Conversations
@@ -322,6 +322,609 @@ components:
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 paths:
+  /billing/access:
+    get:
+      tags: [billing]
+      summary: GET /billing/access
+      responses:
+        '200':
+          description: Successful response
+  /billing/access/simulate:
+    post:
+      tags: [billing]
+      summary: POST /billing/access/simulate
+      responses:
+        '200':
+          description: Successful response
+  /billing/config:
+    get:
+      tags: [billing]
+      summary: GET /billing/config
+      responses:
+        '200':
+          description: Successful response
+  /billing/estimate:
+    post:
+      tags: [billing]
+      summary: POST /billing/estimate
+      responses:
+        '200':
+          description: Successful response
+  /billing/purchases:
+    get:
+      tags: [billing]
+      summary: GET /billing/purchases
+      responses:
+        '200':
+          description: Successful response
+  /billing/quota:
+    get:
+      tags: [billing]
+      summary: GET /billing/quota
+      responses:
+        '200':
+          description: Successful response
+  /billing/team-notice:
+    get:
+      tags: [billing]
+      summary: GET /billing/team-notice
+      responses:
+        '200':
+          description: Successful response
+  /billing/usage:
+    get:
+      tags: [billing]
+      summary: GET /billing/usage
+      responses:
+        '200':
+          description: Successful response
+  /billing/overdue:
+    get:
+      tags: [billing]
+      summary: GET /billing/overdue
+      responses:
+        '200':
+          description: Successful response
+  /billing/overdue/pay:
+    post:
+      tags: [billing]
+      summary: POST /billing/overdue/pay
+      responses:
+        '200':
+          description: Successful response
+  /billing/overdue/payment-options:
+    get:
+      tags: [billing]
+      summary: GET /billing/overdue/payment-options
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/charge-pack:
+    post:
+      tags: [billing]
+      summary: POST /billing/stripe/charge-pack
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/charge-quote:
+    post:
+      tags: [billing]
+      summary: POST /billing/stripe/charge-quote
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/checkout:
+    post:
+      tags: [billing]
+      summary: POST /billing/stripe/checkout
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/config:
+    get:
+      tags: [billing]
+      summary: GET /billing/stripe/config
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/confirm-payment:
+    post:
+      tags: [billing]
+      summary: POST /billing/stripe/confirm-payment
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/confirm-payment-method:
+    post:
+      tags: [billing]
+      summary: POST /billing/stripe/confirm-payment-method
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/confirm-subscription:
+    post:
+      tags: [billing]
+      summary: POST /billing/stripe/confirm-subscription
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/packs:
+    get:
+      tags: [billing]
+      summary: GET /billing/stripe/packs
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/payment-intent:
+    post:
+      tags: [billing]
+      summary: POST /billing/stripe/payment-intent
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/payment-method:
+    get:
+      tags: [billing]
+      summary: GET /billing/stripe/payment-method
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/payment-method-setup:
+    post:
+      tags: [billing]
+      summary: POST /billing/stripe/payment-method-setup
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/portal:
+    post:
+      tags: [billing]
+      summary: POST /billing/stripe/portal
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/quote:
+    post:
+      tags: [billing]
+      summary: POST /billing/stripe/quote
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/reset-subscription-test:
+    post:
+      tags: [billing]
+      summary: POST /billing/stripe/reset-subscription-test
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/subscription-setup:
+    post:
+      tags: [billing]
+      summary: POST /billing/stripe/subscription-setup
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/top-up-options:
+    get:
+      tags: [billing]
+      summary: GET /billing/stripe/top-up-options
+      responses:
+        '200':
+          description: Successful response
+  /billing/stripe/webhook:
+    post:
+      tags: [billing]
+      summary: POST /billing/stripe/webhook
+      responses:
+        '200':
+          description: Successful response
+  /admin/role-section-permissions:
+    get:
+      tags: [admin]
+      summary: GET /admin/role-section-permissions
+      responses:
+        '200':
+          description: Successful response
+    put:
+      tags: [admin]
+      summary: PUT /admin/role-section-permissions
+      responses:
+        '200':
+          description: Successful response
+  /clients/{clientId}/open-loans:
+    get:
+      tags: [clients]
+      summary: GET /clients/{clientId}/open-loans
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /clients/{clientId}/reassign:
+    put:
+      tags: [clients]
+      summary: PUT /clients/{clientId}/reassign
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /documents/bulk-download:
+    post:
+      tags: [documents]
+      summary: POST /documents/bulk-download
+      responses:
+        '200':
+          description: Successful response
+  /documents/{documentId}/download:
+    get:
+      tags: [documents]
+      summary: GET /documents/{documentId}/download
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /ai/chat:
+    post:
+      tags: [ai]
+      summary: POST /ai/chat
+      responses:
+        '200':
+          description: Successful response
+  /ai/config:
+    get:
+      tags: [ai]
+      summary: GET /ai/config
+      responses:
+        '200':
+          description: Successful response
+    put:
+      tags: [ai]
+      summary: PUT /ai/config
+      responses:
+        '200':
+          description: Successful response
+  /ai/history:
+    get:
+      tags: [ai]
+      summary: GET /ai/history
+      responses:
+        '200':
+          description: Successful response
+  /ai/history/{id}:
+    delete:
+      tags: [ai]
+      summary: DELETE /ai/history/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /ai/usage:
+    get:
+      tags: [ai]
+      summary: GET /ai/usage
+      responses:
+        '200':
+          description: Successful response
+  /brokers/{brokerId}/convert-to-client:
+    post:
+      tags: [brokers]
+      summary: POST /brokers/{brokerId}/convert-to-client
+      parameters:
+        - name: brokerId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /client/meetings:
+    get:
+      tags: [client]
+      summary: GET /client/meetings
+      responses:
+        '200':
+          description: Successful response
+  /clients/{clientId}/convert-to-broker:
+    post:
+      tags: [clients]
+      summary: POST /clients/{clientId}/convert-to-broker
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /conversations/mailboxes/office365/callback:
+    get:
+      tags: [conversations]
+      summary: GET /conversations/mailboxes/office365/callback
+      responses:
+        '200':
+          description: Successful response
+  /conversations/mailboxes/{mailboxId}:
+    delete:
+      tags: [conversations]
+      summary: DELETE /conversations/mailboxes/{mailboxId}
+      parameters:
+        - name: mailboxId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /conversations/mailboxes/{mailboxId}/folders:
+    get:
+      tags: [conversations]
+      summary: GET /conversations/mailboxes/{mailboxId}/folders
+      parameters:
+        - name: mailboxId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /conversations/mailboxes/{mailboxId}/folders/{folderId}/messages:
+    get:
+      tags: [conversations]
+      summary: GET /conversations/mailboxes/{mailboxId}/folders/{folderId}/messages
+      parameters:
+        - name: mailboxId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: folderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /conversations/mailboxes/{mailboxId}/folders/{folderId}/messages/{messageId}:
+    get:
+      tags: [conversations]
+      summary: GET /conversations/mailboxes/{mailboxId}/folders/{folderId}/messages/{messageId}
+      parameters:
+        - name: mailboxId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: folderId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /conversations/{conversationId}/messages/{messageId}:
+    delete:
+      tags: [conversations]
+      summary: DELETE /conversations/{conversationId}/messages/{messageId}
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /cron/process-scheduled-broadcasts:
+    get:
+      tags: [cron]
+      summary: GET /cron/process-scheduled-broadcasts
+      responses:
+        '200':
+          description: Successful response
+  /cron/reactivate-office365-mailboxes:
+    get:
+      tags: [cron]
+      summary: GET /cron/reactivate-office365-mailboxes
+      responses:
+        '200':
+          description: Successful response
+  /cron/sync-office365-mailboxes:
+    get:
+      tags: [cron]
+      summary: GET /cron/sync-office365-mailboxes
+      responses:
+        '200':
+          description: Successful response
+  /email/send:
+    post:
+      tags: [email]
+      summary: POST /email/send
+      responses:
+        '200':
+          description: Successful response
+  /email/threads/{conversationId}/action:
+    patch:
+      tags: [email]
+      summary: PATCH /email/threads/{conversationId}/action
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /realtor-broadcasts/unsubscribe:
+    get:
+      tags: [realtor-broadcasts]
+      summary: GET /realtor-broadcasts/unsubscribe
+      responses:
+        '200':
+          description: Successful response
+  /reminder-flows/{flowId}/trace:
+    get:
+      tags: [reminder-flows]
+      summary: GET /reminder-flows/{flowId}/trace
+      parameters:
+        - name: flowId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /scheduler/settings/{brokerId}:
+    get:
+      tags: [scheduler]
+      summary: GET /scheduler/settings/{brokerId}
+      parameters:
+        - name: brokerId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /sms/media:
+    get:
+      tags: [sms]
+      summary: GET /sms/media
+      responses:
+        '200':
+          description: Successful response
+  /sms/media/upload:
+    post:
+      tags: [sms]
+      summary: POST /sms/media/upload
+      responses:
+        '200':
+          description: Successful response
+  /voice/call-answered:
+    post:
+      tags: [voice]
+      summary: POST /voice/call-answered
+      responses:
+        '200':
+          description: Successful response
+  /voice/call-forwarding:
+    get:
+      tags: [voice]
+      summary: GET /voice/call-forwarding
+      responses:
+        '200':
+          description: Successful response
+    put:
+      tags: [voice]
+      summary: PUT /voice/call-forwarding
+      responses:
+        '200':
+          description: Successful response
+  /voice/call-screen:
+    post:
+      tags: [voice]
+      summary: POST /voice/call-screen
+      responses:
+        '200':
+          description: Successful response
+  /voice/call-screen-accept:
+    post:
+      tags: [voice]
+      summary: POST /voice/call-screen-accept
+      responses:
+        '200':
+          description: Successful response
+  /voice/dial-status:
+    post:
+      tags: [voice]
+      summary: POST /voice/dial-status
+      responses:
+        '200':
+          description: Successful response
+  /voice/fix-call-setup:
+    post:
+      tags: [voice]
+      summary: POST /voice/fix-call-setup
+      responses:
+        '200':
+          description: Successful response
+  /voice/recording-check/{callSid}:
+    get:
+      tags: [voice]
+      summary: GET /voice/recording-check/{callSid}
+      parameters:
+        - name: callSid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /voice/recording-status:
+    post:
+      tags: [voice]
+      summary: POST /voice/recording-status
+      responses:
+        '200':
+          description: Successful response
+  /voice/recording/{callSid}:
+    get:
+      tags: [voice]
+      summary: GET /voice/recording/{callSid}
+      parameters:
+        - name: callSid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+  /webhooks/sms-status:
+    post:
+      tags: [webhooks]
+      summary: POST /webhooks/sms-status
+      responses:
+        '200':
+          description: Successful response
   # ── Health ──────────────────────────────────────────────────────────────────
   /health:
     get:
@@ -1531,11 +2134,203 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
+  # ── Per-Owner CRM ────────────────────────────────────────────────────────────
+  /crm/config:
+    get:
+      tags: [CRM]
+      summary: Per-owner CRM feature flags for current broker session
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: CRM config (per_owner_crm.activeForBroker when PER_OWNER_CRM_ENABLED=1)
+  /crm/people:
+    get:
+      tags: [CRM]
+      summary: Admin people view (group clients by normalized_phone)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: query
+          name: search
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 30 }
+      responses:
+        "200":
+          description: Phone-grouped CRM rows
+        "403":
+          description: Admin only
+  /crm/person-groups:
+    post:
+      tags: [CRM]
+      summary: Request identity link for same-phone client rows
+      security:
+        - BrokerAuth: []
+      responses:
+        "201":
+          description: Pending link group created
+  /crm/person-groups/{groupId}/approve:
+    post:
+      tags: [CRM]
+      summary: Admin approve or reject a link group
+      security:
+        - BrokerAuth: []
+  /crm/person-groups/{groupId}/merge:
+    post:
+      tags: [CRM]
+      summary: Admin merge group members to survivor client
+      security:
+        - BrokerAuth: []
+  /crm/transfers:
+    post:
+      tags: [CRM]
+      summary: Start client transfer between brokers
+      security:
+        - BrokerAuth: []
+  /crm/transfers/{jobId}:
+    get:
+      tags: [CRM]
+      summary: Transfer job status and conflicts
+      security:
+        - BrokerAuth: []
+  /crm/transfers/{jobId}/resolve:
+    post:
+      tags: [CRM]
+      summary: Resolve transfer wizard (source owner or admin)
+      security:
+        - BrokerAuth: []
+  /crm/clients/{clientId}/restore:
+    post:
+      tags: [CRM]
+      summary: Admin restore hidden/archived client to active list visibility
+      security:
+        - BrokerAuth: []
+
   # ── Clients ────────────────────────────────────────────────────────────────────
+
+  /conversations/{conversationId}/claim:
+    post:
+      tags: [Conversations]
+      summary: Claim a shared unowned conversation into the current broker CRM
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: conversationId
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                first_name: { type: string }
+                last_name: { type: string }
+                email: { type: string }
+      responses:
+        "200":
+          description: Claimed conversation with new client_id
+        "409":
+          description: Already claimed or phone conflict
+
+  /broker/notification-preferences:
+    get:
+      tags: [Brokers]
+      summary: Get broker email/SMS alert preferences
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Preference map
+    put:
+      tags: [Brokers]
+      summary: Update broker notification preferences
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Updated preferences
+
+  /broadcasts:
+    get:
+      tags: [Broadcasts]
+      summary: List realtor broadcasts
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Broadcast list
+    post:
+      tags: [Broadcasts]
+      summary: Create and queue a broadcast
+      security:
+        - BrokerAuth: []
+      responses:
+        "201":
+          description: Broadcast created
+  /broadcasts/preview-audience:
+    post:
+      tags: [Broadcasts]
+      summary: Preview broadcast audience counts
+      security:
+        - BrokerAuth: []
+  /broadcasts/{id}:
+    get:
+      tags: [Broadcasts]
+      summary: Broadcast detail
+      security:
+        - BrokerAuth: []
+  /broadcasts/{id}/recipients:
+    get:
+      tags: [Broadcasts]
+      summary: Broadcast recipients
+      security:
+        - BrokerAuth: []
+  /broadcasts/{id}/cancel:
+    post:
+      tags: [Broadcasts]
+      summary: Cancel a pending/scheduled broadcast
+      security:
+        - BrokerAuth: []
+
+  /compliance/checklists:
+    get:
+      tags: [Compliance]
+      summary: List compliance checklists (admin)
+      security:
+        - BrokerAuth: []
+    post:
+      tags: [Compliance]
+      summary: Create checklist for a loan application (admin)
+      security:
+        - BrokerAuth: []
+  /compliance/checklists/{checklistId}:
+    get:
+      tags: [Compliance]
+      summary: Checklist detail with items (admin)
+      security:
+        - BrokerAuth: []
+  /compliance/checklists/{checklistId}/items/{itemId}:
+    put:
+      tags: [Compliance]
+      summary: Toggle/update checklist item (admin)
+      security:
+        - BrokerAuth: []
+
+
   /clients:
     get:
       tags: [Clients]
       summary: List all clients
+      description: >
+        Legacy mode lists clients via loan co-ownership paths. When PER_OWNER_CRM_ENABLED
+        is set, non-admins see only assigned_broker_id = me with list_visibility = active.
       security:
         - BrokerAuth: []
       parameters:
@@ -1928,9 +2723,6 @@ paths:
           description: Transcription saved
 
   /voice/phone-numbers:
-    get:
-      tags: [Voice]
-      summary: List Twilio phone numbers with webhook status and broker assignments
     get:
       tags: [Voice]
       summary: List Twilio phone numbers with webhook status and broker assignments
@@ -3250,101 +4042,6 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
-  # ── WhatsApp Templates ────────────────────────────────────────────────────────
-  /whatsapp-templates:
-    get:
-      tags: [WhatsApp Templates]
-      summary: List WhatsApp templates
-      security:
-        - BrokerAuth: []
-      responses:
-        "200":
-          description: Templates
-          content:
-            application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/SuccessResponse"
-                  - type: object
-                    properties:
-                      templates: { type: array, items: { type: object } }
-    post:
-      tags: [WhatsApp Templates]
-      summary: Create a WhatsApp template
-      security:
-        - BrokerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [name, body]
-              properties:
-                name: { type: string }
-                body: { type: string }
-      responses:
-        "201":
-          description: Created
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SuccessResponse" }
-        "503":
-          description: WhatsApp templates temporarily disabled
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-
-  /whatsapp-templates/{templateId}:
-    put:
-      tags: [WhatsApp Templates]
-      summary: Update a WhatsApp template
-      security:
-        - BrokerAuth: []
-      parameters:
-        - in: path
-          name: templateId
-          required: true
-          schema: { type: integer }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        "200":
-          description: Updated
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SuccessResponse" }
-        "503":
-          description: WhatsApp templates temporarily disabled
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-    delete:
-      tags: [WhatsApp Templates]
-      summary: Delete a WhatsApp template
-      security:
-        - BrokerAuth: []
-      parameters:
-        - in: path
-          name: templateId
-          required: true
-          schema: { type: integer }
-      responses:
-        "200":
-          description: Deleted
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SuccessResponse" }
-        "503":
-          description: WhatsApp templates temporarily disabled
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-
   # ── Pipeline Step Templates ────────────────────────────────────────────────────
   /pipeline-step-templates:
     get:
@@ -3379,7 +4076,7 @@ paths:
                 step: { type: string }
                 channel:
                   type: string
-                  enum: [email, sms, whatsapp]
+                  enum: [email, sms]
                 template_id: { type: integer }
       responses:
         "200":
@@ -3388,7 +4085,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SuccessResponse" }
         "503":
-          description: SMS/WhatsApp channel temporarily disabled
+          description: SMS channel temporarily disabled
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -3428,7 +4125,7 @@ paths:
           schema: { type: string }
         - in: query
           name: channel
-          schema: { type: string, enum: [email, sms, whatsapp] }
+          schema: { type: string, enum: [email, sms] }
       responses:
         "200":
           description: Threads
@@ -3481,7 +4178,7 @@ paths:
                 conversation_id: { type: string }
                 communication_type:
                   type: string
-                  enum: [email, sms, whatsapp]
+                  enum: [email, sms]
                 mailbox_id:
                   type: integer
                   description: Optional Office365 mailbox id used for outbound email sends
@@ -3498,7 +4195,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SuccessResponse" }
         "503":
-          description: Requested channel temporarily disabled (sms/whatsapp)
+          description: Requested channel temporarily disabled (sms)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -4198,7 +4895,7 @@ paths:
 
         **Validation enforced by the server (returns 400 on failure):**
           - `step_type` must be one of: trigger, wait, send_notification,
-            send_email, send_sms, send_whatsapp, condition, branch,
+            send_email, send_sms, condition, branch,
             wait_for_response, wait_until_date, end.
           - `edge_type` must be one of: default, condition_yes, condition_no,
             loan_type_purchase, loan_type_refinance, no_response, responded.
@@ -5426,7 +6123,7 @@ paths:
         Run every ~10 minutes via cPanel cron:
         `curl -s "https://yourdomain.com/api/cron/backfill-message-status?secret=CRON_SECRET"`
 
-        Picks up to 50 outbound SMS/MMS/WhatsApp rows whose `delivery_status`
+        Picks up to 50 outbound SMS/MMS rows whose `delivery_status`
         is still `sent`/`pending` more than 2 minutes after `sent_at`,
         queries Twilio for the authoritative status, and updates the row.
         Catches messages whose `statusCallback` webhook never arrived.

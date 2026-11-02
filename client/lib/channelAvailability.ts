@@ -1,6 +1,4 @@
-export const SMS_CHANNEL_ENABLED = false;
-export const WHATSAPP_CHANNEL_ENABLED = false;
+export const SMS_CHANNEL_ENABLED = true;
 export const ZOOM_ENABLED = false;
 
-export const PHONE_DELIVERY_ENABLED =
-  SMS_CHANNEL_ENABLED || WHATSAPP_CHANNEL_ENABLED;
+export const PHONE_DELIVERY_ENABLED = SMS_CHANNEL_ENABLED;

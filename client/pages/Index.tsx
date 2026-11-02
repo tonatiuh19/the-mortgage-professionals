@@ -21,6 +21,9 @@ import { useAppDispatch } from "@/store/hooks";
 import { submitContactForm } from "@/store/slices/contactSubmissionsSlice";
 import { useToast } from "@/hooks/use-toast";
 
+// Placeholder team and testimonials stay hidden until real, verified content exists.
+const SHOW_UNVERIFIED_COMPANY_CONTENT = false;
+
 export default function Index() {
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
@@ -389,7 +392,9 @@ export default function Index() {
         </div>
       </section>
 
-      {/* Team Preview Section */}
+      {/* Team Preview + Social Proof (unverified placeholders) */}
+      {SHOW_UNVERIFIED_COMPANY_CONTENT && (
+      <>
       <section className="py-20 px-4 bg-white">
         <div className="container mx-auto">
           <div className="text-center mb-16">
@@ -508,6 +513,9 @@ export default function Index() {
           </div>
         </div>
       </section>
+
+      </>
+      )}
 
       {/* Power CTA Section */}
       <section className="py-20 px-4 bg-gradient-to-r from-[#0A2F52] via-[#1a4d7a] to-[#135E99] text-white">

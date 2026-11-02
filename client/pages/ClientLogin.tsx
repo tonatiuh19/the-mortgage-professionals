@@ -438,20 +438,26 @@ const ClientLogin = () => {
                       <Mail className="h-4 w-4" />
                       Email
                     </button>
-                    <button
+                                        <button
                       type="button"
-                      disabled
-                      title="Coming soon"
-                      className="flex items-center justify-center gap-2 h-11 rounded-xl border-2 text-sm font-medium border-gray-100 text-gray-300 cursor-not-allowed bg-gray-50"
+                      onClick={() => setDeliveryMethod("sms")}
+                      className={`flex items-center justify-center gap-2 h-11 rounded-xl border-2 text-sm font-medium transition-all ${
+                        deliveryMethod === "sms"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border/50 text-muted-foreground hover:border-border"
+                      }`}
                     >
                       <MessageSquare className="h-4 w-4" />
                       SMS
                     </button>
                     <button
                       type="button"
-                      disabled
-                      title="Coming soon"
-                      className="flex items-center justify-center gap-2 h-11 rounded-xl border-2 text-sm font-medium border-gray-100 text-gray-300 cursor-not-allowed bg-gray-50"
+                      onClick={() => setDeliveryMethod("call")}
+                      className={`flex items-center justify-center gap-2 h-11 rounded-xl border-2 text-sm font-medium transition-all ${
+                        deliveryMethod === "call"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border/50 text-muted-foreground hover:border-border"
+                      }`}
                     >
                       <Phone className="h-4 w-4" />
                       Call
@@ -530,7 +536,7 @@ const ClientLogin = () => {
                   </div>
                   <div className="relative flex justify-center text-xs">
                     <span className="bg-background px-4 text-muted-foreground font-medium">
-                      New to Encore?
+                      New to The Mortgage Professionals?
                     </span>
                   </div>
                 </div>
@@ -724,24 +730,30 @@ const ClientLogin = () => {
                         <Mail className="h-4 w-4" />
                         Email
                       </button>
-                      <button
-                        type="button"
-                        disabled
-                        title="Coming soon"
-                        className="flex items-center justify-center gap-2 h-10 rounded-xl border-2 text-sm font-medium border-gray-100 text-gray-300 cursor-not-allowed bg-gray-50"
-                      >
-                        <MessageSquare className="h-4 w-4" />
-                        SMS
-                      </button>
-                      <button
-                        type="button"
-                        disabled
-                        title="Coming soon"
-                        className="flex items-center justify-center gap-2 h-10 rounded-xl border-2 text-sm font-medium border-gray-100 text-gray-300 cursor-not-allowed bg-gray-50"
-                      >
-                        <Phone className="h-4 w-4" />
-                        Call
-                      </button>
+                                          <button
+                      type="button"
+                      onClick={() => setDeliveryMethod("sms")}
+                      className={`flex items-center justify-center gap-2 h-10 rounded-xl border-2 text-sm font-medium transition-all ${
+                        deliveryMethod === "sms"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border/50 text-muted-foreground hover:border-border"
+                      }`}
+                    >
+                      <MessageSquare className="h-4 w-4" />
+                      SMS
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryMethod("call")}
+                      className={`flex items-center justify-center gap-2 h-10 rounded-xl border-2 text-sm font-medium transition-all ${
+                        deliveryMethod === "call"
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border/50 text-muted-foreground hover:border-border"
+                      }`}
+                    >
+                      <Phone className="h-4 w-4" />
+                      Call
+                    </button>
                     </div>
                     <ResendCodeButton
                       onResend={handleResend}

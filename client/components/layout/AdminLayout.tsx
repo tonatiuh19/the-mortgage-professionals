@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import GlobalVoiceManager from "@/components/GlobalVoiceManager";
+import NotificationBell from "@/components/layout/NotificationBell";
 import {
   LayoutDashboard,
   Kanban,
@@ -26,6 +27,7 @@ import {
   X,
   MessageSquare,
   CalendarDays,
+  CreditCard,
   Calculator,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -46,7 +48,9 @@ import {
 import { cn } from "@/lib/utils";
 import { IS_DEV } from "@/lib/env";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { fetchCrmConfig } from "@/store/slices/crmSlice";
 import { logout, initAdminSession } from "@/store/slices/brokerAuthSlice";
+import { selectRolePermissionsMap } from "@/store/slices/roleSectionPermissionsSlice";
 import { selectSectionControlsMap } from "@/store/slices/adminSectionControlsSlice";
 import { PARTNER_ROLES, ROLE_LABELS, type BrokerRole } from "@shared/api";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -96,6 +100,7 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
   React.useEffect(() => {
     if (sessionToken) {
       dispatch(initAdminSession());
+      dispatch(fetchCrmConfig());
     }
   }, [dispatch, sessionToken]);
 
@@ -106,8 +111,12 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
   };
 
   const isPartner = PARTNER_ROLES.includes(user?.role as BrokerRole);
-  const isAdmin = user?.role === "admin";
+  const isAdmin =
+    user?.role === "admin";
   const isStaff = !isAdmin && !isPartner; // loan_officer, loan_processor
+  const perOwnerCrmActive = useAppSelector((s) => s.crm.perOwnerCrmActive);
+
+  const rolePermissionsMap = useAppSelector(selectRolePermissionsMap);
 
   const menuItems = [
     {
@@ -154,8 +163,20 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
       icon: <MessageCircle className="h-4 w-4" />,
       path: "/admin/conversations",
       hidden: isPartner,
-      forceDisabled: true,
-      tooltipMessage: "Coming Soon",
+    },
+    {
+      id: "billing",
+      label: "Billing",
+      icon: <CreditCard className="h-4 w-4" />,
+      path: "/admin/billing",
+      hidden: !isAdmin,
+    },
+    {
+      id: "email",
+      label: "Email",
+      icon: <Mail className="h-4 w-4" />,
+      path: "/admin/email",
+      hidden: isPartner,
     },
     {
       id: "reminder-flows",
@@ -186,6 +207,34 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
       hidden: isPartner || isStaff,
     },
     {
+      id: "crm-people",
+      label: "CRM People",
+      icon: <Users className="h-4 w-4" />,
+      path: "/admin/crm/people",
+      hidden: !isAdmin || !perOwnerCrmActive,
+    },
+    {
+      id: "broadcasts",
+      label: "Broadcasts",
+      icon: <Megaphone className="h-4 w-4" />,
+      path: "/admin/broadcasts",
+      hidden: !isAdmin,
+    },
+    {
+      id: "compliance",
+      label: "Compliance",
+      icon: <Shield className="h-4 w-4" />,
+      path: "/admin/compliance",
+      hidden: isPartner || isStaff,
+    },
+    {
+      id: "notifications",
+      label: "Notifications",
+      icon: <Bell className="h-4 w-4" />,
+      path: "/admin/notifications",
+      hidden: false,
+    },
+    {
       id: "contact-submissions",
       label: "Contact Messages",
       icon: <MessageSquare className="h-4 w-4" />,
@@ -212,7 +261,11 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
   // Build effective menu items with disabled state resolved from DB
   // In development all sections are unlocked regardless of DB controls
   const effectiveMenuItems = menuItems
-    .filter((item) => !(item as any).hidden)
+    .filter((item) => {
+      if ((item as any).hidden) return false;
+      // Admins always see every section; a saved row overrides the role default.
+      return isAdmin || rolePermissionsMap[`${user?.role}:${item.id}`] !== false;
+    })
     .map((item) => {
       const ctrl = sectionControlsMap[item.id];
       const forceDisabled = (item as any).forceDisabled ?? false;
@@ -299,14 +352,17 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
           alt="The Mortgage Professionals"
           className="h-8 w-auto"
         />
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setMobileMenuOpen(true)}
-          className="h-9 w-9"
-        >
-          <Menu className="h-5 w-5" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <NotificationBell variant="compact" />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setMobileMenuOpen(true)}
+            className="h-9 w-9"
+          >
+            <Menu className="h-5 w-5" />
+          </Button>
+        </div>
       </div>
 
       {/* Mobile Navigation Sheet */}
@@ -522,7 +578,14 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
         )}
 
         {/* User Section */}
-        <div className="border-t p-4">
+        <div className="border-t p-4 space-y-2">
+          <div
+            className={
+              sidebarCollapsed ? "flex justify-center" : "flex justify-end"
+            }
+          >
+            <NotificationBell variant={sidebarCollapsed ? "compact" : "default"} />
+          </div>
           {!sidebarCollapsed ? (
             <div className="flex items-center gap-3 group">
               <button

@@ -1644,7 +1644,7 @@ const Email = () => {
   // Subscription 1: thread list refresh
   // Listens on two channels for belt-and-suspenders coverage:
   //   • broker-notifications:{id} → "new"  (always fires for inbound emails)
-  //   • conversations:all → "thread-updated" (fires for SMS + after our fix)
+  //   • conversations:all → "thread-updated" (SMS, email, voice, and sends)
   useEffect(() => {
     if (!sessionToken || !brokerId) return;
     let cancelled = false;

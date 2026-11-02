@@ -5,6 +5,7 @@ import {
   Search,
   Filter,
   ExternalLink,
+  Download,
   Trash2,
   RefreshCw,
   ChevronUp,
@@ -48,6 +49,7 @@ import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   fetchAllDocuments,
   deleteDocument,
+  downloadDocumentLabeled,
   setSearchQuery,
   setFilterType,
   setFilterBroker,
@@ -122,6 +124,17 @@ const Documents = () => {
     "uploaded_at",
     "desc",
   );
+
+  const handleDownload = async (documentId: number) => {
+    const result = await dispatch(downloadDocumentLabeled(documentId));
+    if (downloadDocumentLabeled.rejected.match(result)) {
+      toast({
+        title: "Download failed",
+        description: String(result.payload ?? ""),
+        variant: "destructive",
+      });
+    }
+  };
 
   const handleDelete = async (documentId: number) => {
     try {
@@ -303,6 +316,15 @@ const Documents = () => {
                         <span>{formatDate(doc.uploaded_at)}</span>
                       </div>
                       <div className="flex items-center justify-end gap-2 pt-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7"
+                          title="Download labeled file"
+                          onClick={() => handleDownload(doc.id)}
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -541,6 +563,14 @@ const Documents = () => {
                             </TableCell>
                             <TableCell className="text-right">
                               <div className="flex items-center justify-end gap-2">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  title="Download labeled file"
+                                  onClick={() => handleDownload(doc.id)}
+                                >
+                                  <Download className="h-4 w-4" />
+                                </Button>
                                 <Button variant="ghost" size="sm" asChild>
                                   <a
                                     href={toFullUrl(doc.file_path)}

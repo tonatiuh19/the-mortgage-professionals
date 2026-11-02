@@ -3,8 +3,6 @@ import axios from "axios";
 import { closeSharedAblyClient } from "@/lib/ably-client";
 import clientAuthReducer from "./slices/clientAuthSlice";
 import brokerAuthReducer from "./slices/brokerAuthSlice";
-import applicationsReducer from "./slices/applicationsSlice";
-import leadsReducer from "./slices/leadsSlice";
 import documentsReducer from "./slices/documentsSlice";
 import tasksReducer from "./slices/tasksSlice";
 import notificationsReducer from "./slices/notificationsSlice";
@@ -21,6 +19,8 @@ import applicationWizardReducer from "./slices/applicationWizardSlice";
 import preApprovalReducer from "./slices/preApprovalSlice";
 import settingsReducer from "./slices/settingsSlice";
 import reminderFlowsReducer from "./slices/reminderFlowsSlice";
+import roleSectionPermissionsReducer from "./slices/roleSectionPermissionsSlice";
+import billingReducer from "./slices/billingSlice";
 import adminSectionControlsReducer from "./slices/adminSectionControlsSlice";
 import contactSubmissionsReducer from "./slices/contactSubmissionsSlice";
 import schedulerReducer from "./slices/schedulerSlice";
@@ -30,13 +30,19 @@ import voiceReducer from "./slices/voiceSlice";
 import realtorProspectingReducer from "./slices/realtorProspectingSlice";
 import emailReducer from "./slices/emailSlice";
 import mortgiReducer from "./slices/mortgiSlice";
+import brokerNotificationPrefsReducer from "./slices/brokerNotificationPrefsSlice";
+import complianceReducer from "./slices/complianceSlice";
+import crmReducer from "./slices/crmSlice";
+import broadcastsReducer from "./slices/broadcastsSlice";
 
 export const store = configureStore({
   reducer: {
     clientAuth: clientAuthReducer,
     brokerAuth: brokerAuthReducer,
-    applications: applicationsReducer,
-    leads: leadsReducer,
+    brokerNotificationPrefs: brokerNotificationPrefsReducer,
+    compliance: complianceReducer,
+    crm: crmReducer,
+    broadcasts: broadcastsReducer,
     documents: documentsReducer,
     tasks: tasksReducer,
     notifications: notificationsReducer,
@@ -54,6 +60,8 @@ export const store = configureStore({
     settings: settingsReducer,
     reminderFlows: reminderFlowsReducer,
     adminSectionControls: adminSectionControlsReducer,
+    billing: billingReducer,
+    roleSectionPermissions: roleSectionPermissionsReducer,
     contactSubmissions: contactSubmissionsReducer,
     scheduler: schedulerReducer,
     calendarEvents: calendarEventsReducer,

@@ -19,8 +19,6 @@ import {
   Send,
   ChevronDown,
   Smartphone,
-  MessageCircle,
-  Lock,
   FileText,
   ArrowLeftRight,
   AlertTriangle,
@@ -210,7 +208,7 @@ export default function BrokerDetailPanel({
 
   // ── compose ─────────────────────────────────────────────────────────────────
   const [composing, setComposing] = useState(false);
-  const [composeType, setComposeType] = useState<"sms" | "email" | "whatsapp">(
+  const [composeType, setComposeType] = useState<"sms" | "email">(
     SMS_CHANNEL_ENABLED ? "sms" : "email",
   );
   const [composeSubject, setComposeSubject] = useState("");

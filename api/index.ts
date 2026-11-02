@@ -6,6 +6,7 @@ import cors from "cors";
 import multer from "multer";
 import axios from "axios";
 import mysql, {
+  type Pool,
   type ResultSetHeader,
   type RowDataPacket,
 } from "mysql2/promise";
@@ -19,10 +20,61 @@ import path from "path";
 import { ImapFlow } from "imapflow";
 import Ably from "ably";
 import helmet from "helmet";
+import type { PoolConnection } from "mysql2/promise";
+import { deflateSync, inflateSync } from "zlib";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import Groq from "groq-sdk";
 
-const execFileAsync = promisify(execFile);
+
+
+// ── SMS segment + broadcast engine helpers — inlined for Vercel serverless ───
+// Source of truth: shared/sms-segments.ts, shared/broadcast-bulk.ts
+const GSM7_BASIC_SET = new Set(
+  (
+    "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?" +
+    "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà"
+  ).split(""),
+);
+const GSM7_EXTENDED_SET = new Set("^{}\\[~]|€".split(""));
+
+function estimateSmsSegments(body: string): { segmentCount: number } {
+  const text = body ?? "";
+  let isGsm7 = true;
+  let gsm7Len = 0;
+  for (const ch of text) {
+    if (GSM7_EXTENDED_SET.has(ch)) gsm7Len += 2;
+    else if (GSM7_BASIC_SET.has(ch)) gsm7Len += 1;
+    else {
+      isGsm7 = false;
+      break;
+    }
+  }
+  const charCount = isGsm7 ? gsm7Len : [...text].length;
+  const charsPerSegment = isGsm7
+    ? charCount <= 160
+      ? 160
+      : 153
+    : charCount <= 70
+      ? 70
+      : 67;
+  return {
+    segmentCount:
+      charCount === 0 ? 0 : Math.max(1, Math.ceil(charCount / charsPerSegment)),
+  };
+}
+
+function resolveBroadcastSmsEngineFromEnv(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+): "messages" | "bulk" {
+  const explicit = String(env.BROADCAST_SMS_ENGINE ?? "")
+    .trim()
+    .toLowerCase();
+  if (explicit === "bulk" || explicit === "messages") return explicit;
+  const enabled = String(env.BROADCAST_BULK_MESSAGING_ENABLED ?? "")
+    .trim()
+    .toLowerCase();
+  return ["1", "true", "yes", "on"].includes(enabled) ? "bulk" : "messages";
+}
 
 // Validate critical environment variables
 if (
@@ -46,9 +98,8 @@ const JWT_SECRET = process.env.JWT_SECRET;
 
 // Tenant Configuration
 const MORTGAGE_TENANT_ID = 2;
-const SMS_CHANNEL_TEMP_DISABLED = true;
-const WHATSAPP_CHANNEL_TEMP_DISABLED = true;
-const PHONE_VERIFICATION_TEMP_DISABLED = true;
+const SMS_CHANNEL_TEMP_DISABLED = false;
+const PHONE_VERIFICATION_TEMP_DISABLED = false;
 
 // ---------------------------------------------------------------------------
 // Role System Helpers
@@ -59,8 +110,7 @@ const PARTNER_ROLE_LIST = [
   "broker",
   "realtor",
   "buyers_agent",
-  "listing_agent",
-] as const;
+  "listing_agent"] as const;
 
 /** True for admin/superadmin — full system + global data access */
 const isAdminRole = (role: string | undefined): boolean =>
@@ -115,7 +165,7 @@ if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
   }
 } else {
   console.warn(
-    "⚠️  Warning: Twilio credentials not found. SMS/WhatsApp functionality will be disabled.",
+    "⚠️  Warning: Twilio credentials not found. SMS functionality will be disabled.",
   );
 }
 
@@ -141,6 +191,73 @@ async function publishToAbly(channel: string, event: string, data: unknown) {
   } catch (err) {
     console.error("❌ Ably publish error:", err);
   }
+}
+
+/** Load a thread row shaped for Ably sidebar patches (matches send-message publish). */
+async function fetchThreadPayloadForAbly(
+  conversationId: string,
+): Promise<Record<string, unknown> | null> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT ct.*, la.application_number,
+            COALESCE(
+              ct.client_name,
+              CONCAT(cl.first_name, ' ', cl.last_name),
+              CONCAT(cb.first_name, ' ', cb.last_name),
+              CONCAT(pb.first_name, ' ', pb.last_name)
+            ) AS client_name,
+            CONCAT(cl.first_name, ' ', cl.last_name) AS client_full_name
+     FROM conversation_threads ct
+     LEFT JOIN loan_applications la ON ct.application_id = la.id
+     LEFT JOIN clients cl ON ct.client_id = cl.id
+     LEFT JOIN brokers cb ON ct.contact_broker_id = cb.id
+     LEFT JOIN brokers pb ON pb.tenant_id = ct.tenant_id
+       AND ct.client_name IS NULL AND ct.client_id IS NULL AND ct.contact_broker_id IS NULL
+       AND ct.client_phone IS NOT NULL
+       AND RIGHT(REGEXP_REPLACE(pb.phone, '[^0-9]', ''), 10)
+           = RIGHT(REGEXP_REPLACE(ct.client_phone, '[^0-9]', ''), 10)
+     WHERE ct.conversation_id = ? AND ct.tenant_id = ?
+     LIMIT 1`,
+    [conversationId, MORTGAGE_TENANT_ID],
+  );
+  if (!rows[0]) return null;
+  const row = rows[0];
+  return {
+    ...row,
+    tags: row.tags
+      ? typeof row.tags === "string"
+        ? JSON.parse(row.tags)
+        : row.tags
+      : [],
+  };
+}
+
+/** Publish conversations:all / thread-updated with a full (or minimal) thread payload. */
+async function publishThreadUpdated(
+  conversationId: string,
+  extra?: Record<string, unknown>,
+) {
+  const thread = await fetchThreadPayloadForAbly(conversationId);
+  await publishToAbly("conversations:all", "thread-updated", {
+    conversationId,
+    thread: thread ?? { status: "active", conversation_id: conversationId },
+    ...extra,
+  });
+}
+
+async function publishConversationNewMessage(
+  conversationId: string,
+  data: {
+    direction: string;
+    communicationType: string;
+    body?: string;
+  },
+) {
+  await publishToAbly(`conversation:${conversationId}`, "new-message", {
+    conversationId,
+    direction: data.direction,
+    communicationType: data.communicationType,
+    body: (data.body ?? "").slice(0, 200),
+  });
 }
 
 // Initialize Groq AI client (Mortgi assistant)
@@ -229,8 +346,7 @@ const OFFICE365_SCOPES = [
   "Mail.Read",
   "Mail.Send",
   "User.Read",
-  "Calendars.Read",
-];
+  "Calendars.Read"];
 
 const getOffice365OAuthConfig = () => {
   const tenantId = process.env.OFFICE365_TENANT_ID;
@@ -494,8 +610,7 @@ async function refreshOffice365Token(mailbox: ConversationMailboxRow) {
         [
           `Re-authorization required: ${errCode}`,
           mailbox.id,
-          MORTGAGE_TENANT_ID,
-        ],
+          MORTGAGE_TENANT_ID],
       );
       throw new Office365AuthRequiredError(
         `Mailbox ${mailbox.mailbox_email} needs re-authorization: ${errCode}`,
@@ -524,8 +639,7 @@ async function refreshOffice365Token(mailbox: ConversationMailboxRow) {
       String(data.refresh_token || refreshToken),
       expiresAt,
       mailbox.id,
-      MORTGAGE_TENANT_ID,
-    ],
+      MORTGAGE_TENANT_ID],
   );
 
   return String(data.access_token || "");
@@ -839,8 +953,7 @@ async function syncOffice365Mailbox(mailbox: ConversationMailboxRow): Promise<{
     direction: "inbound" | "outbound";
   }> = [
     { graphFolder: "SentItems", direction: "outbound" },
-    { graphFolder: "Inbox", direction: "inbound" },
-  ];
+    { graphFolder: "Inbox", direction: "inbound" }];
 
   for (const { graphFolder, direction } of foldersToSync) {
     const folderStart = Date.now();
@@ -1071,8 +1184,7 @@ async function syncOffice365Mailbox(mailbox: ConversationMailboxRow): Promise<{
                 msg?.conversationId || null,
                 graphFolder,
                 msg?.internetMessageId || null,
-                existingId,
-              ],
+                existingId],
             );
             console.log(
               `[syncO365] "${graphFolder}": dedup — stamped external_id on existing comm #${existingId}, skipping INSERT`,
@@ -1129,8 +1241,7 @@ async function syncOffice365Mailbox(mailbox: ConversationMailboxRow): Promise<{
                     name: r?.emailAddress?.name || null,
                   }))
                 : [],
-            }),
-          ],
+            })],
         )) as [ResultSetHeader, any];
 
         console.log(
@@ -1270,8 +1381,7 @@ async function syncO365CalendarForBroker(
         fmtDt(endUtc),
         (e.subject ?? "Meeting").slice(0, 255),
         "o365",
-        e.id,
-      ];
+        e.id];
     });
 
     await pool.query(
@@ -1421,7 +1531,7 @@ async function checkDeletionSafety(
  * Executes the INSERT ... ON DUPLICATE KEY UPDATE into conversation_threads,
  * then fires broker bell notifications + Ably real-time push.
  *
- * Internal helper — called by upsertConversationThread (SMS/voice/WhatsApp)
+ * Internal helper — called by upsertConversationThread (SMS/voice)
  * and upsertEmailThread. Never call directly from request handlers.
  */
 async function _executeThreadUpsert(core: {
@@ -1549,8 +1659,7 @@ async function _executeThreadUpsert(core: {
       clientEmail,
       inboxNumber,
       mailboxId,
-      direction,
-    ],
+      direction],
   );
 
   // Notify broker(s) of inbound activity so the bell lights up in real time.
@@ -1561,11 +1670,9 @@ async function _executeThreadUpsert(core: {
           ? "SMS"
           : communicationType === "email"
             ? "email"
-            : communicationType === "whatsapp"
-              ? "WhatsApp"
-              : communicationType === "voice"
-                ? "voice"
-                : "message";
+            : communicationType === "voice"
+              ? "voice"
+              : "message";
       const who = clientName || clientPhone || clientEmail || "a contact";
       // Use the same preview that was written to conversation_threads.last_message_preview
       // so the notification bell always shows the identical text as the thread list.
@@ -1583,9 +1690,7 @@ async function _executeThreadUpsert(core: {
       let inboxOwnerId: number | null = null;
       if (
         inboxNumber &&
-        (communicationType === "sms" ||
-          communicationType === "voice" ||
-          communicationType === "whatsapp")
+        (communicationType === "sms" || communicationType === "voice")
       ) {
         try {
           const [inboxRows] = await pool.query<RowDataPacket[]>(
@@ -1629,11 +1734,8 @@ async function _executeThreadUpsert(core: {
             ? `/admin/email?conversation=${encodeURIComponent(convId)}`
             : `/admin/conversations?conversation=${encodeURIComponent(convId)}`,
       });
-      // Notify the thread list to refresh so new threads appear immediately.
-      await publishToAbly("conversations:all", "thread-updated", {
-        conversationId: convId,
-        communicationType,
-      });
+      // Notify the thread list with a full thread payload so sidebars patch in-place.
+      await publishThreadUpdated(convId, { communicationType });
     } catch (notifyErr) {
       console.error("Broker notification (inbound thread) failed:", notifyErr);
     }
@@ -1641,7 +1743,7 @@ async function _executeThreadUpsert(core: {
 }
 
 /**
- * Upserts a conversation thread for SMS, voice, and WhatsApp communications.
+ * Upserts a conversation thread for SMS and voice communications.
  * Resolves the contact identity via phone → clients → leads → brokers.
  *
  * For email threads use upsertEmailThread instead.
@@ -1687,10 +1789,7 @@ async function upsertConversationThread(params: {
     // Build preview — MMS / media-only messages with no text body fall back
     // to typed emoji placeholders so the thread list is never blank.
     let preview: string | null = body ? body.slice(0, 200) : null;
-    if (
-      !preview &&
-      (communicationType === "sms" || communicationType === "whatsapp")
-    ) {
+    if (!preview && communicationType === "sms") {
       // Look up media on the just-inserted communication row to pick an emoji label.
       try {
         const [mrows] = await pool.query<RowDataPacket[]>(
@@ -1868,7 +1967,7 @@ async function upsertConversationThread(params: {
  * Falls back to the sender's display name from the email provider when no
  * match is found in the system.
  *
- * For SMS/voice/WhatsApp threads use upsertConversationThread instead.
+ * For SMS/voice threads use upsertConversationThread instead.
  */
 async function upsertEmailThread(params: {
   tenantId: number;
@@ -2029,6 +2128,7 @@ async function sendSMSMessage(
   metadata?: any,
   from?: string,
   mediaUrl?: string,
+  options?: { bypassTempDisable?: boolean },
 ): Promise<{
   success: boolean;
   external_id?: string;
@@ -2036,7 +2136,7 @@ async function sendSMSMessage(
   cost?: number;
   provider_response?: any;
 }> {
-  if (SMS_CHANNEL_TEMP_DISABLED) {
+  if (SMS_CHANNEL_TEMP_DISABLED && !options?.bypassTempDisable) {
     return {
       success: false,
       error: "SMS is temporarily disabled across the platform",
@@ -2131,14 +2231,25 @@ async function sendSMSMessage(
                 ? [`Twilio ${fetched.errorCode}: ${fetched.errorMessage ?? ""}`]
                 : []),
               sid,
-              MORTGAGE_TENANT_ID,
-            ],
+              MORTGAGE_TENANT_ID],
           );
 
           if (mapped === "failed") {
             // Publish Ably event so the UI can show a failed-delivery indicator
+            let conversationId: string | null = null;
+            try {
+              const [commRows] = await pool.query<RowDataPacket[]>(
+                `SELECT conversation_id FROM communications
+                 WHERE external_id = ? AND tenant_id = ? LIMIT 1`,
+                [sid, MORTGAGE_TENANT_ID],
+              );
+              conversationId = (commRows[0]?.conversation_id as string) ?? null;
+            } catch {
+              /* non-fatal */
+            }
             publishToAbly("conversations:all", "sms-delivery-failed", {
               sid,
+              conversationId,
               errorCode: fetched.errorCode,
               errorMessage: fetched.errorMessage,
             }).catch(() => undefined);
@@ -2235,7 +2346,7 @@ async function getSharedVoiceNumber(): Promise<string | null> {
 /**
  * Dynamically picks the first SMS-capable "All Mortgage Bankers" number —
  * a Twilio number that is NOT exclusively assigned to any individual broker.
- * Used for outbound SMS/MMS/WhatsApp from brokers who have no personal line
+ * Used for outbound SMS/MMS from brokers who have no personal line
  * and when no shared number can be derived from existing thread history.
  * Results are cached for 60s to avoid hitting the Twilio API on every send.
  */
@@ -2337,80 +2448,6 @@ async function sendVoiceOTP(
   } catch (error: any) {
     console.error("❌ Voice OTP call failed:", error);
     return { success: false, error: error.message || "Failed to place call" };
-  }
-}
-
-/**
- * Send WhatsApp message via Twilio
- */
-async function sendWhatsAppMessage(
-  to: string,
-  body: string,
-  metadata?: any,
-): Promise<{
-  success: boolean;
-  external_id?: string;
-  error?: string;
-  cost?: number;
-  provider_response?: any;
-}> {
-  if (WHATSAPP_CHANNEL_TEMP_DISABLED) {
-    return {
-      success: false,
-      error: "WhatsApp is temporarily disabled across the platform",
-    };
-  }
-
-  if (!twilioClient) {
-    return {
-      success: false,
-      error: "Twilio not configured - WhatsApp sending disabled",
-    };
-  }
-
-  try {
-    // Normalize phone number for WhatsApp
-    const normalizedPhone = to.startsWith("+")
-      ? to
-      : `+1${to.replace(/\D/g, "")}`;
-    const whatsappNumber = `whatsapp:${normalizedPhone}`;
-    const whatsappFrom = `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER || process.env.TWILIO_PHONE_NUMBER}`;
-
-    // Attach delivery status callback so the WhatsApp message can progress from
-    // ✓ (sent) → ✓✓ (delivered) → ✓✓ blue (read), matching SMS behavior.
-    // Twilio cannot reach localhost, so only attach for public URLs.
-    const baseUrl = getBaseUrl();
-    const isPublicUrl =
-      !baseUrl.includes("localhost") && !baseUrl.includes("127.0.0.1");
-
-    const message = await twilioClient.messages.create({
-      body,
-      to: whatsappNumber,
-      from: whatsappFrom,
-      ...(isPublicUrl
-        ? { statusCallback: `${baseUrl}/api/webhooks/sms-status` }
-        : {}),
-      ...metadata,
-    });
-
-    return {
-      success: true,
-      external_id: message.sid,
-      cost: parseFloat(message.price || "0"),
-      provider_response: {
-        sid: message.sid,
-        status: message.status,
-        direction: message.direction,
-        uri: message.uri,
-      },
-    };
-  } catch (error: any) {
-    console.error("❌ WhatsApp sending failed:", error);
-    return {
-      success: false,
-      error: error.message || "Failed to send WhatsApp message",
-      provider_response: error,
-    };
   }
 }
 
@@ -3102,24 +3139,19 @@ async function sendPublicApplicationWelcomeEmail(
                         [
                           "1",
                           "Application Review",
-                          "Our team carefully reviews your information and financial profile.",
-                        ],
+                          "Our team carefully reviews your information and financial profile."],
                         [
                           "2",
                           "Loan Officer Contact",
-                          "A dedicated loan officer will call or email you within 1–2 business days.",
-                        ],
+                          "A dedicated loan officer will call or email you within 1–2 business days."],
                         [
                           "3",
                           "Document Collection",
-                          "You may be asked to upload supporting documents through your secure portal.",
-                        ],
+                          "You may be asked to upload supporting documents through your secure portal."],
                         [
                           "4",
                           "Approval &amp; Closing",
-                          "Once everything checks out, we'll guide you through to closing day.",
-                        ],
-                      ]
+                          "Once everything checks out, we'll guide you through to closing day."]]
                         .map(
                           ([num, title, desc]) => `
                         <tr>
@@ -3691,8 +3723,7 @@ async function getApplicationOwnerBrokerIds(
     const ids = [
       rows[0].broker_user_id,
       rows[0].partner_broker_id,
-      rows[0].assigned_broker_id,
-    ]
+      rows[0].assigned_broker_id]
       .map((v) => (typeof v === "number" ? v : v != null ? Number(v) : null))
       .filter((v): v is number => Number.isFinite(v as number));
     return Array.from(new Set(ids));
@@ -3782,6 +3813,2510 @@ async function createBrokerNotification(params: {
   }
 }
 
+// ── broker notification prefs + alerts (inlined for Vercel serverless) ───────
+// Source of truth: shared/broker-notification-prefs.ts
+type BrokerEmailAlertEventInline =
+  | "new_application"
+  | "voicemail"
+  | "inbound_sms"
+  | "inbound_email"
+  | "scheduler_booking"
+  | "reminder_flow_broker";
+
+type BrokerNotificationPrefsInline = {
+  email_new_application: boolean;
+  email_voicemail: boolean;
+  email_inbound_sms: boolean;
+  email_inbound_email: boolean;
+  email_scheduler_booking: boolean;
+  email_reminder_flow_broker: boolean;
+  secondary_email: string | null;
+};
+
+function isSendableBrokerEmailInline(
+  email: string | null | undefined,
+): boolean {
+  const trimmed = String(email || "").trim();
+  if (!trimmed || !trimmed.includes("@")) return false;
+  if (trimmed.toLowerCase().startsWith("noemail_")) return false;
+  return true;
+}
+
+function normalizeSecondaryEmailInline(
+  raw: string | null | undefined,
+): string | null {
+  const trimmed = String(raw || "")
+    .trim()
+    .toLowerCase();
+  if (!trimmed) return null;
+  if (!isSendableBrokerEmailInline(trimmed)) return null;
+  return trimmed;
+}
+
+function coalesceBoolInline(value: unknown, fallback: boolean): boolean {
+  if (value === true || value === 1 || value === "1") return true;
+  if (value === false || value === 0 || value === "0") return false;
+  return fallback;
+}
+
+function defaultBrokerNotificationPrefsInline(): BrokerNotificationPrefsInline {
+  return {
+    email_new_application: true,
+    email_voicemail: true,
+    email_inbound_sms: true,
+    email_inbound_email: false,
+    email_scheduler_booking: true,
+    email_reminder_flow_broker: true,
+    secondary_email: null,
+  };
+}
+
+function mergeBrokerNotificationPrefsInline(
+  row: Partial<Record<string, unknown>> | null | undefined,
+): BrokerNotificationPrefsInline {
+  const d = defaultBrokerNotificationPrefsInline();
+  if (!row) return d;
+  return {
+    email_new_application: coalesceBoolInline(
+      row.email_new_application,
+      d.email_new_application,
+    ),
+    email_voicemail: coalesceBoolInline(row.email_voicemail, d.email_voicemail),
+    email_inbound_sms: coalesceBoolInline(
+      row.email_inbound_sms,
+      d.email_inbound_sms,
+    ),
+    email_inbound_email: coalesceBoolInline(
+      row.email_inbound_email,
+      d.email_inbound_email,
+    ),
+    email_scheduler_booking: coalesceBoolInline(
+      row.email_scheduler_booking,
+      d.email_scheduler_booking,
+    ),
+    email_reminder_flow_broker: coalesceBoolInline(
+      row.email_reminder_flow_broker,
+      d.email_reminder_flow_broker,
+    ),
+    secondary_email: normalizeSecondaryEmailInline(
+      typeof row.secondary_email === "string" ? row.secondary_email : null,
+    ),
+  };
+}
+
+function isBrokerEmailAlertEnabledInline(
+  prefs: BrokerNotificationPrefsInline,
+  event: BrokerEmailAlertEventInline,
+): boolean {
+  const map: Record<
+    BrokerEmailAlertEventInline,
+    keyof BrokerNotificationPrefsInline
+  > = {
+    new_application: "email_new_application",
+    voicemail: "email_voicemail",
+    inbound_sms: "email_inbound_sms",
+    inbound_email: "email_inbound_email",
+    scheduler_booking: "email_scheduler_booking",
+    reminder_flow_broker: "email_reminder_flow_broker",
+  };
+  return Boolean(prefs[map[event]]);
+}
+
+function collectBrokerAlertRecipientsInline(
+  accountEmail: string | null | undefined,
+  secondaryEmail: string | null | undefined,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of [accountEmail, secondaryEmail]) {
+    const e = String(candidate || "").trim();
+    if (!isSendableBrokerEmailInline(e)) continue;
+    const key = e.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(e);
+  }
+  return out;
+}
+
+async function loadBrokerNotificationPrefsInline(
+  brokerId: number,
+): Promise<BrokerNotificationPrefsInline> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT email_new_application, email_voicemail, email_inbound_sms,
+            email_inbound_email, email_scheduler_booking, email_reminder_flow_broker,
+            secondary_email
+     FROM broker_notification_preferences
+     WHERE broker_id = ? AND tenant_id = ?
+     LIMIT 1`,
+    [brokerId, MORTGAGE_TENANT_ID],
+  );
+  return mergeBrokerNotificationPrefsInline(rows[0] ?? null);
+}
+
+/**
+ * Respects Profile notification prefs. Never throws.
+ * Missing prefs row = defaults. Bell/in-app is unchanged by callers.
+ */
+async function deliverBrokerEmailAlert(opts: {
+  brokerId: number;
+  event: BrokerEmailAlertEventInline;
+  subject: string;
+  html: string;
+}): Promise<void> {
+  try {
+    const prefs = await loadBrokerNotificationPrefsInline(opts.brokerId);
+    if (!isBrokerEmailAlertEnabledInline(prefs, opts.event)) {
+      console.log(
+        `⏭ Broker email alert skipped (prefs off): event=${opts.event} broker=#${opts.brokerId}`,
+      );
+      return;
+    }
+    const [brokerRows] = await pool.query<RowDataPacket[]>(
+      `SELECT email FROM brokers WHERE id = ? AND tenant_id = ? LIMIT 1`,
+      [opts.brokerId, MORTGAGE_TENANT_ID],
+    );
+    const accountEmail = (brokerRows[0]?.email as string | undefined) ?? null;
+    const recipients = collectBrokerAlertRecipientsInline(
+      accountEmail,
+      prefs.secondary_email,
+    );
+    if (!recipients.length) {
+      console.log(
+        `⏭ Broker email alert skipped (no sendable email): event=${opts.event} broker=#${opts.brokerId}`,
+      );
+      return;
+    }
+    for (const to of recipients) {
+      const result = await sendEmailMessage(to, opts.subject, opts.html, true);
+      if (result.success) {
+        console.log(
+          `✅ Broker email alert sent: event=${opts.event} to=${to} broker=#${opts.brokerId}`,
+        );
+      } else {
+        console.error(
+          `❌ Broker email alert failed: event=${opts.event} to=${to} broker=#${opts.brokerId} err=${result.error || "unknown"}`,
+        );
+      }
+    }
+  } catch (err) {
+    console.error(
+      `deliverBrokerEmailAlert failed (non-fatal) event=${opts.event} broker=#${opts.brokerId}:`,
+      err,
+    );
+  }
+}
+
+/**
+ * GET /api/broker/notification-preferences
+ */
+const handleGetBrokerNotificationPreferences: RequestHandler = async (
+  req,
+  res,
+) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const [brokerRows] = await pool.query<RowDataPacket[]>(
+      `SELECT email FROM brokers WHERE id = ? AND tenant_id = ? LIMIT 1`,
+      [brokerId, MORTGAGE_TENANT_ID],
+    );
+    if (!brokerRows.length) {
+      return res.status(404).json({ success: false, error: "Broker not found" });
+    }
+    const accountEmail = String(brokerRows[0].email || "");
+    const prefs = await loadBrokerNotificationPrefsInline(brokerId);
+    return res.json({
+      success: true,
+      preferences: {
+        ...prefs,
+        account_email: accountEmail,
+        account_email_sendable: isSendableBrokerEmailInline(accountEmail),
+      },
+    });
+  } catch (err) {
+    console.error("get notification preferences:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Internal server error" });
+  }
+};
+
+/**
+ * PUT /api/broker/notification-preferences
+ */
+const handlePutBrokerNotificationPreferences: RequestHandler = async (
+  req,
+  res,
+) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const current = await loadBrokerNotificationPrefsInline(brokerId);
+
+    const boolKeys: Array<keyof BrokerNotificationPrefsInline> = [
+      "email_new_application",
+      "email_voicemail",
+      "email_inbound_sms",
+      "email_inbound_email",
+      "email_scheduler_booking",
+      "email_reminder_flow_broker"];
+    const next: BrokerNotificationPrefsInline = { ...current };
+    const changedColumns: string[] = [];
+    for (const key of boolKeys) {
+      if (key in body) {
+        const v = body[key];
+        if (
+          typeof v !== "boolean" &&
+          v !== 0 &&
+          v !== 1 &&
+          v !== "0" &&
+          v !== "1"
+        ) {
+          return res
+            .status(400)
+            .json({ success: false, error: `${key} must be a boolean` });
+        }
+        next[key] = coalesceBoolInline(v, true) as never;
+        changedColumns.push(key);
+      }
+    }
+    if ("secondary_email" in body) {
+      const raw = body.secondary_email;
+      if (raw === null || raw === "") {
+        next.secondary_email = null;
+      } else if (typeof raw !== "string") {
+        return res.status(400).json({
+          success: false,
+          error: "secondary_email must be a string or null",
+        });
+      } else {
+        const normalized = normalizeSecondaryEmailInline(raw);
+        if (raw.trim() && !normalized) {
+          return res.status(400).json({
+            success: false,
+            error: "secondary_email must be a valid email address",
+          });
+        }
+        next.secondary_email = normalized;
+      }
+      changedColumns.push("secondary_email");
+    }
+    if (!changedColumns.length) {
+      return res.status(400).json({
+        success: false,
+        error: "No preference fields to update",
+      });
+    }
+
+    await pool.query(
+      `INSERT IGNORE INTO broker_notification_preferences (broker_id, tenant_id)
+       VALUES (?, ?)`,
+      [brokerId, MORTGAGE_TENANT_ID],
+    );
+
+    const setParts = changedColumns.map((c) => `\`${c}\` = ?`).join(", ");
+    const values = changedColumns.map((c) =>
+      c === "secondary_email"
+        ? next.secondary_email
+        : next[c as keyof BrokerNotificationPrefsInline],
+    );
+    await pool.query(
+      `UPDATE broker_notification_preferences
+       SET ${setParts}, updated_at = NOW()
+       WHERE broker_id = ? AND tenant_id = ?`,
+      [...values, brokerId, MORTGAGE_TENANT_ID],
+    );
+
+    const [brokerRows] = await pool.query<RowDataPacket[]>(
+      `SELECT email FROM brokers WHERE id = ? AND tenant_id = ? LIMIT 1`,
+      [brokerId, MORTGAGE_TENANT_ID],
+    );
+    const accountEmail = String(brokerRows[0]?.email || "");
+    const prefs = await loadBrokerNotificationPrefsInline(brokerId);
+    return res.json({
+      success: true,
+      preferences: {
+        ...prefs,
+        account_email: accountEmail,
+        account_email_sendable: isSendableBrokerEmailInline(accountEmail),
+      },
+    });
+  } catch (err) {
+    console.error("put notification preferences:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Internal server error" });
+  }
+};
+
+
+
+
+
+type PerOwnerCrmFeatureFlags = {
+  enabled: boolean;
+  allowProduction: boolean;
+  pilotBrokerIds: number[];
+  activeForBroker: boolean;
+};
+type ClientListVisibility = "active" | "hidden" | "archived";
+type ClientPhoneConflictScope = "tenant" | "per_owner";
+type ConversationInboxScope = "all" | "mine" | "shared";
+type CrmTransferResolution =
+  | "keep_target_name"
+  | "replace_with_source"
+  | "merge_fields"
+  | "duplicate_import_name"
+  | "rename_on_import";
+
+const PER_OWNER_CRM_ENV_KEYS = {
+  enabled: "PER_OWNER_CRM_ENABLED",
+} as const;
+
+function parseBoolSetting(
+  value: string | undefined | null,
+  fallback = false,
+): boolean {
+  if (value == null || String(value).trim() === "") return fallback;
+  const v = String(value).toLowerCase().trim();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+interface PerOwnerCrmSettingsInput {
+  enabled?: string | boolean | null;
+  brokerId?: number | null;
+}
+
+function settingToBool(
+  value: string | boolean | null | undefined,
+  fallback = false,
+): boolean {
+  if (typeof value === "boolean") return value;
+  return parseBoolSetting(
+    value == null ? undefined : String(value),
+    fallback,
+  );
+}
+
+function resolvePerOwnerCrmActive(
+  input: PerOwnerCrmSettingsInput = {},
+): PerOwnerCrmFeatureFlags {
+  const enabled = settingToBool(input.enabled, false);
+  return {
+    enabled,
+    allowProduction: enabled,
+    pilotBrokerIds: [],
+    activeForBroker: enabled,
+  };
+}
+
+function resolvePerOwnerCrmFromEnv(
+  overrides: {
+    enabled?: string;
+    brokerId?: number | null;
+  } = {},
+): PerOwnerCrmFeatureFlags {
+  const env =
+    typeof process !== "undefined" ? process.env : ({} as NodeJS.ProcessEnv);
+
+  return resolvePerOwnerCrmActive({
+    enabled: overrides.enabled ?? env[PER_OWNER_CRM_ENV_KEYS.enabled],
+    brokerId: overrides.brokerId ?? null,
+  });
+}
+
+function clientListVisibilityFilter(
+  flags: PerOwnerCrmFeatureFlags,
+): ClientListVisibility[] {
+  return flags.activeForBroker ? ["active"] : ["active", "hidden", "archived"];
+}
+
+function resolveClientPhoneConflictScope(
+  flags: PerOwnerCrmFeatureFlags,
+  assignedBrokerId: number | null | undefined,
+): ClientPhoneConflictScope {
+  if (flags.activeForBroker && assignedBrokerId != null) return "per_owner";
+  return "tenant";
+}
+
+function perOwnerClientListWhere(
+  clientAlias = "c",
+  visibility: ClientListVisibility[] = ["active"],
+): string {
+  const vis = visibility.map((v) => `'${v}'`).join(",");
+  return `${clientAlias}.assigned_broker_id = ? AND ${clientAlias}.list_visibility IN (${vis})`;
+}
+
+function perOwnerThreadSharedQueueWhere(threadAlias = "ct"): string {
+  return `(${threadAlias}.client_id IS NULL AND ${threadAlias}.broker_id IS NULL)`;
+}
+
+function perOwnerThreadMineWhere(threadAlias = "ct"): string {
+  const shared = perOwnerThreadSharedQueueWhere(threadAlias);
+  return `(NOT ${shared} AND (
+    ${threadAlias}.owner_client_scope_broker_id = ?
+    OR (${threadAlias}.broker_id = ? AND (
+      ${threadAlias}.owner_client_scope_broker_id IS NULL
+      OR ${threadAlias}.owner_client_scope_broker_id = ?
+    ))
+  ))`;
+}
+
+function defaultConversationInboxScope(
+  flags: PerOwnerCrmFeatureFlags,
+): ConversationInboxScope {
+  return flags.activeForBroker ? "mine" : "all";
+}
+
+function normalizePhoneLast10(phone: string | null | undefined): string {
+  if (!phone) return "";
+  return phone.replace(/\D/g, "").slice(-10);
+}
+
+/** Per-owner CRM feature flags — env vars only (PER_OWNER_CRM_*). */
+
+async function getPerOwnerCrmFlags(
+  _pool: Pool,
+  _tenantId: number,
+  brokerId?: number | null,
+): Promise<PerOwnerCrmFeatureFlags> {
+  return resolvePerOwnerCrmFromEnv({
+    brokerId: brokerId ?? null,
+  });
+}
+
+// =====================================================
+// PER-OWNER CRM API (Phases 4–7 — flag-gated, non-breaking when flags OFF)
+// =====================================================
+
+const handleGetCrmConfig: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const flags = await getPerOwnerCrmFlags(pool, MORTGAGE_TENANT_ID, brokerId);
+    res.json({
+      success: true,
+      per_owner_crm: {
+        ...flags,
+        inactive_reason: flags.activeForBroker ? null : "disabled",
+      },
+    });
+  } catch (error) {
+    console.error("[handleGetCrmConfig]", error);
+    res.status(500).json({ success: false, error: "Failed to load CRM config" });
+  }
+};
+
+const handleGetCrmPeople: RequestHandler = async (req, res) => {
+  try {
+    const brokerRole = (req as any).brokerRole as string;
+    if (!isAdminRole(brokerRole)) {
+      return res
+        .status(403)
+        .json({ success: false, error: "Admin access required" });
+    }
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(
+      100,
+      Math.max(1, parseInt(req.query.limit as string) || 30),
+    );
+    const offset = (page - 1) * limit;
+    const search = ((req.query.search as string) || "").trim();
+
+    let searchClause = "";
+    const searchParams: string[] = [];
+    if (search) {
+      const digits = search.replace(/\D/g, "").slice(-10);
+      searchClause = ` AND (c.normalized_phone LIKE ? OR c.phone LIKE ?${
+        digits.length === 10 ? " OR c.normalized_phone = ?" : ""
+      })`;
+      searchParams.push(`%${search}%`, `%${search}%`);
+      if (digits.length === 10) searchParams.push(digits);
+    }
+
+    const [[countRow]] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(DISTINCT c.normalized_phone) AS total
+       FROM clients c
+       WHERE c.tenant_id = ? AND c.phone IS NOT NULL AND c.normalized_phone IS NOT NULL
+         ${searchClause}`,
+      [MORTGAGE_TENANT_ID, ...searchParams],
+    );
+    const total = Number(countRow?.total || 0);
+
+    const [phoneRows] = await pool.query<RowDataPacket[]>(
+      `SELECT c.normalized_phone,
+              MAX(c.phone) AS display_phone,
+              COUNT(*) AS member_count
+       FROM clients c
+       WHERE c.tenant_id = ? AND c.phone IS NOT NULL AND c.normalized_phone IS NOT NULL
+         ${searchClause}
+       GROUP BY c.normalized_phone
+       ORDER BY member_count DESC, c.normalized_phone
+       LIMIT ${limit} OFFSET ${offset}`,
+      [MORTGAGE_TENANT_ID, ...searchParams],
+    );
+
+    const groups = [];
+    for (const row of phoneRows) {
+      const norm = row.normalized_phone as string;
+      const [members] = await pool.query<RowDataPacket[]>(
+        `SELECT c.id AS client_id, c.first_name, c.last_name,
+                c.assigned_broker_id, c.list_visibility,
+                CONCAT(b.first_name, ' ', b.last_name) AS assigned_broker_name,
+                g.id AS link_group_id, g.status AS link_group_status
+         FROM clients c
+         LEFT JOIN brokers b ON b.id = c.assigned_broker_id
+         LEFT JOIN crm_person_group_members m
+           ON m.tenant_id = c.tenant_id AND m.entity_type = 'client' AND m.entity_id = c.id
+         LEFT JOIN crm_person_groups g ON g.id = m.group_id AND g.status IN ('pending','linked')
+         WHERE c.tenant_id = ? AND c.normalized_phone = ?
+         ORDER BY c.list_visibility, c.last_name, c.first_name`,
+        [MORTGAGE_TENANT_ID, norm],
+      );
+      groups.push({
+        normalized_phone: norm,
+        display_phone: row.display_phone ?? null,
+        member_count: Number(row.member_count),
+        members: members.map((m) => ({
+          client_id: m.client_id,
+          first_name: m.first_name,
+          last_name: m.last_name,
+          assigned_broker_id: m.assigned_broker_id,
+          assigned_broker_name: m.assigned_broker_name?.trim() || null,
+          list_visibility: m.list_visibility,
+          link_group_id: m.link_group_id ?? null,
+          link_group_status: m.link_group_status ?? null,
+        })),
+      });
+    }
+
+    res.json({
+      success: true,
+      groups,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
+  } catch (error) {
+    console.error("[handleGetCrmPeople]", error);
+    res.status(500).json({ success: false, error: "Failed to load people view" });
+  }
+};
+
+const handleCreatePersonGroup: RequestHandler = async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const flags = await getPerOwnerCrmFlags(pool, MORTGAGE_TENANT_ID, brokerId);
+    if (!flags.activeForBroker) {
+      return res.status(403).json({
+        success: false,
+        error: "Per-owner CRM is not enabled for your account",
+      });
+    }
+    const { member_entity_type, member_entity_id, notes } = req.body as {
+      member_entity_type?: string;
+      member_entity_id?: number;
+      notes?: string;
+    };
+    if (member_entity_type !== "client" || !member_entity_id) {
+      return res.status(400).json({
+        success: false,
+        error: "member_entity_type must be client with member_entity_id",
+      });
+    }
+
+    await connection.beginTransaction();
+
+    const [[sourceClient]] = await connection.query<RowDataPacket[]>(
+      `SELECT id, normalized_phone, assigned_broker_id FROM clients
+       WHERE id = ? AND tenant_id = ? LIMIT 1`,
+      [member_entity_id, MORTGAGE_TENANT_ID],
+    );
+    if (!sourceClient?.normalized_phone) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, error: "Client not found" });
+    }
+    if (Number(sourceClient.assigned_broker_id) !== brokerId) {
+      await connection.rollback();
+      return res.status(403).json({
+        success: false,
+        error: "You can only request links for clients on your list",
+      });
+    }
+
+    const [dupes] = await connection.query<RowDataPacket[]>(
+      `SELECT id FROM clients
+       WHERE tenant_id = ? AND normalized_phone = ? AND id != ? AND phone IS NOT NULL
+       LIMIT 1`,
+      [MORTGAGE_TENANT_ID, sourceClient.normalized_phone, member_entity_id],
+    );
+    if (dupes.length === 0) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        error: "No other owner rows share this phone number",
+      });
+    }
+
+    const [existingMember] = await connection.query<RowDataPacket[]>(
+      `SELECT g.id FROM crm_person_group_members m
+       JOIN crm_person_groups g ON g.id = m.group_id
+       WHERE m.tenant_id = ? AND m.entity_type = 'client' AND m.entity_id = ?
+         AND g.status IN ('pending','linked')
+       LIMIT 1`,
+      [MORTGAGE_TENANT_ID, member_entity_id],
+    );
+    if (existingMember.length > 0) {
+      await connection.rollback();
+      return res.status(409).json({
+        success: false,
+        error: "Client is already in a pending or active link group",
+        group_id: existingMember[0].id,
+      });
+    }
+
+    const [groupResult] = await connection.query<ResultSetHeader>(
+      `INSERT INTO crm_person_groups
+         (tenant_id, status, created_by_broker_id, notes)
+       VALUES (?, 'pending', ?, ?)`,
+      [MORTGAGE_TENANT_ID, brokerId, notes?.trim() || null],
+    );
+    const groupId = groupResult.insertId;
+
+    const [samePhoneClients] = await connection.query<RowDataPacket[]>(
+      `SELECT id FROM clients
+       WHERE tenant_id = ? AND normalized_phone = ? AND phone IS NOT NULL`,
+      [MORTGAGE_TENANT_ID, sourceClient.normalized_phone],
+    );
+    for (const c of samePhoneClients) {
+      await connection.query(
+        `INSERT IGNORE INTO crm_person_group_members
+           (tenant_id, group_id, entity_type, entity_id, role)
+         VALUES (?, ?, 'client', ?, 'member')`,
+        [MORTGAGE_TENANT_ID, groupId, c.id],
+      );
+    }
+
+    await connection.commit();
+    res.status(201).json({
+      success: true,
+      group: { id: groupId, status: "pending", notes: notes?.trim() || null },
+      message: "Link request created — awaiting admin approval",
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error("[handleCreatePersonGroup]", error);
+    res.status(500).json({ success: false, error: "Failed to create link request" });
+  } finally {
+    connection.release();
+  }
+};
+
+const handleApprovePersonGroup: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const brokerRole = (req as any).brokerRole as string;
+    if (!isAdminRole(brokerRole)) {
+      return res.status(403).json({ success: false, error: "Admin access required" });
+    }
+    const groupId = parseInt(String(req.params.groupId), 10);
+    const { approve, notes } = req.body as { approve?: boolean; notes?: string };
+    if (typeof approve !== "boolean") {
+      return res.status(400).json({ success: false, error: "approve boolean required" });
+    }
+
+    const [[group]] = await pool.query<RowDataPacket[]>(
+      `SELECT id, status FROM crm_person_groups
+       WHERE id = ? AND tenant_id = ? LIMIT 1`,
+      [groupId, MORTGAGE_TENANT_ID],
+    );
+    if (!group) {
+      return res.status(404).json({ success: false, error: "Group not found" });
+    }
+    if (group.status !== "pending") {
+      return res.status(409).json({ success: false, error: "Group is not pending" });
+    }
+
+    const newStatus = approve ? "linked" : "rejected";
+    await pool.query(
+      `UPDATE crm_person_groups
+       SET status = ?, approved_by_broker_id = ?, approved_at = NOW(),
+           notes = COALESCE(?, notes), updated_at = NOW()
+       WHERE id = ? AND tenant_id = ?`,
+      [newStatus, brokerId, notes?.trim() || null, groupId, MORTGAGE_TENANT_ID],
+    );
+
+    res.json({ success: true, status: newStatus });
+  } catch (error) {
+    console.error("[handleApprovePersonGroup]", error);
+    res.status(500).json({ success: false, error: "Failed to update link group" });
+  }
+};
+
+const handleMergePersonGroup: RequestHandler = async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    const brokerRole = (req as any).brokerRole as string;
+    if (!isAdminRole(brokerRole)) {
+      return res
+        .status(403)
+        .json({ success: false, error: "Admin access required" });
+    }
+    const groupId = parseInt(String(req.params.groupId), 10);
+    const { survivor_client_id } = req.body as { survivor_client_id?: number };
+    if (!survivor_client_id) {
+      return res.status(400).json({
+        success: false,
+        error: "survivor_client_id required",
+      });
+    }
+
+    await connection.beginTransaction();
+
+    const [[group]] = await connection.query<RowDataPacket[]>(
+      `SELECT id, status FROM crm_person_groups WHERE id = ? AND tenant_id = ?`,
+      [groupId, MORTGAGE_TENANT_ID],
+    );
+    if (!group || !["pending", "linked"].includes(group.status as string)) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, error: "Group not found or not mergeable" });
+    }
+
+    const [members] = await connection.query<RowDataPacket[]>(
+      `SELECT entity_id FROM crm_person_group_members
+       WHERE group_id = ? AND tenant_id = ? AND entity_type = 'client'`,
+      [groupId, MORTGAGE_TENANT_ID],
+    );
+    const memberIds = members.map((m) => m.entity_id as number);
+    if (!memberIds.includes(survivor_client_id)) {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        error: "Survivor must be a group member",
+      });
+    }
+
+    const archiveIds = memberIds.filter((id) => id !== survivor_client_id);
+    for (const archiveId of archiveIds) {
+      await connection.query(
+        `UPDATE clients SET list_visibility = 'archived', hidden_reason = 'crm_merge',
+            hidden_at = NOW(), updated_at = NOW()
+         WHERE id = ? AND tenant_id = ?`,
+        [archiveId, MORTGAGE_TENANT_ID],
+      );
+      await connection.query(
+        `UPDATE conversation_threads
+         SET client_id = ?, owner_client_scope_broker_id = (
+           SELECT assigned_broker_id FROM clients WHERE id = ? LIMIT 1
+         )
+         WHERE client_id = ? AND tenant_id = ?`,
+        [survivor_client_id, survivor_client_id, archiveId, MORTGAGE_TENANT_ID],
+      );
+      await connection.query(
+        `UPDATE loan_applications SET client_user_id = ?
+         WHERE client_user_id = ? AND tenant_id = ?`,
+        [survivor_client_id, archiveId, MORTGAGE_TENANT_ID],
+      );
+    }
+
+    await connection.query(
+      `UPDATE crm_person_groups
+       SET status = 'merged', canonical_client_id = ?, updated_at = NOW()
+       WHERE id = ? AND tenant_id = ?`,
+      [survivor_client_id, groupId, MORTGAGE_TENANT_ID],
+    );
+
+    await connection.commit();
+    res.json({
+      success: true,
+      survivor_client_id,
+      archived_client_ids: archiveIds,
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error("[handleMergePersonGroup]", error);
+    res.status(500).json({ success: false, error: "Failed to merge group" });
+  } finally {
+    connection.release();
+  }
+};
+
+const handleStartCrmTransfer: RequestHandler = async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const flags = await getPerOwnerCrmFlags(pool, MORTGAGE_TENANT_ID, brokerId);
+    if (!flags.activeForBroker) {
+      return res.status(403).json({
+        success: false,
+        error: "Per-owner CRM is not enabled for your account",
+      });
+    }
+    const { to_broker_id, source_entity_type, source_entity_id } = req.body as {
+      to_broker_id?: number;
+      source_entity_type?: string;
+      source_entity_id?: number;
+    };
+    if (
+      source_entity_type !== "client" ||
+      !source_entity_id ||
+      !to_broker_id ||
+      to_broker_id === brokerId
+    ) {
+      return res.status(400).json({ success: false, error: "Invalid transfer request" });
+    }
+
+    await connection.beginTransaction();
+
+    const [[client]] = await connection.query<RowDataPacket[]>(
+      `SELECT id, first_name, last_name, phone, normalized_phone, email, assigned_broker_id
+       FROM clients WHERE id = ? AND tenant_id = ?`,
+      [source_entity_id, MORTGAGE_TENANT_ID],
+    );
+    if (!client || Number(client.assigned_broker_id) !== brokerId) {
+      await connection.rollback();
+      return res.status(403).json({
+        success: false,
+        error: "You can only transfer clients you own",
+      });
+    }
+
+    const [[targetBroker]] = await connection.query<RowDataPacket[]>(
+      `SELECT id FROM brokers WHERE id = ? AND tenant_id = ? AND status = 'active'`,
+      [to_broker_id, MORTGAGE_TENANT_ID],
+    );
+    if (!targetBroker) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, error: "Target broker not found" });
+    }
+
+    const conflicts: Array<{
+      field: string;
+      source_value: string;
+      target_value: string;
+    }> = [];
+    if (client.normalized_phone) {
+      const [targetDup] = await connection.query<RowDataPacket[]>(
+        `SELECT id, first_name, last_name FROM clients
+         WHERE tenant_id = ? AND assigned_broker_id = ? AND normalized_phone = ?
+           AND phone IS NOT NULL AND id != ? LIMIT 1`,
+        [MORTGAGE_TENANT_ID, to_broker_id, client.normalized_phone, source_entity_id],
+      );
+      if (targetDup.length > 0) {
+        conflicts.push({
+          field: "phone",
+          source_value: `${client.first_name} ${client.last_name}`.trim(),
+          target_value: `${targetDup[0].first_name} ${targetDup[0].last_name}`.trim(),
+        });
+      }
+    }
+
+    const status = conflicts.length > 0 ? "review" : "pending";
+    const [jobResult] = await connection.query<ResultSetHeader>(
+      `INSERT INTO crm_transfer_jobs
+         (tenant_id, from_broker_id, to_broker_id, source_entity_type, source_entity_id,
+          status, created_by_broker_id)
+       VALUES (?, ?, ?, 'client', ?, ?, ?)`,
+      [
+        MORTGAGE_TENANT_ID,
+        brokerId,
+        to_broker_id,
+        source_entity_id,
+        status,
+        brokerId],
+    );
+
+    await connection.commit();
+    res.status(201).json({
+      success: true,
+      job: {
+        id: jobResult.insertId,
+        status,
+        from_broker_id: brokerId,
+        to_broker_id,
+        source_entity_id,
+      },
+      conflicts: conflicts.length ? conflicts : undefined,
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error("[handleStartCrmTransfer]", error);
+    res.status(500).json({ success: false, error: "Failed to start transfer" });
+  } finally {
+    connection.release();
+  }
+};
+
+const handleGetCrmTransfer: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const jobId = parseInt(String(req.params.jobId), 10);
+    const [[job]] = await pool.query<RowDataPacket[]>(
+      `SELECT * FROM crm_transfer_jobs WHERE id = ? AND tenant_id = ?`,
+      [jobId, MORTGAGE_TENANT_ID],
+    );
+    if (!job) {
+      return res.status(404).json({ success: false, error: "Transfer job not found" });
+    }
+    if (
+      job.from_broker_id !== brokerId &&
+      job.to_broker_id !== brokerId &&
+      !isAdminRole((req as any).brokerRole)
+    ) {
+      return res.status(403).json({ success: false, error: "Access denied" });
+    }
+
+    let conflicts: Array<{ field: string; source_value: string; target_value: string }> =
+      [];
+    if (job.status === "review" && job.source_entity_type === "client") {
+      const [[src]] = await pool.query<RowDataPacket[]>(
+        `SELECT first_name, last_name, normalized_phone FROM clients WHERE id = ?`,
+        [job.source_entity_id],
+      );
+      if (src?.normalized_phone) {
+        const [tgt] = await pool.query<RowDataPacket[]>(
+          `SELECT first_name, last_name FROM clients
+           WHERE tenant_id = ? AND assigned_broker_id = ? AND normalized_phone = ?
+             AND id != ? LIMIT 1`,
+          [MORTGAGE_TENANT_ID, job.to_broker_id, src.normalized_phone, job.source_entity_id],
+        );
+        if (tgt.length > 0) {
+          conflicts.push({
+            field: "phone",
+            source_value: `${src.first_name} ${src.last_name}`.trim(),
+            target_value: `${tgt[0].first_name} ${tgt[0].last_name}`.trim(),
+          });
+        }
+      }
+    }
+
+    res.json({ success: true, job, conflicts });
+  } catch (error) {
+    console.error("[handleGetCrmTransfer]", error);
+    res.status(500).json({ success: false, error: "Failed to load transfer" });
+  }
+};
+
+const handleResolveCrmTransfer: RequestHandler = async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const jobId = parseInt(String(req.params.jobId), 10);
+    const { resolution } = req.body as { resolution?: CrmTransferResolution };
+    const validResolutions: CrmTransferResolution[] = [
+      "keep_target_name",
+      "replace_with_source",
+      "merge_fields",
+      "duplicate_import_name",
+      "rename_on_import"];
+    if (!resolution || !validResolutions.includes(resolution)) {
+      return res.status(400).json({ success: false, error: "Invalid resolution" });
+    }
+
+    await connection.beginTransaction();
+
+    const [[job]] = await connection.query<RowDataPacket[]>(
+      `SELECT * FROM crm_transfer_jobs WHERE id = ? AND tenant_id = ? FOR UPDATE`,
+      [jobId, MORTGAGE_TENANT_ID],
+    );
+    if (!job || !["pending", "review"].includes(job.status as string)) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, error: "Transfer job not found" });
+    }
+    if (job.from_broker_id !== brokerId && !isAdminRole((req as any).brokerRole)) {
+      await connection.rollback();
+      return res.status(403).json({ success: false, error: "Only the source owner can resolve" });
+    }
+
+    const clientId = job.source_entity_id as number;
+    const toBrokerId = job.to_broker_id as number;
+
+    if (resolution === "keep_target_name" || resolution === "duplicate_import_name") {
+      await connection.query(
+        `UPDATE clients SET list_visibility = 'hidden', hidden_reason = 'transfer',
+            hidden_at = NOW(), updated_at = NOW()
+         WHERE id = ? AND tenant_id = ?`,
+        [clientId, MORTGAGE_TENANT_ID],
+      );
+    } else if (resolution === "replace_with_source") {
+      const [[src]] = await connection.query<RowDataPacket[]>(
+        `SELECT first_name, last_name, email, phone, normalized_phone FROM clients WHERE id = ?`,
+        [clientId],
+      );
+      const [tgtRows] = await connection.query<RowDataPacket[]>(
+        `SELECT id FROM clients
+         WHERE tenant_id = ? AND assigned_broker_id = ? AND normalized_phone = ?
+           AND id != ? LIMIT 1`,
+        [MORTGAGE_TENANT_ID, toBrokerId, src?.normalized_phone, clientId],
+      );
+      if (tgtRows.length > 0) {
+        await connection.query(
+          `UPDATE clients SET first_name = ?, last_name = ?, email = COALESCE(email, ?),
+              updated_at = NOW()
+           WHERE id = ? AND tenant_id = ?`,
+          [src?.first_name, src?.last_name, src?.email, tgtRows[0].id, MORTGAGE_TENANT_ID],
+        );
+      }
+      await connection.query(
+        `UPDATE clients SET list_visibility = 'hidden', hidden_reason = 'transfer',
+            hidden_at = NOW(), updated_at = NOW()
+         WHERE id = ? AND tenant_id = ?`,
+        [clientId, MORTGAGE_TENANT_ID],
+      );
+    } else {
+      await connection.query(
+        `UPDATE clients SET assigned_broker_id = ?, updated_at = NOW()
+         WHERE id = ? AND tenant_id = ?`,
+        [toBrokerId, clientId, MORTGAGE_TENANT_ID],
+      );
+      await connection.query(
+        `UPDATE conversation_threads
+         SET owner_client_scope_broker_id = ?, broker_id = ?
+         WHERE client_id = ? AND tenant_id = ?`,
+        [toBrokerId, toBrokerId, clientId, MORTGAGE_TENANT_ID],
+      );
+    }
+
+    await connection.query(
+      `UPDATE crm_transfer_jobs
+       SET status = 'completed', resolution_json = ?, completed_at = NOW()
+       WHERE id = ? AND tenant_id = ?`,
+      [JSON.stringify({ resolution }), jobId, MORTGAGE_TENANT_ID],
+    );
+
+    await connection.commit();
+
+    // Real-time CRM list refresh for source + target brokers
+    try {
+      const fromBrokerId = Number(job.from_broker_id);
+      const payload = {
+        jobId,
+        clientId,
+        fromBrokerId,
+        toBrokerId,
+        status: "completed",
+        resolution,
+      };
+      await publishToAbly(`broker-notifications:${fromBrokerId}`, "crm-updated", payload);
+      if (toBrokerId !== fromBrokerId) {
+        await publishToAbly(`broker-notifications:${toBrokerId}`, "crm-updated", payload);
+      }
+    } catch (ablyErr) {
+      console.warn("[handleResolveCrmTransfer] Ably publish failed:", ablyErr);
+    }
+
+    res.json({ success: true, status: "completed", resolution });
+  } catch (error) {
+    await connection.rollback();
+    console.error("[handleResolveCrmTransfer]", error);
+    res.status(500).json({ success: false, error: "Failed to resolve transfer" });
+  } finally {
+    connection.release();
+  }
+};
+
+/**
+ * POST /api/crm/clients/:clientId/restore
+ * Admin restores a hidden/archived client row to active list visibility.
+ */
+const handleRestoreCrmClient: RequestHandler = async (req, res) => {
+  try {
+    const brokerRole = (req as any).brokerRole as string;
+    if (!isAdminRole(brokerRole)) {
+      return res.status(403).json({ success: false, error: "Admin access required" });
+    }
+    const clientId = parseInt(String(req.params.clientId), 10);
+    const [result] = await pool.query<ResultSetHeader>(
+      `UPDATE clients SET list_visibility = 'active', hidden_reason = NULL, hidden_at = NULL, updated_at = NOW()
+       WHERE id = ? AND tenant_id = ? AND list_visibility IN ('hidden','archived')`,
+      [clientId, MORTGAGE_TENANT_ID],
+    );
+    if (!result.affectedRows) {
+      return res.status(404).json({ success: false, error: "Client not found or already active" });
+    }
+    res.json({ success: true, client_id: clientId, list_visibility: "active" });
+  } catch (error) {
+    console.error("[handleRestoreCrmClient]", error);
+    res.status(500).json({ success: false, error: "Failed to restore client" });
+  }
+};
+
+
+
+/**
+ * POST /api/conversations/:conversationId/claim
+ * Claim an unowned shared-inbox thread into the current broker's CRM.
+ */
+const handleClaimSharedConversation: RequestHandler = async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const conversationId = String(req.params.conversationId || "");
+    const flags = await getPerOwnerCrmFlags(pool, MORTGAGE_TENANT_ID, brokerId);
+    if (!flags.activeForBroker) {
+      return res.status(403).json({
+        success: false,
+        error: "Per-owner CRM is not enabled for your account",
+      });
+    }
+    const { first_name, last_name, email } = (req.body || {}) as {
+      first_name?: string;
+      last_name?: string;
+      email?: string;
+    };
+
+    await connection.beginTransaction();
+
+    const [[thread]] = await connection.query<RowDataPacket[]>(
+      `SELECT id, client_id, broker_id, client_phone, client_email, conversation_id
+       FROM conversation_threads
+       WHERE conversation_id = ? AND tenant_id = ? FOR UPDATE`,
+      [conversationId, MORTGAGE_TENANT_ID],
+    );
+    if (!thread) {
+      await connection.rollback();
+      return res.status(404).json({ success: false, error: "Thread not found" });
+    }
+    if (thread.client_id != null || thread.broker_id != null) {
+      await connection.rollback();
+      return res.status(409).json({
+        success: false,
+        error: "already_claimed",
+        message: "This conversation has already been claimed.",
+      });
+    }
+
+    const fn = (first_name || "").trim() || "Unknown";
+    const ln = (last_name || "").trim() || "Caller";
+    const clientPhone = (thread.client_phone as string | null) || null;
+    const normalizedPhone = clientPhone
+      ? normalizePhoneLast10(clientPhone) || null
+      : null;
+
+    if (normalizedPhone) {
+      const [conflicts] = await connection.query<RowDataPacket[]>(
+        `SELECT id, first_name, last_name FROM clients
+         WHERE tenant_id = ? AND assigned_broker_id = ? AND normalized_phone = ?
+           AND list_visibility = 'active'
+         LIMIT 1`,
+        [MORTGAGE_TENANT_ID, brokerId, normalizedPhone],
+      );
+      if (conflicts.length > 0) {
+        await connection.rollback();
+        return res.status(409).json({
+          success: false,
+          error: "You already have a client with this phone number",
+          existing_client_id: conflicts[0].id,
+        });
+      }
+    }
+
+    const providedEmail = (email || "").trim().toLowerCase() || null;
+    const phoneDigits = (clientPhone || String(Date.now())).replace(/\D/g, "");
+    const placeholderEmail = `noemail_${phoneDigits}@noemail.placeholder`;
+    const clientEmail =
+      providedEmail ??
+      ((thread.client_email as string | null) || null) ??
+      placeholderEmail;
+
+    const [insertResult] = await connection.query<ResultSetHeader>(
+      `INSERT INTO clients
+         (tenant_id, first_name, last_name, email, phone, normalized_phone,
+          status, assigned_broker_id, source, list_visibility)
+       VALUES (?, ?, ?, ?, ?, ?, 'active', ?, 'claimed_shared', 'active')`,
+      [
+        MORTGAGE_TENANT_ID,
+        fn,
+        ln,
+        clientEmail,
+        clientPhone,
+        normalizedPhone,
+        brokerId],
+    );
+    const newClientId = insertResult.insertId;
+    const fullName = `${fn} ${ln}`.trim();
+
+    await connection.query(
+      `UPDATE conversation_threads
+       SET client_id = ?, broker_id = ?, owner_client_scope_broker_id = ?,
+           client_name = ?,
+           client_email = COALESCE(NULLIF(client_email, ''), ?),
+           updated_at = NOW()
+       WHERE conversation_id = ? AND tenant_id = ?`,
+      [
+        newClientId,
+        brokerId,
+        brokerId,
+        fullName,
+        providedEmail,
+        conversationId,
+        MORTGAGE_TENANT_ID],
+    );
+
+    await connection.query(
+      `UPDATE communications
+       SET from_user_id = ?
+       WHERE conversation_id = ? AND direction = 'inbound' AND tenant_id = ?
+         AND from_user_id IS NULL`,
+      [newClientId, conversationId, MORTGAGE_TENANT_ID],
+    );
+
+    await connection.commit();
+    res.json({
+      success: true,
+      client_id: newClientId,
+      client_name: fullName,
+      conversation_id: conversationId,
+    });
+  } catch (error) {
+    try {
+      await connection.rollback();
+    } catch {
+      /* ignore */
+    }
+    console.error("[handleClaimSharedConversation]", error);
+    res.status(500).json({ success: false, error: "Failed to claim conversation" });
+  } finally {
+    connection.release();
+  }
+};
+
+// ── Compliance checklists ────────────────────────────────────────────────────
+
+const DEFAULT_COMPLIANCE_ITEMS: Array<{
+  item_name: string;
+  item_description: string;
+  is_required: boolean;
+}> = [
+  {
+    item_name: "Loan Estimate delivered",
+    item_description: "TRID Loan Estimate provided within required timeline",
+    is_required: true,
+  },
+  {
+    item_name: "Intent to proceed received",
+    item_description: "Borrower intent to proceed documented",
+    is_required: true,
+  },
+  {
+    item_name: "Closing Disclosure delivered",
+    item_description: "Closing Disclosure delivered at least 3 business days before consummation",
+    is_required: true,
+  },
+  {
+    item_name: "Identity / KYC verified",
+    item_description: "Government ID and identity verification completed",
+    is_required: true,
+  },
+  {
+    item_name: "Income documentation reviewed",
+    item_description: "Paystubs, W-2s, or alternative income docs reviewed",
+    is_required: true,
+  },
+  {
+    item_name: "Credit authorization on file",
+    item_description: "Signed credit pull authorization retained",
+    is_required: true,
+  },
+  {
+    item_name: "Appraisal ordered / reviewed",
+    item_description: "Appraisal ordered and findings reviewed when required",
+    is_required: false,
+  },
+  {
+    item_name: "Title / settlement reviewed",
+    item_description: "Title commitment and settlement statement reviewed",
+    is_required: false,
+  }];
+
+async function loadComplianceChecklistDetail(
+  checklistId: number,
+): Promise<Record<string, unknown> | null> {
+  const [[row]] = await pool.query<RowDataPacket[]>(
+    `SELECT cc.*, la.application_number,
+            CONCAT(c.first_name, ' ', c.last_name) AS client_name
+     FROM compliance_checklists cc
+     LEFT JOIN loan_applications la ON la.id = cc.application_id
+     LEFT JOIN clients c ON c.id = la.client_user_id
+     WHERE cc.id = ? AND cc.tenant_id = ?
+     LIMIT 1`,
+    [checklistId, MORTGAGE_TENANT_ID],
+  );
+  if (!row) return null;
+  const [items] = await pool.query<RowDataPacket[]>(
+    `SELECT * FROM compliance_checklist_items WHERE checklist_id = ? ORDER BY id ASC`,
+    [checklistId],
+  );
+  const completed = items.filter((i) => i.is_completed).length;
+  return {
+    id: row.id,
+    application_id: row.application_id,
+    application_number: row.application_number ?? null,
+    client_name: (row.client_name as string | null)?.trim() || null,
+    checklist_name: row.checklist_name,
+    is_completed: Boolean(row.is_completed),
+    completed_at: row.completed_at,
+    item_count: items.length,
+    completed_item_count: completed,
+    created_at: row.created_at,
+    items: items.map((i) => ({
+      id: i.id,
+      checklist_id: i.checklist_id,
+      item_name: i.item_name,
+      item_description: i.item_description,
+      is_required: Boolean(i.is_required),
+      is_completed: Boolean(i.is_completed),
+      completed_by_broker_id: i.completed_by_broker_id,
+      completed_at: i.completed_at,
+      notes: i.notes,
+    })),
+  };
+}
+
+const handleGetComplianceChecklists: RequestHandler = async (req, res) => {
+  try {
+    const brokerRole = (req as any).brokerRole as string;
+    if (!isAdminRole(brokerRole)) {
+      return res.status(403).json({ success: false, error: "Admin access required" });
+    }
+
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT cc.id, cc.application_id, cc.checklist_name, cc.is_completed,
+              cc.completed_at, cc.created_at, la.application_number,
+              CONCAT(c.first_name, ' ', c.last_name) AS client_name,
+              (SELECT COUNT(*) FROM compliance_checklist_items i WHERE i.checklist_id = cc.id) AS item_count,
+              (SELECT COUNT(*) FROM compliance_checklist_items i WHERE i.checklist_id = cc.id AND i.is_completed = 1) AS completed_item_count
+       FROM compliance_checklists cc
+       LEFT JOIN loan_applications la ON la.id = cc.application_id
+       LEFT JOIN clients c ON c.id = la.client_user_id
+       WHERE cc.tenant_id = ?
+       ORDER BY cc.updated_at DESC
+       LIMIT 200`,
+      [MORTGAGE_TENANT_ID],
+    );
+    res.json({
+      success: true,
+      checklists: rows.map((r) => ({
+        id: r.id,
+        application_id: r.application_id,
+        application_number: r.application_number ?? null,
+        client_name: (r.client_name as string | null)?.trim() || null,
+        checklist_name: r.checklist_name,
+        is_completed: Boolean(r.is_completed),
+        completed_at: r.completed_at,
+        item_count: Number(r.item_count || 0),
+        completed_item_count: Number(r.completed_item_count || 0),
+        created_at: r.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error("get compliance checklists:", err);
+    res.status(500).json({ success: false, error: "Failed to load checklists" });
+  }
+};
+
+const handleGetComplianceChecklist: RequestHandler = async (req, res) => {
+  try {
+    const checklistId = parseInt(String(req.params.checklistId), 10);
+    const checklist = await loadComplianceChecklistDetail(checklistId);
+    if (!checklist) {
+      return res.status(404).json({ success: false, error: "Checklist not found" });
+    }
+    res.json({ success: true, checklist });
+  } catch (err) {
+    console.error("get compliance checklist:", err);
+    res.status(500).json({ success: false, error: "Failed to load checklist" });
+  }
+};
+
+const handleCreateComplianceChecklist: RequestHandler = async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    const brokerRole = (req as any).brokerRole as string;
+    if (!isAdminRole(brokerRole)) {
+      return res.status(403).json({ success: false, error: "Admin access required" });
+    }
+
+    const brokerId = (req as any).brokerId as number;
+    const applicationId = Number((req.body || {}).application_id);
+    if (!Number.isFinite(applicationId)) {
+      return res.status(400).json({ success: false, error: "application_id required" });
+    }
+    const [[loan]] = await connection.query<RowDataPacket[]>(
+      `SELECT id FROM loan_applications WHERE id = ? AND tenant_id = ? LIMIT 1`,
+      [applicationId, MORTGAGE_TENANT_ID],
+    );
+    if (!loan) {
+      return res.status(404).json({ success: false, error: "Loan application not found" });
+    }
+    const [[existing]] = await connection.query<RowDataPacket[]>(
+      `SELECT id FROM compliance_checklists WHERE tenant_id = ? AND application_id = ? LIMIT 1`,
+      [MORTGAGE_TENANT_ID, applicationId],
+    );
+    if (existing) {
+      const checklist = await loadComplianceChecklistDetail(existing.id as number);
+      return res.json({ success: true, checklist });
+    }
+
+    await connection.beginTransaction();
+    const [ins] = await connection.query<ResultSetHeader>(
+      `INSERT INTO compliance_checklists
+         (tenant_id, application_id, checklist_name, is_completed)
+       VALUES (?, ?, 'Standard Loan Compliance', 0)`,
+      [MORTGAGE_TENANT_ID, applicationId],
+    );
+    const checklistId = ins.insertId;
+    for (const item of DEFAULT_COMPLIANCE_ITEMS) {
+      await connection.query(
+        `INSERT INTO compliance_checklist_items
+           (checklist_id, item_name, item_description, is_required, is_completed)
+         VALUES (?, ?, ?, ?, 0)`,
+        [checklistId, item.item_name, item.item_description, item.is_required ? 1 : 0],
+      );
+    }
+    await connection.commit();
+    const checklist = await loadComplianceChecklistDetail(checklistId);
+    res.status(201).json({ success: true, checklist });
+  } catch (err) {
+    await connection.rollback();
+    console.error("create compliance checklist:", err);
+    res.status(500).json({ success: false, error: "Failed to create checklist" });
+  } finally {
+    connection.release();
+  }
+};
+
+const handleUpdateComplianceItem: RequestHandler = async (req, res) => {
+  try {
+    const brokerRole = (req as any).brokerRole as string;
+    if (!isAdminRole(brokerRole)) {
+      return res.status(403).json({ success: false, error: "Admin access required" });
+    }
+
+    const brokerId = (req as any).brokerId as number;
+    const checklistId = parseInt(String(req.params.checklistId), 10);
+    const itemId = parseInt(String(req.params.itemId), 10);
+    const { is_completed, notes } = (req.body || {}) as {
+      is_completed?: boolean;
+      notes?: string | null;
+    };
+    if (typeof is_completed !== "boolean") {
+      return res.status(400).json({ success: false, error: "is_completed boolean required" });
+    }
+    const [[owned]] = await pool.query<RowDataPacket[]>(
+      `SELECT i.id FROM compliance_checklist_items i
+       JOIN compliance_checklists c ON c.id = i.checklist_id
+       WHERE i.id = ? AND i.checklist_id = ? AND c.tenant_id = ?
+       LIMIT 1`,
+      [itemId, checklistId, MORTGAGE_TENANT_ID],
+    );
+    if (!owned) {
+      return res.status(404).json({ success: false, error: "Item not found" });
+    }
+    await pool.query(
+      `UPDATE compliance_checklist_items
+       SET is_completed = ?,
+           completed_by_broker_id = ?,
+           completed_at = ?,
+           notes = COALESCE(?, notes)
+       WHERE id = ? AND checklist_id = ?`,
+      [
+        is_completed ? 1 : 0,
+        is_completed ? brokerId : null,
+        is_completed ? new Date() : null,
+        notes ?? null,
+        itemId,
+        checklistId],
+    );
+    const [[agg]] = await pool.query<RowDataPacket[]>(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN is_completed = 1 THEN 1 ELSE 0 END) AS done
+       FROM compliance_checklist_items WHERE checklist_id = ?`,
+      [checklistId],
+    );
+    const allDone = Number(agg?.total || 0) > 0 && Number(agg?.done || 0) === Number(agg?.total || 0);
+    await pool.query(
+      `UPDATE compliance_checklists
+       SET is_completed = ?, completed_by_broker_id = ?, completed_at = ?, updated_at = NOW()
+       WHERE id = ? AND tenant_id = ?`,
+      [
+        allDone ? 1 : 0,
+        allDone ? brokerId : null,
+        allDone ? new Date() : null,
+        checklistId,
+        MORTGAGE_TENANT_ID],
+    );
+    const checklist = await loadComplianceChecklistDetail(checklistId);
+    res.json({ success: true, checklist });
+  } catch (err) {
+    console.error("update compliance item:", err);
+    res.status(500).json({ success: false, error: "Failed to update item" });
+  }
+};
+
+
+
+
+// =====================================================
+// REALTOR BROADCAST CENTER (MVP — no billing/quota/bulk)
+// =====================================================
+
+function requireBroadcastAdmin(req: express.Request, res: express.Response): boolean {
+  const brokerRole = (req as any).brokerRole as string;
+  if (!isAdminRole(brokerRole)) {
+    res.status(403).json({ success: false, error: "Admin access required" });
+    return false;
+  }
+  return true;
+}
+
+function safeBroadcastJsonParse<T>(value: unknown, fallback: T): T {
+  if (value == null) return fallback;
+  if (typeof value === "object") return value as T;
+  try {
+    return JSON.parse(String(value)) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+type BroadcastAudienceRow = {
+  source: "broker" | "prospect" | "client";
+  sourceId: number;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  role?: string;
+  skipped: boolean;
+  skipReason: string | null;
+};
+
+async function resolveBroadcastAudience(filter: {
+  segments: string[];
+  excluded_ids?: number[];
+  selected_ids?: number[];
+  stage_filter?: string[];
+  tag_filter?: string[];
+  owner_broker_id?: number;
+}): Promise<BroadcastAudienceRow[]> {
+  const candidates: Array<
+    BroadcastAudienceRow & { normalized_phone?: string | null }
+  > = [];
+  const seenEmails = new Set<string>();
+  const seenPhones = new Set<string>();
+
+  if (
+    filter.segments.includes("all_active_realtors") ||
+    filter.segments.includes("all")
+  ) {
+    const [brokerRows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, CONCAT(first_name, ' ', last_name) AS name, email, phone,
+              sms_blast_opted_in, role
+       FROM brokers
+       WHERE tenant_id = ?
+         AND status = 'active'
+         AND role IN ('broker','realtor','buyers_agent','listing_agent')`,
+      [MORTGAGE_TENANT_ID],
+    );
+    for (const row of brokerRows) {
+      const smsEligible = row.sms_blast_opted_in === 1;
+      candidates.push({
+        source: "broker",
+        sourceId: row.id,
+        name: row.name || "Unknown",
+        email: row.email || null,
+        phone: row.phone || null,
+        role: row.role as string,
+        skipped: false,
+        skipReason: smsEligible ? null : "sms_opted_out",
+      });
+    }
+  }
+
+  const hasProspectSegment =
+    filter.segments.some((s) =>
+      [
+        "prospects",
+        "stage_filter",
+        "tag_filter",
+        "owner_filter",
+        "refi_rates_dropped"].includes(s),
+    ) ||
+    !!filter.stage_filter?.length ||
+    !!filter.tag_filter?.length ||
+    !!filter.owner_broker_id;
+
+  if (hasProspectSegment) {
+    const conditions = [`rp.tenant_id = ?`];
+    const params: any[] = [MORTGAGE_TENANT_ID];
+    if (filter.stage_filter?.length) {
+      conditions.push(
+        `rp.stage IN (${filter.stage_filter.map(() => "?").join(",")})`,
+      );
+      params.push(...filter.stage_filter);
+    }
+    if (filter.tag_filter?.length) {
+      for (const tag of filter.tag_filter) {
+        conditions.push(`JSON_CONTAINS(rp.tags, JSON_QUOTE(?))`);
+        params.push(tag);
+      }
+    }
+    if (filter.owner_broker_id) {
+      conditions.push(`rp.owner_broker_id = ?`);
+      params.push(filter.owner_broker_id);
+    }
+    if (filter.segments.includes("refi_rates_dropped")) {
+      conditions.push(`rp.add_to_refi_rates_dropped = 1`);
+    }
+    const [prospectRows] = await pool.query<RowDataPacket[]>(
+      `SELECT rp.id, rp.contact_name AS name, rp.contact_email AS email, rp.contact_phone AS phone
+       FROM realtor_prospects rp
+       WHERE ${conditions.join(" AND ")}
+         AND (
+           rp.contact_email IS NULL OR LOWER(TRIM(rp.contact_email)) NOT IN (
+             SELECT LOWER(TRIM(email)) FROM realtor_email_unsubscribes WHERE tenant_id = ?
+           )
+         )`,
+      [...params, MORTGAGE_TENANT_ID],
+    );
+    for (const row of prospectRows) {
+      candidates.push({
+        source: "prospect",
+        sourceId: row.id,
+        name: row.name || "Unknown",
+        email: row.email || null,
+        phone: row.phone || null,
+        skipped: false,
+        skipReason: null,
+      });
+    }
+  }
+
+  if (filter.segments.includes("all_clients")) {
+    const [clientRows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, CONCAT(first_name, ' ', last_name) AS name, email, phone,
+              sms_blast_opted_in
+       FROM clients
+       WHERE tenant_id = ? AND status = 'active'
+         AND (email IS NULL OR LOWER(TRIM(email)) NOT IN (
+           SELECT LOWER(TRIM(email)) FROM realtor_email_unsubscribes WHERE tenant_id = ?
+         ))`,
+      [MORTGAGE_TENANT_ID, MORTGAGE_TENANT_ID],
+    );
+    for (const row of clientRows) {
+      const smsEligible = row.sms_blast_opted_in === 1;
+      candidates.push({
+        source: "client",
+        sourceId: row.id,
+        name: row.name || "Unknown",
+        email: row.email || null,
+        phone: row.phone || null,
+        skipped: false,
+        skipReason: smsEligible ? null : "sms_opted_out",
+      });
+    }
+  }
+
+  const [optOutRows] = await pool.query<RowDataPacket[]>(
+    `SELECT phone_last10 FROM sms_opt_outs WHERE tenant_id = ?`,
+    [MORTGAGE_TENANT_ID],
+  );
+  const smsOptOuts = new Set(optOutRows.map((r) => String(r.phone_last10)));
+  const [unsubRows] = await pool.query<RowDataPacket[]>(
+    `SELECT LOWER(TRIM(email)) AS email FROM realtor_email_unsubscribes WHERE tenant_id = ?`,
+    [MORTGAGE_TENANT_ID],
+  );
+  const emailUnsubs = new Set(unsubRows.map((r) => String(r.email)));
+
+  const result: BroadcastAudienceRow[] = [];
+  for (const c of candidates) {
+    if (c.email && emailUnsubs.has(c.email.toLowerCase().trim())) c.email = null;
+    if (smsOptOuts.has(normalizePhoneLast10(c.phone))) {
+      c.skipReason = "sms_opted_out";
+    }
+    if (filter.selected_ids?.length) {
+      if (!filter.selected_ids.includes(c.sourceId)) continue;
+    } else if (filter.excluded_ids?.includes(c.sourceId)) {
+      continue;
+    }
+    const emailKey = c.email?.toLowerCase().trim();
+    const phoneKey = normalizePhoneLast10(c.phone);
+    if (emailKey && seenEmails.has(emailKey)) continue;
+    if (phoneKey && phoneKey.length === 10 && seenPhones.has(phoneKey)) continue;
+    if (emailKey) seenEmails.add(emailKey);
+    if (phoneKey && phoneKey.length === 10) seenPhones.add(phoneKey);
+    result.push(c);
+  }
+  return result;
+}
+
+function resolveBroadcastMergeTags(
+  body: string,
+  recipient: { name: string },
+  sender: { firstName: string; lastName: string },
+  companyName: string,
+): string {
+  const firstName = recipient.name.split(" ")[0] || recipient.name;
+  const lastName = recipient.name.split(" ").slice(1).join(" ") || "";
+  return body
+    .replace(/\{\{first_name\}\}/gi, firstName)
+    .replace(/\{\{last_name\}\}/gi, lastName)
+    .replace(/\{\{full_name\}\}/gi, recipient.name)
+    .replace(
+      /\{\{broker_name\}\}/gi,
+      `${sender.firstName} ${sender.lastName}`,
+    )
+    .replace(/\{\{company_name\}\}/gi, companyName);
+}
+
+async function sendBroadcastAsync(broadcastId: number): Promise<void> {
+  let sentCount = 0;
+  let failedCount = 0;
+  try {
+    // Bulk Messaging is behind BROADCAST_BULK_MESSAGING_ENABLED (default off).
+    // TMP MVP uses Twilio Messages API; when bulk is enabled we still send via
+    // Messages until the full Bulk Operation poller is ported.
+    if (resolveBroadcastSmsEngineFromEnv(process.env) === "bulk") {
+      console.info(
+        `[Broadcast #${broadcastId}] BROADCAST_BULK_MESSAGING_ENABLED — using Messages API fallback`,
+      );
+    }
+    const [broadcastRows] = await pool.query<RowDataPacket[]>(
+      `SELECT rb.*, b.first_name, b.last_name,
+              COALESCE(ts.setting_value, 'The Mortgage Professionals') AS company_name,
+              b.twilio_caller_id AS from_number
+       FROM realtor_broadcasts rb
+       JOIN brokers b ON b.id = rb.created_by
+       LEFT JOIN system_settings ts ON ts.setting_key = 'company_name'
+         AND ts.tenant_id = rb.tenant_id
+       WHERE rb.id = ? AND rb.tenant_id = ?`,
+      [broadcastId, MORTGAGE_TENANT_ID],
+    );
+    if (!broadcastRows.length) return;
+    const broadcast = broadcastRows[0];
+    if (broadcast.is_cancelled) return;
+
+    await pool.query(
+      `UPDATE realtor_broadcasts
+       SET status = 'sending', started_at = COALESCE(started_at, NOW()), updated_at = NOW()
+       WHERE id = ? AND tenant_id = ?`,
+      [broadcastId, MORTGAGE_TENANT_ID],
+    );
+
+    const sender = {
+      firstName: String(broadcast.first_name || "Team"),
+      lastName: String(broadcast.last_name || ""),
+    };
+    const companyName = String(
+      broadcast.company_name || "The Mortgage Professionals",
+    );
+    const fromNumber: string | null =
+      broadcast.from_number ||
+      (await getSharedVoiceNumber()) ||
+      process.env.TWILIO_PHONE_NUMBER ||
+      null;
+    const emailBody = String(broadcast.body_email || "").trim();
+    const rawSmsBody = String(broadcast.body_sms || "").trim();
+    const smsBody =
+      rawSmsBody && !/\bstop\b/i.test(rawSmsBody)
+        ? `${rawSmsBody}\nReply STOP to opt out.`
+        : rawSmsBody;
+    const [addressRows] = await pool.query<RowDataPacket[]>(
+      `SELECT setting_value FROM system_settings WHERE tenant_id = ? AND setting_key = 'company_address' LIMIT 1`,
+      [MORTGAGE_TENANT_ID],
+    );
+    const companyAddress = String(addressRows[0]?.setting_value || "");
+
+    const [recipientRows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, recipient_name, recipient_email, recipient_phone,
+              email_status, sms_status, unsubscribe_token
+       FROM realtor_broadcast_recipients
+       WHERE broadcast_id = ? AND tenant_id = ?
+         AND (email_status = 'pending' OR sms_status = 'pending')`,
+      [broadcastId, MORTGAGE_TENANT_ID],
+    );
+
+    for (const recipient of recipientRows) {
+      const [[cancelCheck]] = await pool.query<RowDataPacket[]>(
+        `SELECT is_cancelled FROM realtor_broadcasts WHERE id = ? LIMIT 1`,
+        [broadcastId],
+      );
+      if (cancelCheck?.is_cancelled) break;
+
+      const name = String(recipient.recipient_name || "there");
+
+      if (
+        (broadcast.channel === "email" || broadcast.channel === "both") &&
+        recipient.email_status === "pending"
+      ) {
+        if (!recipient.recipient_email || !emailBody) {
+          await pool.query(
+            `UPDATE realtor_broadcast_recipients
+             SET email_status = 'failed',
+                 error_message = COALESCE(error_message, 'Missing email or body'),
+                 updated_at = NOW()
+             WHERE id = ?`,
+            [recipient.id],
+          );
+          failedCount++;
+        } else {
+          try {
+            const unsubscribeUrl = `${getBaseUrl()}/api/realtor-broadcasts/unsubscribe?token=${recipient.unsubscribe_token}`;
+            const html = `${resolveBroadcastMergeTags(
+              emailBody,
+              { name },
+              sender,
+              companyName,
+            )}
+<p style="font-size:11px;color:#999;margin-top:24px;border-top:1px solid #eee;padding-top:8px;">
+  ${companyName}${companyAddress ? ` · ${companyAddress}` : ""}<br/>
+  <a href="${unsubscribeUrl}" style="color:#999;">Unsubscribe</a> from broadcast emails.
+</p>`;
+            const sent = await sendViaResend({
+              to: recipient.recipient_email,
+              subject: resolveBroadcastMergeTags(
+                String(broadcast.subject || "Update from The Mortgage Professionals"),
+                { name },
+                sender,
+                companyName,
+              ),
+              html,
+            });
+            await pool.query(
+              `UPDATE realtor_broadcast_recipients
+               SET email_status = 'sent', email_ext_id = ?, sent_at = NOW(), updated_at = NOW()
+               WHERE id = ?`,
+              [sent.messageId || null, recipient.id],
+            );
+            sentCount++;
+          } catch (err: any) {
+            await pool.query(
+              `UPDATE realtor_broadcast_recipients
+               SET email_status = 'failed',
+                   error_message = ?, updated_at = NOW()
+               WHERE id = ?`,
+              [String(err?.message || "Email send failed").slice(0, 500), recipient.id],
+            );
+            failedCount++;
+          }
+        }
+      }
+
+      if (
+        (broadcast.channel === "sms" || broadcast.channel === "both") &&
+        recipient.sms_status === "pending"
+      ) {
+        if (!recipient.recipient_phone || !smsBody) {
+          await pool.query(
+            `UPDATE realtor_broadcast_recipients
+             SET sms_status = 'failed',
+                 error_message = COALESCE(error_message, 'Missing phone or SMS body'),
+                 updated_at = NOW()
+             WHERE id = ?`,
+            [recipient.id],
+          );
+          failedCount++;
+        } else if (!twilioClient || !fromNumber) {
+          await pool.query(
+            `UPDATE realtor_broadcast_recipients
+             SET sms_status = 'failed',
+                 error_message = ?, updated_at = NOW()
+             WHERE id = ?`,
+            [
+              !twilioClient
+                ? "Twilio not configured"
+                : "No Twilio from-number available for broadcast SMS",
+              recipient.id],
+          );
+          failedCount++;
+        } else {
+          const text = resolveBroadcastMergeTags(
+            smsBody,
+            { name },
+            sender,
+            companyName,
+          );
+          // Broadcast SMS respects the platform SMS kill switch.
+          if (SMS_CHANNEL_TEMP_DISABLED) {
+            await pool.query(
+              `UPDATE realtor_broadcast_recipients
+               SET sms_status = 'failed',
+                   error_message = ?, updated_at = NOW()
+               WHERE id = ?`,
+              [
+                "SMS is temporarily disabled across the platform",
+                recipient.id],
+            );
+            failedCount++;
+            continue;
+          }
+          try {
+            const digits = String(recipient.recipient_phone).replace(/\D/g, "");
+            const to =
+              digits.length === 10
+                ? `+1${digits}`
+                : digits.startsWith("1") && digits.length === 11
+                  ? `+${digits}`
+                  : recipient.recipient_phone.startsWith("+")
+                    ? recipient.recipient_phone
+                    : `+${digits}`;
+            const message = await twilioClient.messages.create({
+              body: text,
+              to,
+              from: fromNumber,
+            });
+            await pool.query(
+              `UPDATE realtor_broadcast_recipients
+               SET sms_status = 'sent', sms_ext_id = ?, sent_at = NOW(), updated_at = NOW()
+               WHERE id = ?`,
+              [message.sid || null, recipient.id],
+            );
+            sentCount++;
+          } catch (err: any) {
+            await pool.query(
+              `UPDATE realtor_broadcast_recipients
+               SET sms_status = 'failed',
+                   error_message = ?, updated_at = NOW()
+               WHERE id = ?`,
+              [String(err?.message || "SMS send failed").slice(0, 500), recipient.id],
+            );
+            failedCount++;
+          }
+        }
+      }
+    }
+
+    const [[agg]] = await pool.query<RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN email_status = 'sent' THEN 1 ELSE 0 END)
+         + SUM(CASE WHEN sms_status = 'sent' THEN 1 ELSE 0 END) AS sent_total,
+         SUM(CASE WHEN email_status = 'failed' THEN 1 ELSE 0 END)
+         + SUM(CASE WHEN sms_status = 'failed' THEN 1 ELSE 0 END) AS failed_total
+       FROM realtor_broadcast_recipients
+       WHERE broadcast_id = ? AND tenant_id = ?`,
+      [broadcastId, MORTGAGE_TENANT_ID],
+    );
+    const sentTotal = Number(agg?.sent_total ?? sentCount);
+    const failedTotal = Number(agg?.failed_total ?? failedCount);
+    const [[stillCancel]] = await pool.query<RowDataPacket[]>(
+      `SELECT is_cancelled FROM realtor_broadcasts WHERE id = ? LIMIT 1`,
+      [broadcastId],
+    );
+    const finalStatus = stillCancel?.is_cancelled
+      ? "cancelled"
+      : sentTotal > 0
+        ? "sent"
+        : "failed";
+    await pool.query(
+      `UPDATE realtor_broadcasts
+       SET status = ?, sent_count = ?, failed_count = ?,
+           completed_at = NOW(), updated_at = NOW()
+       WHERE id = ? AND tenant_id = ?`,
+      [finalStatus, sentTotal, failedTotal, broadcastId, MORTGAGE_TENANT_ID],
+    );
+
+    await createBrokerNotification({
+      brokerIds: Number(broadcast.created_by),
+      title: "Broadcast Complete",
+      message: `"${broadcast.title}" delivered (${sentTotal} sent, ${failedTotal} failed).`,
+      category: "system",
+      type: failedTotal > 0 ? "warning" : "success",
+      actionUrl: "/admin/broadcasts",
+    });
+    await publishToAbly(
+      `broker-notifications:${Number(broadcast.created_by)}`,
+      "broadcast-updated",
+      {
+        broadcastId,
+        status: finalStatus,
+        sent_count: sentTotal,
+        failed_count: failedTotal,
+      },
+    );
+  } catch (err) {
+    console.error(`[Broadcast #${broadcastId}] send error:`, err);
+    await pool.query(
+      `UPDATE realtor_broadcasts
+       SET status = 'failed', completed_at = NOW(), updated_at = NOW()
+       WHERE id = ? AND tenant_id = ? AND status = 'sending'`,
+      [broadcastId, MORTGAGE_TENANT_ID],
+    );
+    try {
+      const [bRows] = await pool.query<RowDataPacket[]>(
+        `SELECT created_by FROM realtor_broadcasts WHERE id = ? AND tenant_id = ? LIMIT 1`,
+        [broadcastId, MORTGAGE_TENANT_ID],
+      );
+      const createdBy = bRows[0]?.created_by;
+      if (createdBy) {
+        await publishToAbly(`broker-notifications:${Number(createdBy)}`, "broadcast-updated", {
+          broadcastId,
+          status: "failed",
+        });
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+}
+
+const handlePreviewBroadcastAudience: RequestHandler = async (req, res) => {
+  try {
+    if (!requireBroadcastAdmin(req, res)) return;
+    const { audience_filter, channel, body_sms } = req.body as {
+      audience_filter: any;
+      channel: string;
+      body_sms?: string;
+    };
+    if (!audience_filter?.segments?.length) {
+      return res
+        .status(400)
+        .json({ success: false, error: "audience_filter.segments required" });
+    }
+    const resolved = await resolveBroadcastAudience(audience_filter);
+    const emailCount = resolved.filter((r) => !r.skipped && r.email).length;
+    const smsCount = resolved.filter(
+      (r) => !r.skipped && r.phone && r.skipReason !== "sms_opted_out",
+    ).length;
+    const skipped = resolved.filter(
+      (r) => r.skipped || r.skipReason === "sms_opted_out",
+    ).length;
+    const segs = body_sms ? Math.max(1, estimateSmsSegments(body_sms).segmentCount) : 1;
+    return res.json({
+      success: true,
+      preview: {
+        count: resolved.length - skipped,
+        email_count:
+          channel === "email" || channel === "both" ? emailCount : 0,
+        sms_count: channel === "sms" || channel === "both" ? smsCount : 0,
+        skipped_count: skipped,
+        sample: resolved.map((r) => ({
+          id: r.sourceId,
+          source: r.source,
+          name: r.name,
+          email: r.email,
+          phone: r.phone,
+          has_email: !!r.email,
+          has_phone: !!r.phone,
+          skipped: r.skipped || r.skipReason === "sms_opted_out",
+          skip_reason: r.skipReason,
+          role: r.role ?? null,
+        })),
+        estimated_sms_segments:
+          channel === "sms" || channel === "both" ? segs * smsCount : 0,
+        estimated_email_sends:
+          channel === "email" || channel === "both" ? emailCount : 0,
+      },
+    });
+  } catch (err) {
+    console.error("[Broadcast preview] error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to preview audience" });
+  }
+};
+
+const handleCreateBroadcast: RequestHandler = async (req, res) => {
+  try {
+    if (!requireBroadcastAdmin(req, res)) return;
+    const brokerId = (req as any).brokerId as number;
+    const {
+      title,
+      channel,
+      subject,
+      body_email,
+      body_sms,
+      audience_filter,
+      scheduled_at,
+      send_now = true,
+    } = req.body as {
+      title: string;
+      channel: "email" | "sms" | "both";
+      subject?: string;
+      body_email?: string;
+      body_sms?: string;
+      audience_filter: any;
+      scheduled_at?: string;
+      send_now?: boolean;
+    };
+
+    if (!title || !channel || !audience_filter?.segments?.length) {
+      return res.status(400).json({
+        success: false,
+        error: "title, channel, and audience_filter.segments are required",
+      });
+    }
+
+    if (channel === "sms" || channel === "both") {
+      const [callerRow] = await pool.query<RowDataPacket[]>(
+        `SELECT twilio_caller_id FROM brokers
+         WHERE id = ? AND tenant_id = ? AND twilio_caller_id IS NOT NULL LIMIT 1`,
+        [brokerId, MORTGAGE_TENANT_ID],
+      );
+      if (!callerRow.length) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "SMS broadcast requires an assigned Twilio number on your account.",
+        });
+      }
+    }
+
+    const recipients = await resolveBroadcastAudience(audience_filter);
+    const isDraft = !send_now && !scheduled_at;
+    const isScheduled = !send_now && !!scheduled_at;
+    const initialStatus = isDraft
+      ? "draft"
+      : isScheduled
+        ? "scheduled"
+        : "sending";
+
+    const emailUnits =
+      channel === "email" || channel === "both"
+        ? recipients.filter((r) => !!r.email).length
+        : 0;
+    const smsUnits =
+      channel === "sms" || channel === "both"
+        ? recipients.filter(
+            (r) => !!r.phone && r.skipReason !== "sms_opted_out",
+          ).length
+        : 0;
+    const segsPerMsg = body_sms ? Math.max(1, estimateSmsSegments(body_sms).segmentCount) : 1;
+
+    const [broadcastInsert] = await pool.query<ResultSetHeader>(
+      `INSERT INTO realtor_broadcasts
+         (tenant_id, created_by, title, channel, subject, body_email, body_sms,
+          audience_filter, recipient_count, status, scheduled_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        MORTGAGE_TENANT_ID,
+        brokerId,
+        title,
+        channel,
+        subject || null,
+        body_email || null,
+        body_sms || null,
+        JSON.stringify(audience_filter),
+        recipients.length,
+        initialStatus,
+        scheduled_at ? new Date(scheduled_at) : null],
+    );
+    const broadcastId = broadcastInsert.insertId;
+
+    if (recipients.length > 0) {
+      const placeholders: string[] = [];
+      const values: any[] = [];
+      for (const r of recipients) {
+        const emailStatus =
+          channel === "sms"
+            ? null
+            : r.email
+              ? "pending"
+              : "skipped_no_contact";
+        const smsBlocked = r.skipReason === "sms_opted_out";
+        const smsStatus =
+          channel === "email"
+            ? null
+            : smsBlocked
+              ? "opted_out"
+              : r.phone
+                ? "pending"
+                : "skipped_no_contact";
+        placeholders.push("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        values.push(
+          broadcastId,
+          MORTGAGE_TENANT_ID,
+          r.source === "broker" ? r.sourceId : null,
+          r.source === "prospect" ? r.sourceId : null,
+          r.name,
+          r.email,
+          r.phone,
+          emailStatus,
+          smsStatus,
+          crypto.randomUUID(),
+          smsBlocked ? "Recipient opted out of SMS broadcasts" : null,
+        );
+      }
+      await pool.query(
+        `INSERT INTO realtor_broadcast_recipients
+           (broadcast_id, tenant_id, broker_id, prospect_id, recipient_name,
+            recipient_email, recipient_phone, email_status, sms_status,
+            unsubscribe_token, error_message)
+         VALUES ${placeholders.join(",")}`,
+        values,
+      );
+    }
+
+    await createAuditLog({
+      actorType: "broker",
+      actorId: brokerId,
+      action: "broadcast_created",
+      entityType: "realtor_broadcast",
+      entityId: broadcastId,
+      changes: {
+        channel,
+        recipientCount: recipients.length,
+        title,
+        status: initialStatus,
+      },
+    });
+
+    if (send_now && !scheduled_at) {
+      void sendBroadcastAsync(broadcastId).catch((err) =>
+        console.error(`[Broadcast #${broadcastId}] send loop error:`, err),
+      );
+    }
+
+    return res.json({
+      success: true,
+      broadcast_id: broadcastId,
+      recipient_count: recipients.length,
+      status: initialStatus,
+      estimated_sms_segments: segsPerMsg * smsUnits,
+      estimated_email_sends: emailUnits,
+    });
+  } catch (err) {
+    console.error("[Create broadcast] error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to create broadcast" });
+  }
+};
+
+const handleGetBroadcasts: RequestHandler = async (req, res) => {
+  try {
+    if (!requireBroadcastAdmin(req, res)) return;
+    const page = Math.max(1, parseInt((req.query.page as string) || "1"));
+    const limit = Math.min(
+      100,
+      Math.max(1, parseInt((req.query.limit as string) || "50")),
+    );
+    const offset = (page - 1) * limit;
+    const statusFilter = (req.query.status as string) || undefined;
+
+    const listQuery = `SELECT rb.*,
+            CONCAT(b.first_name, ' ', b.last_name) AS creator_name,
+            COALESCE(rs.sent_count_live, rb.sent_count) AS sent_count_live,
+            COALESCE(rs.failed_count_live, rb.failed_count) AS failed_count_live
+     FROM realtor_broadcasts rb
+     LEFT JOIN brokers b ON b.id = rb.created_by
+     LEFT JOIN (
+       SELECT broadcast_id,
+              SUM(CASE WHEN email_status = 'sent' THEN 1 ELSE 0 END)
+              + SUM(CASE WHEN sms_status = 'sent' THEN 1 ELSE 0 END) AS sent_count_live,
+              SUM(CASE WHEN email_status = 'failed' THEN 1 ELSE 0 END)
+              + SUM(CASE WHEN sms_status = 'failed' THEN 1 ELSE 0 END) AS failed_count_live
+       FROM realtor_broadcast_recipients
+       WHERE tenant_id = ?
+       GROUP BY broadcast_id
+     ) rs ON rs.broadcast_id = rb.id
+     WHERE rb.tenant_id = ?
+       ${statusFilter ? "AND rb.status = ?" : ""}
+     ORDER BY rb.created_at DESC
+     LIMIT ? OFFSET ?`;
+    const listParams: any[] = statusFilter
+      ? [MORTGAGE_TENANT_ID, MORTGAGE_TENANT_ID, statusFilter, limit, offset]
+      : [MORTGAGE_TENANT_ID, MORTGAGE_TENANT_ID, limit, offset];
+    const [rows] = await pool.query<RowDataPacket[]>(listQuery, listParams);
+
+    const countQuery = `SELECT COUNT(*) AS total FROM realtor_broadcasts WHERE tenant_id = ?${statusFilter ? " AND status = ?" : ""}`;
+    const countParams: any[] = statusFilter
+      ? [MORTGAGE_TENANT_ID, statusFilter]
+      : [MORTGAGE_TENANT_ID];
+    const [countRows] = await pool.query<RowDataPacket[]>(
+      countQuery,
+      countParams,
+    );
+
+    return res.json({
+      success: true,
+      broadcasts: rows.map((r) => ({
+        ...r,
+        sent_count: Number(r.sent_count_live ?? r.sent_count ?? 0),
+        failed_count: Number(r.failed_count_live ?? r.failed_count ?? 0),
+        status: r.is_cancelled ? "cancelled" : r.status,
+        audience_filter: safeBroadcastJsonParse(r.audience_filter, {
+          segments: [],
+        }),
+        is_cancelled: Boolean(r.is_cancelled),
+      })),
+      total: countRows[0]?.total || 0,
+    });
+  } catch (err) {
+    console.error("[Get broadcasts] error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to fetch broadcasts" });
+  }
+};
+
+const handleGetBroadcast: RequestHandler = async (req, res) => {
+  try {
+    if (!requireBroadcastAdmin(req, res)) return;
+    const broadcastId = parseInt(String(req.params.id), 10);
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT rb.*,
+              CONCAT(b.first_name, ' ', b.last_name) AS creator_name,
+              COALESCE(rs.sent_count_live, rb.sent_count) AS sent_count_live,
+              COALESCE(rs.failed_count_live, rb.failed_count) AS failed_count_live
+       FROM realtor_broadcasts rb
+       LEFT JOIN brokers b ON b.id = rb.created_by
+       LEFT JOIN (
+         SELECT broadcast_id,
+                SUM(CASE WHEN email_status = 'sent' THEN 1 ELSE 0 END)
+                + SUM(CASE WHEN sms_status = 'sent' THEN 1 ELSE 0 END) AS sent_count_live,
+                SUM(CASE WHEN email_status = 'failed' THEN 1 ELSE 0 END)
+                + SUM(CASE WHEN sms_status = 'failed' THEN 1 ELSE 0 END) AS failed_count_live
+         FROM realtor_broadcast_recipients
+         WHERE tenant_id = ?
+         GROUP BY broadcast_id
+       ) rs ON rs.broadcast_id = rb.id
+       WHERE rb.id = ? AND rb.tenant_id = ?`,
+      [MORTGAGE_TENANT_ID, broadcastId, MORTGAGE_TENANT_ID],
+    );
+    if (!rows.length) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Broadcast not found" });
+    }
+    const r = rows[0];
+    return res.json({
+      success: true,
+      broadcast: {
+        ...r,
+        sent_count: Number(r.sent_count_live ?? r.sent_count ?? 0),
+        failed_count: Number(r.failed_count_live ?? r.failed_count ?? 0),
+        status: r.is_cancelled ? "cancelled" : r.status,
+        audience_filter: safeBroadcastJsonParse(r.audience_filter, {
+          segments: [],
+        }),
+        is_cancelled: Boolean(r.is_cancelled),
+      },
+    });
+  } catch (err) {
+    console.error("[Get broadcast] error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to fetch broadcast" });
+  }
+};
+
+const handleCancelBroadcast: RequestHandler = async (req, res) => {
+  try {
+    if (!requireBroadcastAdmin(req, res)) return;
+    const brokerId = (req as any).brokerId as number;
+    const broadcastId = parseInt(String(req.params.id), 10);
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, status FROM realtor_broadcasts
+       WHERE id = ? AND tenant_id = ?`,
+      [broadcastId, MORTGAGE_TENANT_ID],
+    );
+    if (!rows.length) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Broadcast not found" });
+    }
+    if (!["sending", "scheduled", "draft"].includes(rows[0].status)) {
+      return res.status(400).json({
+        success: false,
+        error: "Broadcast cannot be cancelled in its current state",
+      });
+    }
+    await pool.query(
+      `UPDATE realtor_broadcasts
+       SET is_cancelled = 1, status = 'cancelled',
+           completed_at = NOW(), updated_at = NOW()
+       WHERE id = ? AND tenant_id = ?`,
+      [broadcastId, MORTGAGE_TENANT_ID],
+    );
+    await createAuditLog({
+      actorType: "broker",
+      actorId: brokerId,
+      action: "broadcast_cancel_requested",
+      entityType: "realtor_broadcast",
+      entityId: broadcastId,
+    });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error("[Cancel broadcast] error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to cancel broadcast" });
+  }
+};
+
+const handleGetBroadcastRecipients: RequestHandler = async (req, res) => {
+  try {
+    if (!requireBroadcastAdmin(req, res)) return;
+    const broadcastId = parseInt(String(req.params.id), 10);
+    const page = Math.max(1, parseInt((req.query.page as string) || "1"));
+    const limit = Math.min(
+      200,
+      Math.max(1, parseInt((req.query.limit as string) || "50")),
+    );
+    const offset = (page - 1) * limit;
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT id, broadcast_id, broker_id, prospect_id, recipient_name,
+              recipient_email, recipient_phone, email_status, sms_status,
+              email_ext_id, sms_ext_id, conversation_id, error_message, sent_at
+       FROM realtor_broadcast_recipients
+       WHERE broadcast_id = ? AND tenant_id = ?
+       ORDER BY id ASC
+       LIMIT ? OFFSET ?`,
+      [broadcastId, MORTGAGE_TENANT_ID, limit, offset],
+    );
+    const [countRows] = await pool.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM realtor_broadcast_recipients
+       WHERE broadcast_id = ? AND tenant_id = ?`,
+      [broadcastId, MORTGAGE_TENANT_ID],
+    );
+    return res.json({
+      success: true,
+      recipients: rows,
+      total: Number(countRows[0]?.total || 0),
+    });
+  } catch (err) {
+    console.error("[Get broadcast recipients] error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to fetch recipients" });
+  }
+};
+
+const handleProcessScheduledBroadcasts: RequestHandler = async (req, res) => {
+  try {
+    if (!isAuthorizedCron(req)) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
+    }
+    const [due] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM realtor_broadcasts
+       WHERE tenant_id = ?
+         AND status = 'scheduled'
+         AND is_cancelled = 0
+         AND scheduled_at IS NOT NULL
+         AND scheduled_at <= UTC_TIMESTAMP()
+       ORDER BY scheduled_at ASC
+       LIMIT 20`,
+      [MORTGAGE_TENANT_ID],
+    );
+    for (const row of due) {
+      await pool.query(
+        `UPDATE realtor_broadcasts
+         SET status = 'sending', started_at = COALESCE(started_at, NOW()), updated_at = NOW()
+         WHERE id = ? AND tenant_id = ? AND status = 'scheduled'`,
+        [row.id, MORTGAGE_TENANT_ID],
+      );
+      void sendBroadcastAsync(Number(row.id)).catch((err) =>
+        console.error(`[Broadcast #${row.id}] scheduled send error:`, err),
+      );
+    }
+    return res.json({ success: true, triggered: due.length });
+  } catch (err) {
+    console.error("[Process scheduled broadcasts] error:", err);
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to process scheduled broadcasts" });
+  }
+};
+
 // =====================================================
 // AUDIT LOG HELPER
 // =====================================================
@@ -3840,8 +6375,7 @@ async function createAuditLog({
         requestId || null,
         durationMs || null,
         ipAddress || null,
-        userAgent || null,
-      ],
+        userAgent || null],
     );
   } catch (error) {
     console.error("Error creating audit log:", error);
@@ -3950,8 +6484,7 @@ const handleAdminSendCode: RequestHandler = async (req, res) => {
 
     // Delete old sessions for this broker
     await pool.query("DELETE FROM broker_sessions WHERE broker_id = ?", [
-      broker.id,
-    ]);
+      broker.id]);
 
     // Generate 6-digit code
     const code = Math.floor(100000 + Math.random() * 900000);
@@ -3970,6 +6503,10 @@ const handleAdminSendCode: RequestHandler = async (req, res) => {
       const smsResult = await sendSMSMessage(
         broker.phone,
         `Your The Mortgage Professionals admin verification code is: ${code}. Valid for 15 minutes. Do not share this code.`,
+        undefined,
+        undefined,
+        undefined,
+        { bypassTempDisable: true },
       );
       if (!smsResult.success) {
         console.error("Failed to send SMS verification:", smsResult.error);
@@ -4133,8 +6670,7 @@ const handleAdminVerifyCode: RequestHandler = async (req, res) => {
       );
       await pool.query("UPDATE brokers SET slug = ? WHERE id = ?", [
         broker.slug,
-        broker.id,
-      ]);
+        broker.id]);
     }
 
     // Record login in audit log
@@ -4146,8 +6682,7 @@ const handleAdminVerifyCode: RequestHandler = async (req, res) => {
         broker.id,
         broker.id,
         req.ip ?? null,
-        req.headers["user-agent"]?.slice(0, 500) ?? null,
-      ],
+        req.headers["user-agent"]?.slice(0, 500) ?? null],
     );
 
     res.json({
@@ -4250,8 +6785,7 @@ const handleAdminValidateSession: RequestHandler = async (req, res) => {
         );
         await pool.query("UPDATE brokers SET slug = ? WHERE id = ?", [
           broker.slug,
-          broker.id,
-        ]);
+          broker.id]);
       }
 
       res.json({
@@ -4352,8 +6886,7 @@ const handleClientSendCode: RequestHandler = async (req, res) => {
 
     // Delete old sessions for this client
     await pool.query("DELETE FROM user_sessions WHERE user_id = ?", [
-      client.id,
-    ]);
+      client.id]);
 
     // Generate 6-digit code
     const code = Math.floor(100000 + Math.random() * 900000);
@@ -4370,6 +6903,10 @@ const handleClientSendCode: RequestHandler = async (req, res) => {
       const smsResult = await sendSMSMessage(
         client.phone,
         `Your The Mortgage Professionals verification code is: ${code}. Valid for 15 minutes. Do not share this code.`,
+        undefined,
+        undefined,
+        undefined,
+        { bypassTempDisable: true },
       );
       if (!smsResult.success) {
         console.error("Failed to send SMS verification:", smsResult.error);
@@ -4628,8 +7165,7 @@ const handleClientLogout: RequestHandler = async (req, res) => {
         await revokeJti(decoded.jti, "client", decoded.clientId, decoded.exp);
         // Delete all sessions for this client
         await pool.query("DELETE FROM user_sessions WHERE user_id = ?", [
-          decoded.clientId,
-        ]);
+          decoded.clientId]);
       }
     } catch (error) {
       // Token already invalid, no problem
@@ -4670,8 +7206,7 @@ const handleAdminLogout: RequestHandler = async (req, res) => {
         await revokeJti(decoded.jti, "broker", decoded.brokerId, decoded.exp);
         // Delete all sessions for this broker
         await pool.query("DELETE FROM broker_sessions WHERE broker_id = ?", [
-          decoded.brokerId,
-        ]);
+          decoded.brokerId]);
       }
     } catch (error) {
       // Token already invalid, no problem
@@ -5042,8 +7577,7 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
           client_address_zip || null,
           brokerId,
           clientId,
-          MORTGAGE_TENANT_ID,
-        ],
+          MORTGAGE_TENANT_ID],
       );
     } else {
       // Create new client
@@ -5065,8 +7599,7 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
           client_address_city || null,
           client_address_state || null,
           client_address_zip || null,
-          brokerId,
-        ],
+          brokerId],
       );
       clientId = clientResult.insertId;
     }
@@ -5102,8 +7635,7 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
         dependent_count != null ? parseInt(String(dependent_count)) : null,
         years_at_address != null ? parseFloat(String(years_at_address)) : null,
         estimated_close_date || null,
-        notes || null,
-      ],
+        notes || null],
     );
 
     const applicationId = loanResult.insertId;
@@ -5135,8 +7667,7 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
           clientId,
           brokerId,
           dueDate,
-          task.template_id || null,
-        ],
+          task.template_id || null],
       );
 
       tasksWithDates.push({
@@ -5155,8 +7686,7 @@ const handleCreateLoan: RequestHandler = async (req, res) => {
         MORTGAGE_TENANT_ID,
         clientId,
         "New Loan Application Created",
-        `Your loan application ${applicationNumber} has been created. Please complete the assigned tasks.`,
-      ],
+        `Your loan application ${applicationNumber} has been created. Please complete the assigned tasks.`],
     );
 
     await connection.commit();
@@ -5307,8 +7837,7 @@ const handlePublicApply: RequestHandler = async (req, res) => {
           resolvedCitizenshipStatus,
           null, // placeholder; will be replaced after broker resolves
           clientId,
-          MORTGAGE_TENANT_ID,
-        ],
+          MORTGAGE_TENANT_ID],
       );
     } else {
       const [clientResult] = await connection.query<any>(
@@ -5356,8 +7885,7 @@ const handlePublicApply: RequestHandler = async (req, res) => {
         "multi_family",
         "commercial",
         "land",
-        "other",
-      ].includes(property_type)
+        "other"].includes(property_type)
         ? property_type
         : null;
 
@@ -5407,8 +7935,7 @@ const handlePublicApply: RequestHandler = async (req, res) => {
         "self_employed",
         "unemployed",
         "retired",
-        "retired_with_pension",
-      ].includes(employment_status)
+        "retired_with_pension"].includes(employment_status)
         ? employment_status
         : null;
 
@@ -5466,8 +7993,7 @@ const handlePublicApply: RequestHandler = async (req, res) => {
             years_employed || null,
             broker_token || null,
             applicationId,
-            MORTGAGE_TENANT_ID,
-          ],
+            MORTGAGE_TENANT_ID],
         );
         draftUpgraded = true;
       }
@@ -5511,8 +8037,7 @@ const handlePublicApply: RequestHandler = async (req, res) => {
             ? parseFloat(String(years_at_address))
             : null,
           broker_token || null,
-          resolvedCitizenshipStatus,
-        ],
+          resolvedCitizenshipStatus],
       );
       applicationId = loanResult.insertId;
     }
@@ -5661,8 +8186,7 @@ const handlePublicApply: RequestHandler = async (req, res) => {
           tmpl.task_type,
           tmpl.priority,
           clientId,
-          dueDate,
-        ],
+          dueDate],
       );
     }
 
@@ -5674,8 +8198,7 @@ const handlePublicApply: RequestHandler = async (req, res) => {
         MORTGAGE_TENANT_ID,
         clientId,
         "Application Received",
-        `Your loan application ${applicationNumber} has been received. A loan officer will be in touch shortly.`,
-      ],
+        `Your loan application ${applicationNumber} has been received. A loan officer will be in touch shortly.`],
     );
 
     await connection.commit();
@@ -5685,8 +8208,7 @@ const handlePublicApply: RequestHandler = async (req, res) => {
     // share-link token).
     const targetBrokerIds = [
       resolvedBrokerUserId,
-      resolvedPartnerBrokerId,
-    ].filter((id): id is number => typeof id === "number");
+      resolvedPartnerBrokerId].filter((id): id is number => typeof id === "number");
     await createBrokerNotification({
       brokerIds: targetBrokerIds.length ? targetBrokerIds : null,
       notifyAllAdminsOnEmpty: targetBrokerIds.length === 0,
@@ -5696,6 +8218,27 @@ const handlePublicApply: RequestHandler = async (req, res) => {
       type: "success",
       actionUrl: `/admin/clients/${clientId}`,
     });
+
+    // Email alerts (respects Profile → Notification Preferences)
+    const emailBrokerIds =
+      targetBrokerIds.length > 0
+        ? targetBrokerIds
+        : (
+            await pool.query<RowDataPacket[]>(
+              `SELECT id FROM brokers WHERE tenant_id = ? AND status = 'active' AND role IN ('admin', 'superadmin')`,
+              [MORTGAGE_TENANT_ID],
+            )
+          )[0].map((r) => r.id as number);
+    const clientLabel = `${first_name} ${last_name}`.trim() || "a client";
+    const alertHtml = `<p>Hi,</p><p><strong>${clientLabel}</strong> submitted application <strong>${applicationNumber}</strong>.</p><p><a href="${process.env.BASE_URL || ""}/admin/clients/${clientId}">Open in admin</a></p>`;
+    for (const bid of emailBrokerIds) {
+      void deliverBrokerEmailAlert({
+        brokerId: bid,
+        event: "new_application",
+        subject: `New application ${applicationNumber} — ${clientLabel}`,
+        html: alertHtml,
+      });
+    }
 
     // Trigger reminder flows for application_received event (non-fatal)
     triggerReminderFlows(
@@ -5802,8 +8345,7 @@ const handlePublicSaveDraft: RequestHandler = async (req, res) => {
           address_state || null,
           address_zip || null,
           clientId,
-          MORTGAGE_TENANT_ID,
-        ],
+          MORTGAGE_TENANT_ID],
       );
     } else {
       const [clientResult] = await connection.query<any>(
@@ -5821,8 +8363,7 @@ const handlePublicSaveDraft: RequestHandler = async (req, res) => {
           address_street || null,
           address_city || null,
           address_state || null,
-          address_zip || null,
-        ],
+          address_zip || null],
       );
       clientId = clientResult.insertId;
     }
@@ -5860,8 +8401,7 @@ const handlePublicSaveDraft: RequestHandler = async (req, res) => {
         "multi_family",
         "commercial",
         "land",
-        "other",
-      ].includes(property_type)
+        "other"].includes(property_type)
         ? property_type
         : null;
 
@@ -5884,8 +8424,7 @@ const handlePublicSaveDraft: RequestHandler = async (req, res) => {
         "self_employed",
         "unemployed",
         "retired",
-        "retired_with_pension",
-      ].includes(employment_status)
+        "retired_with_pension"].includes(employment_status)
         ? employment_status
         : null;
 
@@ -5940,8 +8479,7 @@ const handlePublicSaveDraft: RequestHandler = async (req, res) => {
             years_employed || null,
             wizard_step || 1,
             applicationId,
-            MORTGAGE_TENANT_ID,
-          ],
+            MORTGAGE_TENANT_ID],
         );
         await connection.commit();
         res.json({
@@ -5984,8 +8522,7 @@ const handlePublicSaveDraft: RequestHandler = async (req, res) => {
         years_employed || null,
         wizard_step || 1,
         broker_token || null,
-        resolvedCitizenshipStatus,
-      ],
+        resolvedCitizenshipStatus],
     );
     applicationId = loanResult.insertId;
 
@@ -6164,8 +8701,7 @@ const handleGetMyShareLink: RequestHandler = async (req, res) => {
       );
       await pool.query("UPDATE brokers SET slug = ? WHERE id = ?", [
         slug,
-        brokerId,
-      ]);
+        brokerId]);
     }
 
     const baseUrl = getBaseUrl();
@@ -6372,8 +8908,7 @@ const handleSendShareLinkEmail: RequestHandler = async (req, res) => {
             foundClientId,
             `${brokerFullName} has shared a mortgage application link with you`,
             emailHtml,
-            convId,
-          ],
+            convId],
         );
         await upsertConversationThread({
           tenantId: MORTGAGE_TENANT_ID,
@@ -6512,8 +9047,7 @@ const handleGetLoans: RequestHandler = async (req, res) => {
       "loan_amount",
       "status",
       "priority",
-      "estimated_close_date",
-    ];
+      "estimated_close_date"];
     const sortColumn = validSortColumns.includes(sortBy as string)
       ? sortBy
       : "created_at";
@@ -6838,22 +9372,19 @@ const handleUpdateLoanDetails: RequestHandler = async (req, res) => {
       "multi_family",
       "commercial",
       "land",
-      "other",
-    ];
+      "other"];
     const VALID_PRIORITIES = ["low", "medium", "high", "urgent"];
     const VALID_CITIZENSHIP = [
       "us_citizen",
       "permanent_resident",
       "non_resident",
-      "other",
-    ];
+      "other"];
     const VALID_EMPLOYMENT = [
       "employed",
       "self_employed",
       "unemployed",
       "retired",
-      "retired_with_pension",
-    ];
+      "retired_with_pension"];
 
     if (loan_type !== undefined && !VALID_LOAN_TYPES.includes(loan_type)) {
       return res
@@ -6943,8 +9474,7 @@ const handleUpdateLoanDetails: RequestHandler = async (req, res) => {
       "married",
       "separated",
       "divorced",
-      "widowed",
-    ];
+      "widowed"];
     if (marital_status !== undefined) {
       if (marital_status === null || marital_status === "") {
         maybeSet("marital_status", null);
@@ -7008,8 +9538,7 @@ const handleUpdateLoanSourceCategory: RequestHandler = async (req, res) => {
       "advertisement",
       "business_partner",
       "builder",
-      "other",
-    ];
+      "other"];
 
     if (source_category !== null && !VALID_SOURCES.includes(source_category)) {
       return res.status(400).json({
@@ -7140,8 +9669,7 @@ const handleAssignPartner: RequestHandler = async (req, res) => {
         "broker",
         "realtor",
         "buyers_agent",
-        "listing_agent",
-      ] as const;
+        "listing_agent"] as const;
       if (
         !PARTNER_ROLE_LIST_API.includes(
           rows[0].role as (typeof PARTNER_ROLE_LIST_API)[number],
@@ -7195,8 +9723,7 @@ const handleUpdateLoanStatus: RequestHandler = async (req, res) => {
       "approved_with_conditions",
       "clear_to_close",
       "docs_out",
-      "loan_funded",
-    ];
+      "loan_funded"];
 
     if (!newStatus || !VALID_STATUSES.includes(newStatus)) {
       return res.status(400).json({
@@ -7267,8 +9794,7 @@ const handleUpdateLoanStatus: RequestHandler = async (req, res) => {
         fromStatus,
         newStatus,
         brokerId,
-        notes || null,
-      ],
+        notes || null],
     );
 
     // Fire pipeline automation asynchronously (non-blocking)
@@ -7342,7 +9868,7 @@ const handleGetDashboardStats: RequestHandler = async (req, res) => {
       FROM loan_applications la
       ${scopeJoin}
       WHERE ${scopeWhere}
-        AND la.status NOT IN ('denied', 'cancelled', 'closed')`,
+        AND la.status NOT IN ('draft', 'loan_funded')`,
       scopeParams,
     )) as [RowDataPacket[], any];
 
@@ -7353,7 +9879,7 @@ const handleGetDashboardStats: RequestHandler = async (req, res) => {
       FROM loan_applications la
       ${scopeJoin}
       WHERE ${scopeWhere}
-        AND la.status = 'closed'
+        AND la.status = 'loan_funded'
         AND la.actual_close_date IS NOT NULL
         AND la.submitted_at IS NOT NULL
         AND la.submitted_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)`,
@@ -7363,12 +9889,12 @@ const handleGetDashboardStats: RequestHandler = async (req, res) => {
     // Get closure rate (approved/closed vs denied/cancelled)
     const [closureRateStats] = (await pool.query(
       `SELECT 
-        COUNT(CASE WHEN la.status IN ('approved', 'closed') THEN 1 END) as successful,
-        COUNT(CASE WHEN la.status IN ('denied', 'cancelled') THEN 1 END) as unsuccessful
+        COUNT(CASE WHEN la.status = 'loan_funded' THEN 1 END) as successful,
+        COUNT(CASE WHEN la.status <> 'loan_funded' THEN 1 END) as unsuccessful
       FROM loan_applications la
       ${scopeJoin}
       WHERE ${scopeWhere}
-        AND la.status IN ('approved', 'closed', 'denied', 'cancelled')`,
+        AND la.status <> 'draft'`,
       scopeParams,
     )) as [RowDataPacket[], any];
 
@@ -7382,7 +9908,7 @@ const handleGetDashboardStats: RequestHandler = async (req, res) => {
       `SELECT 
         DATE(la.created_at) as date,
         COUNT(*) as applications,
-        COUNT(CASE WHEN la.status IN ('approved', 'closed') THEN 1 END) as closed
+        COUNT(CASE WHEN la.status = 'loan_funded' THEN 1 END) as closed
       FROM loan_applications la
       ${scopeJoin}
       WHERE ${scopeWhere}
@@ -7400,7 +9926,7 @@ const handleGetDashboardStats: RequestHandler = async (req, res) => {
       FROM loan_applications la
       ${scopeJoin}
       WHERE ${scopeWhere}
-        AND la.status NOT IN ('denied', 'cancelled')
+        AND la.status <> 'draft'
       GROUP BY la.status
       ORDER BY count DESC`,
       scopeParams,
@@ -7918,8 +10444,7 @@ const handleUpdateBrokerMetrics: RequestHandler = async (req, res) => {
           closings_goal ?? null,
           credit_pulls_actual ?? null,
           prev_year_leads ?? null,
-          prev_year_closings ?? null,
-        ],
+          prev_year_closings ?? null],
       );
     } else {
       // Partners: only allowed to update their own manual actuals — no goal fields
@@ -7939,8 +10464,7 @@ const handleUpdateBrokerMetrics: RequestHandler = async (req, res) => {
           month,
           credit_pulls_actual ?? null,
           prev_year_leads ?? null,
-          prev_year_closings ?? null,
-        ],
+          prev_year_closings ?? null],
       );
     }
 
@@ -7965,7 +10489,14 @@ const handleGetClientDetailProfile: RequestHandler = async (req, res) => {
   try {
     const brokerId = (req as any).brokerId;
     const brokerRole = (req as any).brokerRole;
-    const hasGlobalClientAccess = isOperationalRole(brokerRole);
+    const crmFlags = await getPerOwnerCrmFlags(
+      pool,
+      MORTGAGE_TENANT_ID,
+      brokerId,
+    );
+    const hasGlobalClientAccess = crmFlags.activeForBroker
+      ? isAdminRole(brokerRole)
+      : isOperationalRole(brokerRole);
     const clientId = parseInt(req.params.clientId as string);
     if (isNaN(clientId)) {
       return res
@@ -7993,8 +10524,16 @@ const handleGetClientDetailProfile: RequestHandler = async (req, res) => {
         .json({ success: false, error: "Client not found" });
     }
 
-    // Access control for non-superadmins: client owner or any banker linked on one of the client's loans.
-    if (!hasGlobalClientAccess) {
+    // Per-owner CRM: strict owner-row access (no loan co-ownership bypass).
+    if (!hasGlobalClientAccess && crmFlags.activeForBroker) {
+      if (
+        Number(client.assigned_broker_id) !== brokerId ||
+        client.list_visibility !== "active"
+      ) {
+        return res.status(403).json({ success: false, error: "Access denied" });
+      }
+    } else if (!hasGlobalClientAccess) {
+      // Legacy: client owner or any banker linked on one of the client's loans.
       const [[access]] = await pool.query<RowDataPacket[]>(
         `SELECT 1 FROM loan_applications
          WHERE client_user_id = ? AND tenant_id = ?
@@ -8103,12 +10642,24 @@ const handleGetClientDetailProfile: RequestHandler = async (req, res) => {
 
 /**
  * Get all clients
+ * When PER_OWNER_CRM_ENABLED is on, non-admins see only assigned_broker_id = me
+ * with list_visibility = active. Admins retain full tenant directory access.
  */
 const handleGetClients: RequestHandler = async (req, res) => {
   try {
     const brokerId = (req as any).brokerId;
     const brokerRole = (req as any).brokerRole;
-    const hasGlobalClientAccess = isOperationalRole(brokerRole);
+    const crmFlags = await getPerOwnerCrmFlags(
+      pool,
+      MORTGAGE_TENANT_ID,
+      brokerId,
+    );
+    const hasGlobalClientAccess = crmFlags.activeForBroker
+      ? isAdminRole(brokerRole)
+      : isOperationalRole(brokerRole);
+    const usePerOwnerList =
+      crmFlags.activeForBroker && !hasGlobalClientAccess;
+    const visibilityFilter = clientListVisibilityFilter(crmFlags);
 
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(
@@ -8135,11 +10686,23 @@ const handleGetClients: RequestHandler = async (req, res) => {
     };
     const safeSortBy = SORT_MAP[sortBy] ?? "c.created_at";
 
-    const baseWhere = `WHERE c.tenant_id = ?${hasGlobalClientAccess ? "" : " AND (c.assigned_broker_id = ? OR la.broker_user_id = ? OR la.partner_broker_id = ?)"}${sourceFilter ? " AND c.source = ?" : ""}${search ? " AND (c.first_name LIKE ? OR c.last_name LIKE ? OR c.email LIKE ? OR c.phone LIKE ? OR REGEXP_REPLACE(c.phone, '[^0-9]', '') LIKE ? OR RIGHT(REGEXP_REPLACE(c.phone, '[^0-9]', ''), 10) LIKE ?)" : ""}`;
+    let ownershipClause = "";
+    if (usePerOwnerList) {
+      ownershipClause = ` AND ${perOwnerClientListWhere("c", visibilityFilter)}`;
+    } else if (!hasGlobalClientAccess) {
+      ownershipClause =
+        " AND (c.assigned_broker_id = ? OR la.broker_user_id = ? OR la.partner_broker_id = ?)";
+    }
 
-    const filterParams: any[] = hasGlobalClientAccess
-      ? [MORTGAGE_TENANT_ID]
-      : [MORTGAGE_TENANT_ID, brokerId, brokerId, brokerId];
+    const baseWhere = `WHERE c.tenant_id = ?${ownershipClause}${sourceFilter ? " AND c.source = ?" : ""}${search ? " AND (c.first_name LIKE ? OR c.last_name LIKE ? OR c.email LIKE ? OR c.phone LIKE ? OR REGEXP_REPLACE(c.phone, '[^0-9]', '') LIKE ? OR RIGHT(REGEXP_REPLACE(c.phone, '[^0-9]', ''), 10) LIKE ?)" : ""}`;
+
+    const filterParams: any[] = [MORTGAGE_TENANT_ID];
+    if (usePerOwnerList) {
+      // visibility values are inlined in SQL; only brokerId is a bind param
+      filterParams.push(brokerId);
+    } else if (!hasGlobalClientAccess) {
+      filterParams.push(brokerId, brokerId, brokerId);
+    }
     if (sourceFilter) filterParams.push(sourceFilter);
     if (search) {
       const like = `%${search}%`;
@@ -8181,7 +10744,7 @@ const handleGetClients: RequestHandler = async (req, res) => {
         c.status,
         c.created_at,
         COUNT(DISTINCT la.id) as total_applications,
-        SUM(CASE WHEN la.status IN ('submitted', 'under_review', 'documents_pending', 'underwriting', 'conditional_approval') THEN 1 ELSE 0 END) as active_applications,
+        COUNT(DISTINCT CASE WHEN la.status NOT IN ('draft', 'loan_funded') THEN la.id END) as active_applications,
         COUNT(DISTINCT ct.id) as total_conversations
       FROM clients c
       LEFT JOIN loan_applications la ON c.id = la.client_user_id
@@ -8294,8 +10857,7 @@ const handleCreateClient: RequestHandler = async (req, res) => {
         address_city?.trim() || null,
         address_state?.trim()?.toUpperCase() || null,
         address_zip?.trim() || null,
-        brokerId,
-      ],
+        brokerId],
     );
 
     const newClientId: number = result.insertId;
@@ -8365,8 +10927,7 @@ const handleCreateClient: RequestHandler = async (req, res) => {
               lastTen,
               lastTen,
               trimmedEmail,
-              trimmedEmail,
-            ],
+              trimmedEmail],
           )
           .catch((e: unknown) =>
             console.error("[handleCreateClient] thread backfill failed:", e),
@@ -8634,8 +11195,7 @@ const handleUpdateClient: RequestHandler = async (req, res) => {
               existing.assigned_broker_id,
               MORTGAGE_TENANT_ID,
               newLastTen,
-              newLastTen,
-            ],
+              newLastTen],
           )
           .catch((e: unknown) =>
             console.error("[handleUpdateClient] thread backfill failed:", e),
@@ -8663,8 +11223,7 @@ const handleUpdateClient: RequestHandler = async (req, res) => {
             clientId,
             MORTGAGE_TENANT_ID,
             MORTGAGE_TENANT_ID,
-            pendingEmailBackfill,
-          ],
+            pendingEmailBackfill],
         )
         .catch((e: unknown) =>
           console.error(
@@ -8683,7 +11242,7 @@ const handleUpdateClient: RequestHandler = async (req, res) => {
               COALESCE(convs.total,0) AS total_conversations
        FROM clients c
        LEFT JOIN (
-         SELECT client_user_id, COUNT(*) as total, SUM(status='active') as active
+         SELECT client_user_id, COUNT(*) as total, SUM(status NOT IN ('draft', 'loan_funded')) as active
          FROM loan_applications GROUP BY client_user_id
        ) apps ON apps.client_user_id = c.id
        LEFT JOIN (
@@ -8746,18 +11305,10 @@ const handleDeleteClient: RequestHandler = async (req, res) => {
     const client = clientRows[0];
 
     // Block deletion only if client has ACTIVE loan applications
-    const ACTIVE_STATUSES = [
-      "submitted",
-      "under_review",
-      "documents_pending",
-      "underwriting",
-      "conditional_approval",
-    ];
-    const placeholders = ACTIVE_STATUSES.map(() => "?").join(",");
     const [activeRows] = await pool.query<RowDataPacket[]>(
       `SELECT COUNT(*) as count FROM loan_applications
-       WHERE client_user_id = ? AND tenant_id = ? AND status IN (${placeholders})`,
-      [clientId, MORTGAGE_TENANT_ID, ...ACTIVE_STATUSES],
+       WHERE client_user_id = ? AND tenant_id = ? AND status NOT IN ('draft', 'loan_funded')`,
+      [clientId, MORTGAGE_TENANT_ID],
     );
     const activeCount = activeRows[0]?.count || 0;
     if (activeCount > 0) {
@@ -8805,8 +11356,7 @@ const handleDeleteClient: RequestHandler = async (req, res) => {
     // Safe to delete
     await pool.query("DELETE FROM clients WHERE id = ? AND tenant_id = ?", [
       clientId,
-      MORTGAGE_TENANT_ID,
-    ]);
+      MORTGAGE_TENANT_ID]);
 
     console.log(`✅ Successfully deleted client ${clientId}`);
 
@@ -8851,7 +11401,7 @@ const handleConvertClientToBroker: RequestHandler = async (req, res) => {
     const [activeRows] = await pool.query<RowDataPacket[]>(
       `SELECT COUNT(*) AS cnt FROM loan_applications
        WHERE client_user_id = ? AND tenant_id = ?
-         AND status NOT IN ('rejected','cancelled','closed','funded','completed')`,
+         AND status NOT IN ('draft', 'loan_funded')`,
       [clientId, MORTGAGE_TENANT_ID],
     );
     if (activeRows[0].cnt > 0) {
@@ -8874,8 +11424,7 @@ const handleConvertClientToBroker: RequestHandler = async (req, res) => {
         c.last_name,
         c.phone ?? null,
         publicToken,
-        created_by_broker_id ?? null,
-      ],
+        created_by_broker_id ?? null],
     );
     const newBrokerId = ins.insertId;
 
@@ -8951,8 +11500,7 @@ const handleConvertBrokerToClient: RequestHandler = async (req, res) => {
         b.last_name,
         b.phone ?? null,
         source,
-        assigned_broker_id ?? null,
-      ],
+        assigned_broker_id ?? null],
     );
     const newClientId = ins.insertId;
 
@@ -9188,8 +11736,7 @@ const handleCreateBroker: RequestHandler = async (req, res) => {
         role || "broker",
         license_number || null,
         specializations ? JSON.stringify(specializations) : null,
-        createdByBrokerId,
-      ],
+        createdByBrokerId],
     )) as [ResultSetHeader, any];
 
     const [newBroker] = (await pool.query(
@@ -9445,8 +11992,7 @@ const handleDeleteBroker: RequestHandler = async (req, res) => {
           foreignKey: "created_by_broker_id",
           tenantFilter: true,
           friendlyName: "created task templates",
-        },
-      ],
+        }],
     );
 
     console.log(
@@ -9614,8 +12160,7 @@ const handleGetBrokerShareLinkByAdmin: RequestHandler = async (req, res) => {
       );
       await pool.query("UPDATE brokers SET slug = ? WHERE id = ?", [
         slug,
-        targetId,
-      ]);
+        targetId]);
     }
 
     const baseUrl = getBaseUrl();
@@ -10014,8 +12559,7 @@ const handleCreateTaskTemplate: RequestHandler = async (req, res) => {
           priority,
           loan.client_user_id,
           brokerId,
-          dueDate,
-        ],
+          dueDate],
       );
 
       const taskId = result.insertId;
@@ -10028,8 +12572,7 @@ const handleCreateTaskTemplate: RequestHandler = async (req, res) => {
           MORTGAGE_TENANT_ID,
           loan.client_user_id,
           "New Task Assigned",
-          `A new task "${title}" has been added to your loan application #${loan.application_number}.`,
-        ],
+          `A new task "${title}" has been added to your loan application #${loan.application_number}.`],
       );
 
       // Email notification (non-fatal)
@@ -10097,8 +12640,7 @@ const handleCreateTaskTemplate: RequestHandler = async (req, res) => {
         requires_documents || false,
         document_instructions || null,
         has_custom_form || false,
-        brokerId,
-      ],
+        brokerId],
     );
 
     const templateId = result.insertId;
@@ -10221,8 +12763,7 @@ const handleUpdateTask: RequestHandler = async (req, res) => {
         statusChangedAt ? brokerId : null,
         statusChangedAt,
         taskId,
-        tenantId,
-      ],
+        tenantId],
     );
 
     // Log the status change for audit purposes
@@ -10243,8 +12784,7 @@ const handleUpdateTask: RequestHandler = async (req, res) => {
             task_title: currentTask.title,
             application_id: currentTask.application_id,
             changed_at: statusChangedAt,
-          }),
-        ],
+          })],
       );
     }
 
@@ -10347,8 +12887,7 @@ const handleUpdateTaskTemplateFull: RequestHandler = async (req, res) => {
         document_instructions || null,
         has_custom_form || false,
         taskId,
-        MORTGAGE_TENANT_ID,
-      ],
+        MORTGAGE_TENANT_ID],
     );
     console.log(
       `✅ API: Task template updated, affected rows:`,
@@ -10629,8 +13168,7 @@ const handleDeleteTaskInstance: RequestHandler = async (req, res) => {
       // Delete related documents first (CASCADE should handle this, but being explicit)
       if (documentsCount > 0) {
         await connection.query("DELETE FROM task_documents WHERE task_id = ?", [
-          taskId,
-        ]);
+          taskId]);
         console.log(`🗑️ Deleted ${documentsCount} task documents`);
       }
 
@@ -10775,8 +13313,7 @@ const handleCreateTaskFormFields: RequestHandler = async (req, res) => {
                 : null,
               field.order_index || i,
               field.help_text || null,
-              existingField.id,
-            ],
+              existingField.id],
           );
 
           console.log(`✅ API: Updated existing field ID ${existingField.id}`);
@@ -10828,8 +13365,7 @@ const handleCreateTaskFormFields: RequestHandler = async (req, res) => {
                 ? JSON.stringify(field.validation_rules)
                 : null,
               field.order_index || i,
-              field.help_text || null,
-            ],
+              field.help_text || null],
           );
 
           const insertedId = (result as any).insertId;
@@ -10948,8 +13484,7 @@ const handleSubmitTaskForm: RequestHandler = async (req, res) => {
             response.field_id,
             response.response_value ?? response.field_value ?? null,
             userId || null,
-            brokerId || null,
-          ],
+            brokerId || null],
         );
       }
 
@@ -11024,14 +13559,12 @@ const handleUploadTaskDocument: RequestHandler = async (req, res) => {
         file_size || null,
         userId || null,
         brokerId || null,
-        notes || null,
-      ],
+        notes || null],
     );
 
     // Mark task documents as uploaded
     await pool.query(`UPDATE tasks SET documents_uploaded = 1 WHERE id = ?`, [
-      task_id,
-    ]);
+      task_id]);
 
     const [documents] = await pool.query(
       `SELECT td.* FROM task_documents td 
@@ -11341,8 +13874,7 @@ const handleSaveSignDocument: RequestHandler = async (req, res) => {
         original_filename,
         file_size || null,
         zonesJson,
-        brokerId,
-      ],
+        brokerId],
     );
 
     // Ensure has_signing = 1 on the template
@@ -11516,8 +14048,7 @@ const handleSubmitTaskSignatures: RequestHandler = async (req, res) => {
           signDocumentId,
           zone_id,
           signature_data,
-          clientId,
-        ],
+          clientId],
       );
     }
 
@@ -11707,8 +14238,7 @@ const handleApproveTask: RequestHandler = async (req, res) => {
         "Task Approved",
         `Your task "${task.title}" has been approved. Great job!`,
         "success",
-        "/portal",
-      ],
+        "/portal"],
     );
 
     // Create audit log
@@ -11719,8 +14249,7 @@ const handleApproveTask: RequestHandler = async (req, res) => {
         MORTGAGE_TENANT_ID,
         brokerId,
         taskId,
-        JSON.stringify({ status: "approved", approved_at: new Date() }),
-      ],
+        JSON.stringify({ status: "approved", approved_at: new Date() })],
     );
 
     // Send approval email to client
@@ -11823,8 +14352,7 @@ const handleReopenTask: RequestHandler = async (req, res) => {
         "Task Needs Revision",
         `Your task "${task.title}" needs to be revised. Please check the feedback.`,
         "warning",
-        "/portal",
-      ],
+        "/portal"],
     );
 
     // Send email to client
@@ -11852,8 +14380,7 @@ const handleReopenTask: RequestHandler = async (req, res) => {
           status: "reopened",
           reopened_at: new Date(),
           reason: reason,
-        }),
-      ],
+        })],
     );
 
     res.json({
@@ -11952,8 +14479,7 @@ const handleGenerateMISMO: RequestHandler = async (req, res) => {
         MORTGAGE_TENANT_ID,
         brokerId,
         loanId,
-        JSON.stringify({ filename, generated_at: new Date() }),
-      ],
+        JSON.stringify({ filename, generated_at: new Date() })],
     );
 
     res.send(xml);
@@ -12947,8 +15473,7 @@ const handleCreateEmailTemplate: RequestHandler = async (req, res) => {
         template_type || "email",
         category || "system",
         is_active !== false ? 1 : 0,
-        brokerId,
-      ],
+        brokerId],
     )) as [ResultSetHeader, any];
 
     const [templates] = (await pool.query(
@@ -13092,8 +15617,7 @@ const handleDeleteEmailTemplate: RequestHandler = async (req, res) => {
 
     await pool.query("DELETE FROM templates WHERE id = ? AND tenant_id = ?", [
       templateId,
-      MORTGAGE_TENANT_ID,
-    ]);
+      MORTGAGE_TENANT_ID]);
 
     res.json({
       success: true,
@@ -13746,8 +16270,7 @@ const handleCreateSmsTemplate: RequestHandler = async (req, res) => {
         template_type || "sms",
         category || "system",
         is_active !== false ? 1 : 0,
-        brokerId,
-      ],
+        brokerId],
     )) as [ResultSetHeader, any];
 
     const [templates] = (await pool.query(
@@ -13903,8 +16426,7 @@ const handleDeleteSmsTemplate: RequestHandler = async (req, res) => {
 
     await pool.query("DELETE FROM templates WHERE id = ? AND tenant_id = ?", [
       templateId,
-      MORTGAGE_TENANT_ID,
-    ]);
+      MORTGAGE_TENANT_ID]);
 
     res.json({
       success: true,
@@ -13918,230 +16440,6 @@ const handleDeleteSmsTemplate: RequestHandler = async (req, res) => {
         error instanceof Error
           ? error.message
           : "Failed to delete SMS template",
-    });
-  }
-};
-
-// =====================================================
-// WHATSAPP TEMPLATE HANDLERS
-// =====================================================
-
-/**
- * GET /api/whatsapp-templates
- */
-const handleGetWhatsappTemplates: RequestHandler = async (req, res) => {
-  try {
-    if (WHATSAPP_CHANNEL_TEMP_DISABLED) {
-      return res.json({ success: true, templates: [] });
-    }
-
-    const [templates] = (await pool.query(
-      `SELECT id, name, body, template_type, category, is_active, created_at, updated_at
-       FROM templates
-       WHERE tenant_id = ? AND template_type = 'whatsapp'
-       ORDER BY created_at DESC`,
-      [MORTGAGE_TENANT_ID],
-    )) as [RowDataPacket[], any];
-
-    res.json({
-      success: true,
-      templates: templates.map((t: any) => ({
-        ...t,
-        is_active: Boolean(t.is_active),
-      })),
-    });
-  } catch (error) {
-    console.error("Error fetching WhatsApp templates:", error);
-    res.status(500).json({
-      success: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Failed to fetch WhatsApp templates",
-    });
-  }
-};
-
-/**
- * POST /api/whatsapp-templates
- */
-const handleCreateWhatsappTemplate: RequestHandler = async (req, res) => {
-  try {
-    if (WHATSAPP_CHANNEL_TEMP_DISABLED) {
-      return res.status(503).json({
-        success: false,
-        error: "WhatsApp templates are temporarily disabled",
-      });
-    }
-
-    const { name, body, template_type, is_active, category } = req.body;
-    const brokerId = (req as any).brokerId || 1;
-
-    if (!name || !body) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Name and body are required" });
-    }
-
-    const [result] = (await pool.query(
-      `INSERT INTO templates (tenant_id, name, body, template_type, category, is_active, created_by_broker_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        MORTGAGE_TENANT_ID,
-        name,
-        body,
-        template_type || "whatsapp",
-        category || "system",
-        is_active !== false ? 1 : 0,
-        brokerId,
-      ],
-    )) as [ResultSetHeader, any];
-
-    const [rows] = (await pool.query(
-      `SELECT id, name, body, template_type, category, is_active, created_at, updated_at
-       FROM templates WHERE id = ? AND tenant_id = ?`,
-      [result.insertId, MORTGAGE_TENANT_ID],
-    )) as [RowDataPacket[], any];
-
-    res.json({
-      success: true,
-      template: { ...rows[0], is_active: Boolean(rows[0].is_active) },
-      message: "WhatsApp template created successfully",
-    });
-  } catch (error) {
-    console.error("Error creating WhatsApp template:", error);
-    res.status(500).json({
-      success: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Failed to create WhatsApp template",
-    });
-  }
-};
-
-/**
- * PUT /api/whatsapp-templates/:templateId
- */
-const handleUpdateWhatsappTemplate: RequestHandler = async (req, res) => {
-  try {
-    if (WHATSAPP_CHANNEL_TEMP_DISABLED) {
-      return res.status(503).json({
-        success: false,
-        error: "WhatsApp templates are temporarily disabled",
-      });
-    }
-
-    const { templateId } = req.params;
-    const { name, body, template_type, is_active } = req.body;
-
-    const [existingRows] = (await pool.query(
-      "SELECT id FROM templates WHERE id = ? AND tenant_id = ? AND template_type = 'whatsapp'",
-      [templateId, MORTGAGE_TENANT_ID],
-    )) as [RowDataPacket[], any];
-
-    if (existingRows.length === 0) {
-      return res
-        .status(404)
-        .json({ success: false, error: "WhatsApp template not found" });
-    }
-
-    const updates: string[] = [];
-    const values: any[] = [];
-    if (name !== undefined) {
-      updates.push("name = ?");
-      values.push(name);
-    }
-    if (body !== undefined) {
-      updates.push("body = ?");
-      values.push(body);
-    }
-    if (template_type !== undefined) {
-      updates.push("template_type = ?");
-      values.push(template_type);
-    }
-    if (is_active !== undefined) {
-      updates.push("is_active = ?");
-      values.push(is_active ? 1 : 0);
-    }
-
-    if (updates.length === 0) {
-      return res
-        .status(400)
-        .json({ success: false, error: "No fields to update" });
-    }
-
-    values.push(templateId, MORTGAGE_TENANT_ID);
-    await pool.query(
-      `UPDATE templates SET ${updates.join(", ")} WHERE id = ? AND tenant_id = ?`,
-      values,
-    );
-
-    const [rows] = (await pool.query(
-      `SELECT id, name, body, template_type, category, is_active, created_at, updated_at
-       FROM templates WHERE id = ? AND tenant_id = ?`,
-      [templateId, MORTGAGE_TENANT_ID],
-    )) as [RowDataPacket[], any];
-
-    res.json({
-      success: true,
-      template: { ...rows[0], is_active: Boolean(rows[0].is_active) },
-      message: "WhatsApp template updated successfully",
-    });
-  } catch (error) {
-    console.error("Error updating WhatsApp template:", error);
-    res.status(500).json({
-      success: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Failed to update WhatsApp template",
-    });
-  }
-};
-
-/**
- * DELETE /api/whatsapp-templates/:templateId
- */
-const handleDeleteWhatsappTemplate: RequestHandler = async (req, res) => {
-  try {
-    if (WHATSAPP_CHANNEL_TEMP_DISABLED) {
-      return res.status(503).json({
-        success: false,
-        error: "WhatsApp templates are temporarily disabled",
-      });
-    }
-
-    const { templateId } = req.params;
-
-    const [existingRows] = (await pool.query(
-      "SELECT id, name FROM templates WHERE id = ? AND tenant_id = ? AND template_type = 'whatsapp'",
-      [templateId, MORTGAGE_TENANT_ID],
-    )) as [RowDataPacket[], any];
-
-    if (existingRows.length === 0) {
-      return res
-        .status(404)
-        .json({ success: false, error: "WhatsApp template not found" });
-    }
-
-    await pool.query("DELETE FROM templates WHERE id = ? AND tenant_id = ?", [
-      templateId,
-      MORTGAGE_TENANT_ID,
-    ]);
-
-    res.json({
-      success: true,
-      message: `WhatsApp template "${existingRows[0].name}" deleted successfully`,
-    });
-  } catch (error) {
-    console.error("Error deleting WhatsApp template:", error);
-    res.status(500).json({
-      success: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Failed to delete WhatsApp template",
     });
   }
 };
@@ -14225,9 +16523,8 @@ const handleUpsertPipelineStepTemplate: RequestHandler = async (req, res) => {
       "approved_with_conditions",
       "clear_to_close",
       "docs_out",
-      "loan_funded",
-    ];
-    const validChannels = ["email", "sms", "whatsapp"];
+      "loan_funded"];
+    const validChannels = ["email", "sms"];
 
     if (!validSteps.includes(pipeline_step)) {
       return res
@@ -14244,13 +16541,6 @@ const handleUpsertPipelineStepTemplate: RequestHandler = async (req, res) => {
       return res.status(503).json({
         success: false,
         error: "SMS channel is temporarily disabled",
-      });
-    }
-
-    if (communication_type === "whatsapp" && WHATSAPP_CHANNEL_TEMP_DISABLED) {
-      return res.status(503).json({
-        success: false,
-        error: "WhatsApp channel is temporarily disabled",
       });
     }
 
@@ -14282,8 +16572,7 @@ const handleUpsertPipelineStepTemplate: RequestHandler = async (req, res) => {
         communication_type,
         template_id,
         is_active ? 1 : 0,
-        brokerId,
-      ],
+        brokerId],
     );
 
     const [rows] = (await pool.query(
@@ -14353,7 +16642,7 @@ const handleDeletePipelineStepTemplate: RequestHandler = async (req, res) => {
 /**
  * Trigger pipeline automation when a loan status changes.
  * Queries pipeline_step_templates for the new status and dispatches
- * each configured channel (email / SMS / WhatsApp) using the assigned template.
+ * each configured channel (email / SMS) using the assigned template.
  * This function is intentionally non-throwing — failures are logged only.
  */
 async function triggerPipelineAutomation(
@@ -14437,9 +16726,6 @@ async function triggerPipelineAutomation(
       } else if (assignment.communication_type === "sms") {
         if (!loan.phone) continue;
         sendResult = await sendSMSMessage(loan.phone, body);
-      } else if (assignment.communication_type === "whatsapp") {
-        if (!loan.phone) continue;
-        sendResult = await sendWhatsAppMessage(loan.phone, body);
       }
 
       console.log(
@@ -14468,8 +16754,7 @@ async function triggerPipelineAutomation(
           pipelineConversationId,
           assignment.template_id,
           sendResult.success ? "sent" : "failed",
-          sendResult.cost || null,
-        ],
+          sendResult.cost || null],
       );
 
       await upsertConversationThread({
@@ -14619,8 +16904,7 @@ async function triggerReminderFlows(
           execConvId,
           triggerKey,
           nextExecAt,
-          contextData,
-        ],
+          contextData],
       );
 
       console.log(
@@ -14920,7 +17204,7 @@ function wrapReminderEmailBody(plainText: string): string {
 type FlowStepLogChannel =
   | "sms"
   | "email"
-  | "whatsapp"
+ 
   | "notification"
   | "none";
 type FlowStepLogEvent =
@@ -14977,8 +17261,7 @@ async function logFlowStepTrace(
         opts.payload ? JSON.stringify(opts.payload) : null,
         opts.error_message ?? null,
         opts.duration_ms ?? null,
-        opts.completed_at ?? null,
-      ],
+        opts.completed_at ?? null],
     );
   } catch (err) {
     // Never let logging errors break the engine.
@@ -15120,19 +17403,6 @@ async function executeFlowSendStep(
         undefined,
         sharedFromNumber,
       );
-    } else if (step.step_type === "send_whatsapp") {
-      if (!clientPhone) {
-        console.error(
-          `❌ executeFlowSendStep: exec #${execution.id} step [${step.step_key}] — no client_phone in contextData (client_id=${clientId}); skipping WhatsApp send`,
-        );
-        await logFlowStepTrace(execution, step, "skipped", {
-          channel: "whatsapp",
-          error_message: "no client_phone in context",
-          completed_at: new Date(),
-        });
-        return;
-      }
-      sendResult = await sendWhatsAppMessage(clientPhone, body);
     } else if (step.step_type === "send_notification") {
       // For realtor-prospecting flows the step config may set notify_broker=true
       // (or clientId may be absent), meaning the notification should go to the
@@ -15166,10 +17436,7 @@ async function executeFlowSendStep(
         step.step_type === "send_email"
           ? "email"
           : step.step_type === "send_sms"
-            ? "sms"
-            : step.step_type === "send_whatsapp"
-              ? "whatsapp"
-              : "email";
+            ? "sms": "email";
       await pool.query(
         `INSERT INTO communications
            (tenant_id, application_id, from_broker_id, to_user_id,
@@ -15191,8 +17458,7 @@ async function executeFlowSendStep(
           execution.id,
           config.template_id ?? null,
           sendResult.success ? "sent" : "failed",
-          sendResult.cost ?? null,
-        ],
+          sendResult.cost ?? null],
       );
 
       await upsertConversationThread({
@@ -15232,10 +17498,7 @@ async function executeFlowSendStep(
           step.step_type === "send_email"
             ? "email"
             : step.step_type === "send_sms"
-              ? "sms"
-              : step.step_type === "send_whatsapp"
-                ? "whatsapp"
-                : "notification",
+              ? "sms": "notification",
         recipient:
           step.step_type === "send_email"
             ? ((contextData.client_email as string) ?? null)
@@ -15254,10 +17517,7 @@ async function executeFlowSendStep(
           step.step_type === "send_email"
             ? "email"
             : step.step_type === "send_sms"
-              ? "sms"
-              : step.step_type === "send_whatsapp"
-                ? "whatsapp"
-                : "notification",
+              ? "sms": "notification",
         recipient:
           step.step_type === "send_email"
             ? ((contextData.client_email as string) ?? null)
@@ -15301,8 +17561,7 @@ async function processFlowExecution(execution: RowDataPacket): Promise<void> {
   const stepMap = new Map<string, FlowStep>(
     stepRows.map((s) => [
       s.step_key,
-      { ...s, config: parseStepConfig(s.config) } as FlowStep,
-    ]),
+      { ...s, config: parseStepConfig(s.config) } as FlowStep]),
   );
   const connections: FlowConnection[] = connRows as FlowConnection[];
 
@@ -15351,8 +17610,7 @@ async function processFlowExecution(execution: RowDataPacket): Promise<void> {
           JSON.stringify(completedSteps),
           currentKey,
           `step_not_found:${currentKey}`,
-          execution.id,
-        ],
+          execution.id],
       );
       return;
     }
@@ -15445,11 +17703,10 @@ async function processFlowExecution(execution: RowDataPacket): Promise<void> {
       continue;
     }
 
-    // ── send_email / send_sms / send_whatsapp / send_notification ────
+    // ── send_email / send_sms / send_notification ────
     if (
       step.step_type === "send_email" ||
       step.step_type === "send_sms" ||
-      step.step_type === "send_whatsapp" ||
       step.step_type === "send_notification"
     ) {
       await executeFlowSendStep(step, contextData, execution);
@@ -15519,8 +17776,7 @@ async function processFlowExecution(execution: RowDataPacket): Promise<void> {
                 JSON.stringify(completedSteps),
                 currentKey,
                 `wait_until_date_missing:${dateFieldName}`,
-                execution.id,
-              ],
+                execution.id],
             );
             return;
           }
@@ -15543,8 +17799,7 @@ async function processFlowExecution(execution: RowDataPacket): Promise<void> {
             currentKey,
             nextExecAt,
             JSON.stringify(completedSteps),
-            execution.id,
-          ],
+            execution.id],
         );
         return;
       }
@@ -15726,7 +17981,7 @@ async function processFlowExecution(execution: RowDataPacket): Promise<void> {
  * Twilio's statusCallback occasionally fails (network blip, our endpoint
  * temporarily unreachable, dev environment with no public URL, etc.) which
  * leaves rows stuck at delivery_status='sent' even when they were actually
- * delivered/read/failed. This cron picks up SMS/MMS/WhatsApp rows that have
+ * delivered/read/failed. This cron picks up SMS/MMS rows that have
  * a Twilio SID, are still 'sent' or 'pending', and were sent more than
  * 2 minutes ago, queries Twilio for the authoritative status, and updates
  * the row. Limit 50 per run to stay within Twilio API quotas.
@@ -15802,15 +18057,8 @@ const handleAdminSmsCheck: RequestHandler = async (req, res) => {
 
 const handleBackfillMessageStatus: RequestHandler = async (req, res) => {
   try {
-    const secret = process.env.CRON_SECRET;
-    if (secret) {
-      const authHeader = req.headers.authorization;
-      const provided =
-        (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null) ??
-        (req.query.secret as string | undefined);
-      if (provided !== secret) {
-        return res.status(401).json({ success: false, error: "Unauthorized" });
-      }
+    if (!isAuthorizedCron(req)) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
     }
 
     if (!twilioClient) {
@@ -15824,7 +18072,7 @@ const handleBackfillMessageStatus: RequestHandler = async (req, res) => {
        FROM communications
        WHERE tenant_id = ?
          AND direction = 'outbound'
-         AND communication_type IN ('sms','whatsapp')
+         AND communication_type IN ('sms')
          AND external_id IS NOT NULL
          AND external_id != ''
          AND (delivery_status IN ('sent','pending') OR delivery_status IS NULL)
@@ -15888,15 +18136,8 @@ const handleBackfillMessageStatus: RequestHandler = async (req, res) => {
 
 const handleProcessReminderFlows: RequestHandler = async (req, res) => {
   try {
-    const secret = process.env.CRON_SECRET;
-    if (secret) {
-      const authHeader = req.headers.authorization;
-      const provided =
-        (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null) ??
-        (req.query.secret as string | undefined);
-      if (provided !== secret) {
-        return res.status(401).json({ success: false, error: "Unauthorized" });
-      }
+    if (!isAuthorizedCron(req)) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
     }
 
     // Log email configuration status for traceability
@@ -16133,8 +18374,7 @@ const handleConnectOffice365Mailbox: RequestHandler = async (req, res) => {
         assignedBrokerId,
         tenantId,
         clientId,
-        brokerId,
-      ],
+        brokerId],
     );
 
     const [mailboxRows] = await pool.query<RowDataPacket[]>(
@@ -16339,8 +18579,7 @@ const handleOffice365Callback: RequestHandler = async (req, res) => {
         tenantId,
         clientId,
         verified.mailboxId,
-        MORTGAGE_TENANT_ID,
-      ],
+        MORTGAGE_TENANT_ID],
     );
 
     // If no default mailbox exists, set this one as default.
@@ -16424,8 +18663,7 @@ const handleAssignConversationMailbox: RequestHandler = async (req, res) => {
             assigned_broker_id,
             is_default ? 1 : 0,
             mailboxId,
-            MORTGAGE_TENANT_ID,
-          ]
+            MORTGAGE_TENANT_ID]
         : [assigned_broker_id, mailboxId, MORTGAGE_TENANT_ID],
     );
 
@@ -16569,8 +18807,7 @@ const handleGetMailFolders: RequestHandler = async (req, res) => {
       "junk email",
       "outbox",
       "archive",
-      "conversation history",
-    ]);
+      "conversation history"]);
 
     const mapFolder = (f: any, parentId?: string) => ({
       id: f.id,
@@ -16588,8 +18825,7 @@ const handleGetMailFolders: RequestHandler = async (req, res) => {
       ...topLevel.map((f) => mapFolder(f)),
       ...childResults.flatMap(({ parentId, children }) =>
         children.map((c: any) => mapFolder(c, parentId)),
-      ),
-    ];
+      )];
 
     return res.json({ success: true, folders });
   } catch (error: any) {
@@ -16784,7 +19020,7 @@ const handleGetConversationMailboxes: RequestHandler = async (req, res) => {
 /**
  * POST /api/email/send
  *
- * Dedicated email-only send endpoint. Completely separate from the SMS/WhatsApp
+ * Dedicated email-only send endpoint. Completely separate from the SMS
  * /api/conversations/send handler — no Twilio number resolution, no phone logic.
  *
  * Supports:
@@ -16900,8 +19136,7 @@ const handleEmailSend: RequestHandler = async (req, res) => {
         pool.query<RowDataPacket[]>(
           `SELECT COALESCE(company_name, name) AS name FROM tenants WHERE id = ? LIMIT 1`,
           [MORTGAGE_TENANT_ID],
-        ),
-      ]);
+        )]);
       const bn =
         `${(brokerRow as RowDataPacket[])[0]?.first_name || ""} ${(brokerRow as RowDataPacket[])[0]?.last_name || ""}`.trim() ||
         "Your Loan Officer";
@@ -16962,8 +19197,7 @@ const handleEmailSend: RequestHandler = async (req, res) => {
           to_recipients: [{ email: finalTo, name: null }],
           cc_recipients: Array.isArray(cc) ? cc : [],
           bcc_recipients: Array.isArray(bcc) ? bcc : [],
-        }),
-      ],
+        })],
     )) as [ResultSetHeader, any];
 
     const commId = insertResult.insertId;
@@ -17169,8 +19403,7 @@ const handleSaveEmailDraft: RequestHandler = async (req, res) => {
           conversation_id ?? null,
           id,
           MORTGAGE_TENANT_ID,
-          brokerId,
-        ],
+          brokerId],
       );
       if (upd.affectedRows === 0) {
         return res
@@ -17200,8 +19433,7 @@ const handleSaveEmailDraft: RequestHandler = async (req, res) => {
         ccJson,
         bccJson,
         reply_to_comm_id ?? null,
-        conversation_id ?? null,
-      ],
+        conversation_id ?? null],
     );
     const [newDraft] = await pool.query<RowDataPacket[]>(
       `SELECT * FROM email_drafts WHERE id = ? LIMIT 1`,
@@ -17381,8 +19613,7 @@ const handleEmailThreadAction: RequestHandler = async (req, res) => {
       "mark_unread",
       "flag",
       "unflag",
-      "move",
-    ] as const;
+      "move"] as const;
     type ThreadAction = (typeof VALID_ACTIONS)[number];
 
     if (!conversationId || !VALID_ACTIONS.includes(action as ThreadAction)) {
@@ -17698,8 +19929,7 @@ const handleSyncConversationMailbox: RequestHandler = async (req, res) => {
         syncError,
         "active",
         mailbox.id,
-        MORTGAGE_TENANT_ID,
-      ],
+        MORTGAGE_TENANT_ID],
     );
 
     // Close the sync log entry
@@ -17732,15 +19962,8 @@ const handleSyncConversationMailbox: RequestHandler = async (req, res) => {
  */
 const handleCronSyncOffice365Mailboxes: RequestHandler = async (req, res) => {
   try {
-    const secret = process.env.CRON_SECRET;
-    if (secret) {
-      const authHeader = req.headers.authorization;
-      const provided =
-        (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null) ||
-        (req.query.secret as string);
-      if (provided !== secret) {
-        return res.status(401).json({ success: false, error: "Unauthorized" });
-      }
+    if (!isAuthorizedCron(req)) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
     }
 
     // Determine if an app-level token is available — if so, we can also sync
@@ -17787,8 +20010,7 @@ const handleCronSyncOffice365Mailboxes: RequestHandler = async (req, res) => {
               ? `Encountered ${result.errors} message errors`
               : null,
             mailbox.id,
-            MORTGAGE_TENANT_ID,
-          ],
+            MORTGAGE_TENANT_ID],
         );
       } catch (mailboxErr: any) {
         totalErrors++;
@@ -17807,8 +20029,7 @@ const handleCronSyncOffice365Mailboxes: RequestHandler = async (req, res) => {
             mailboxErr?.message || "Mailbox sync failed",
             isAuthErr ? "auth_required" : "error",
             mailbox.id,
-            MORTGAGE_TENANT_ID,
-          ],
+            MORTGAGE_TENANT_ID],
         );
       }
     }
@@ -17841,15 +20062,8 @@ const handleCronSyncOffice365Mailboxes: RequestHandler = async (req, res) => {
  */
 const handleCronSyncO365Calendars: RequestHandler = async (req, res) => {
   try {
-    const secret = process.env.CRON_SECRET;
-    if (secret) {
-      const authHeader = req.headers.authorization;
-      const provided =
-        (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null) ||
-        (req.query.secret as string);
-      if (provided !== secret) {
-        return res.status(401).json({ success: false, error: "Unauthorized" });
-      }
+    if (!isAuthorizedCron(req)) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
     }
 
     const [rows] = await pool.query<ConversationMailboxRow[]>(
@@ -17936,15 +20150,8 @@ const handleCronReactivateOffice365Mailboxes: RequestHandler = async (
   res,
 ) => {
   try {
-    const secret = process.env.CRON_SECRET;
-    if (secret) {
-      const authHeader = req.headers.authorization;
-      const provided =
-        (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null) ||
-        (req.query.secret as string);
-      if (provided !== secret) {
-        return res.status(401).json({ success: false, error: "Unauthorized" });
-      }
+    if (!isAuthorizedCron(req)) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
     }
 
     // First verify the app token has Mail.Read — this also primes the cache.
@@ -18027,15 +20234,8 @@ const handleCronReactivateOffice365Mailboxes: RequestHandler = async (
  */
 const handleCronSyncTeamsPolicy: RequestHandler = async (req, res) => {
   try {
-    const secret = process.env.CRON_SECRET;
-    if (secret) {
-      const authHeader = req.headers.authorization;
-      const provided =
-        (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null) ||
-        (req.query.secret as string);
-      if (provided !== secret) {
-        return res.status(401).json({ success: false, error: "Unauthorized" });
-      }
+    if (!isAuthorizedCron(req)) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
     }
 
     const scriptPath = path.resolve(
@@ -18092,15 +20292,8 @@ const handleCronSyncTeamsPolicy: RequestHandler = async (req, res) => {
 const handlePollInboundEmail: RequestHandler = async (req, res) => {
   try {
     // --- Auth ---
-    const secret = process.env.CRON_SECRET;
-    if (secret) {
-      const authHeader = req.headers.authorization;
-      const provided =
-        (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null) ||
-        (req.query.secret as string);
-      if (provided !== secret) {
-        return res.status(401).json({ success: false, error: "Unauthorized" });
-      }
+    if (!isAuthorizedCron(req)) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
     }
 
     // --- Config ---
@@ -18147,8 +20340,7 @@ const handlePollInboundEmail: RequestHandler = async (req, res) => {
               "in-reply-to",
               "references",
               "x-conversation-id",
-              "message-id",
-            ],
+              "message-id"],
             bodyStructure: true,
             source: true,
           },
@@ -18268,8 +20460,7 @@ const handlePollInboundEmail: RequestHandler = async (req, res) => {
                 subject,
                 bodyText,
                 conversationId,
-                messageIdHeader || null,
-              ],
+                messageIdHeader || null],
             );
 
             await upsertConversationThread({
@@ -18343,18 +20534,8169 @@ const handlePollInboundEmail: RequestHandler = async (req, res) => {
  *   Mailgun  : { sender, recipient, subject, "body-plain", "body-html", "Message-Id", ... }
  *   SendGrid : JSON array [{ from, to, subject, text, html, headers, ... }]
  */
+// ── Document download labels + store ZIP (inlined from shared/ for Vercel) ──
+
+type DocumentDownloadLabel = "ID" | "Seguro" | "Bank_Statement" | "Document";
+
+function resolveDocumentDownloadLabel(input: {
+  taskTitle?: string | null;
+  fieldName?: string | null;
+  fieldLabel?: string | null;
+}): DocumentDownloadLabel {
+  const hay = [input.fieldName, input.fieldLabel, input.taskTitle]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (
+    /\bssn\b/.test(hay) ||
+    hay.includes("social security") ||
+    hay.includes("seguro") ||
+    hay.includes("borrower_ssn") ||
+    hay.includes("spouse_ssn")
+  ) {
+    return "Seguro";
+  }
+  if (
+    hay.includes("borrower_id") ||
+    hay.includes("spouse_id") ||
+    /\bid\b/.test(hay) ||
+    hay.includes("identification") ||
+    hay.includes("driver") ||
+    hay.includes("passport") ||
+    hay.includes("green card")
+  ) {
+    return "ID";
+  }
+  if (hay.includes("bank") || hay.includes("statement")) {
+    return "Bank_Statement";
+  }
+  return "Document";
+}
+
+function buildDocumentDownloadFilename(opts: {
+  applicationNumber?: string | null;
+  label: DocumentDownloadLabel;
+  fieldName?: string | null;
+  fieldLabel?: string | null;
+  extension?: string;
+}): string {
+  const ext = (opts.extension || "pdf").replace(/^\./, "") || "pdf";
+  const loan = (opts.applicationNumber || "DOC")
+    .replace(/[^\w.-]+/g, "_")
+    .slice(0, 40);
+  let suffix = "";
+  const field =
+    `${opts.fieldName || ""} ${opts.fieldLabel || ""}`.toLowerCase();
+  if (field.includes("spouse") || field.includes("co-borrower")) {
+    suffix = "_spouse";
+  } else if (field.includes("month_1") || field.includes("month 1")) {
+    suffix = "_Month1";
+  } else if (field.includes("month_2") || field.includes("month 2")) {
+    suffix = "_Month2";
+  }
+  return `${loan}_${opts.label}${suffix}.${ext}`;
+}
+
+function zipU16(n: number): Buffer {
+  const b = Buffer.alloc(2);
+  b.writeUInt16LE(n, 0);
+  return b;
+}
+function zipU32(n: number): Buffer {
+  const b = Buffer.alloc(4);
+  b.writeUInt32LE(n >>> 0, 0);
+  return b;
+}
+function buildStoreZip(entries: Array<{ name: string; data: Buffer }>): Buffer {
+  const now = new Date();
+  const time =
+    ((now.getHours() & 0x1f) << 11) |
+    ((now.getMinutes() & 0x3f) << 5) |
+    ((Math.floor(now.getSeconds() / 2) & 0x1f) << 0);
+  const date =
+    (((now.getFullYear() - 1980) & 0x7f) << 9) |
+    (((now.getMonth() + 1) & 0xf) << 5) |
+    (now.getDate() & 0x1f);
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+  // CRC-32 (IEEE) — inline so we do not depend on Node zlib.crc32 availability
+  const crcTable = (() => {
+    const table = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      table[n] = c >>> 0;
+    }
+    return table;
+  })();
+  const crc32 = (buf: Buffer) => {
+    let c = 0xffffffff;
+    for (let i = 0; i < buf.length; i++) {
+      c = crcTable[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+    }
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  for (const entry of entries) {
+    const nameBuf = Buffer.from(entry.name.replace(/\\/g, "/"), "utf8");
+    const data = entry.data;
+    const crc = crc32(data) >>> 0;
+    const size = data.length;
+    const localHeader = Buffer.concat([
+      zipU32(0x04034b50),
+      zipU16(20),
+      zipU16(0),
+      zipU16(0),
+      zipU16(time),
+      zipU16(date),
+      zipU32(crc),
+      zipU32(size),
+      zipU32(size),
+      zipU16(nameBuf.length),
+      zipU16(0),
+      nameBuf,
+    ]);
+    localParts.push(localHeader, data);
+    centralParts.push(
+      Buffer.concat([
+        zipU32(0x02014b50),
+        zipU16(20),
+        zipU16(20),
+        zipU16(0),
+        zipU16(0),
+        zipU16(time),
+        zipU16(date),
+        zipU32(crc),
+        zipU32(size),
+        zipU32(size),
+        zipU16(nameBuf.length),
+        zipU16(0),
+        zipU16(0),
+        zipU16(0),
+        zipU16(0),
+        zipU32(0),
+        zipU32(offset),
+        nameBuf,
+      ]),
+    );
+    offset += localHeader.length + data.length;
+  }
+  const centralDir = Buffer.concat(centralParts);
+  return Buffer.concat([
+    ...localParts,
+    centralDir,
+    zipU32(0x06054b50),
+    zipU16(0),
+    zipU16(0),
+    zipU16(entries.length),
+    zipU16(entries.length),
+    zipU32(centralDir.length),
+    zipU32(offset),
+    zipU16(0),
+  ]);
+}
+
+function resolveCdnFileUrl(filePath: string): string | null {
+  const raw = String(filePath || "").trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  // Uploaded docs live under /data/encore/... on the PHP CDN.
+  // Public base is https://disruptinglabs.com/data/api + path
+  // (same as Documents.tsx). Bare https://disruptinglabs.com/data/encore
+  // returns Apache HTML catch-all — that corrupted zip downloads.
+  const cleaned = raw.startsWith("/") ? raw : `/${raw}`;
+  return `https://disruptinglabs.com/data/api${cleaned}`;
+}
+
+/** True when buffer looks like HTML (CDN miss), not a real document. */
+function isHtmlBuffer(buf: Buffer): boolean {
+  if (!buf.length) return true;
+  const head = buf
+    .subarray(0, Math.min(64, buf.length))
+    .toString("utf8")
+    .trimStart();
+  return (
+    head.startsWith("<!DOCTYPE") ||
+    head.startsWith("<!doctype") ||
+    head.startsWith("<html") ||
+    head.startsWith("<HTML")
+  );
+}
+
+function detectImageKind(buf: Buffer): "jpeg" | "png" | null {
+  if (
+    buf.length >= 3 &&
+    buf[0] === 0xff &&
+    buf[1] === 0xd8 &&
+    buf[2] === 0xff
+  ) {
+    return "jpeg";
+  }
+  if (
+    buf.length >= 8 &&
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47
+  ) {
+    return "png";
+  }
+  return null;
+}
+
+function readJpegSize(buf: Buffer): { width: number; height: number } | null {
+  let i = 2;
+  while (i + 9 < buf.length) {
+    if (buf[i] !== 0xff) break;
+    const marker = buf[i + 1];
+    const len = (buf[i + 2] << 8) | buf[i + 3];
+    // SOF0 / SOF2
+    if (marker === 0xc0 || marker === 0xc2) {
+      const height = (buf[i + 5] << 8) | buf[i + 6];
+      const width = (buf[i + 7] << 8) | buf[i + 8];
+      if (width > 0 && height > 0) return { width, height };
+    }
+    i += 2 + len;
+  }
+  return null;
+}
+
+/**
+ * Wrap a JPEG in a single-page PDF so labeled downloads are always .pdf
+ * (Daniel: phone uploads are jpg but brokers expect PDF attachments).
+ */
+function jpegToSinglePagePdf(jpeg: Buffer): Buffer | null {
+  const size = readJpegSize(jpeg) || { width: 612, height: 792 };
+  const { width, height } = size;
+  // Fit on US Letter while preserving aspect ratio
+  const pageW = 612;
+  const pageH = 792;
+  const scale = Math.min(pageW / width, pageH / height);
+  const drawW = width * scale;
+  const drawH = height * scale;
+  const ox = (pageW - drawW) / 2;
+  const oy = (pageH - drawH) / 2;
+
+  const objects: Buffer[] = [];
+  const add = (body: string | Buffer) => {
+    objects.push(typeof body === "string" ? Buffer.from(body, "utf8") : body);
+  };
+
+  add("<< /Type /Catalog /Pages 2 0 R >>");
+  add("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+  add(
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW} ${pageH}] /Contents 4 0 R /Resources << /XObject << /Im0 5 0 R >> >> >>`,
+  );
+  const content = `q ${drawW.toFixed(2)} 0 0 ${drawH.toFixed(2)} ${ox.toFixed(2)} ${oy.toFixed(2)} cm /Im0 Do Q\n`;
+  add(
+    `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}endstream`,
+  );
+  add(
+    Buffer.concat([
+      Buffer.from(
+        `<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`,
+        "utf8",
+      ),
+      jpeg,
+      Buffer.from("\nendstream", "utf8"),
+    ]),
+  );
+
+  const parts: Buffer[] = [Buffer.from("%PDF-1.4\n", "utf8")];
+  const offsets: number[] = [0];
+  for (let i = 0; i < objects.length; i++) {
+    offsets.push(Buffer.concat(parts).length);
+    parts.push(
+      Buffer.from(`${i + 1} 0 obj\n`, "utf8"),
+      objects[i],
+      Buffer.from("\nendobj\n", "utf8"),
+    );
+  }
+  const body = Buffer.concat(parts);
+  const xrefStart = body.length;
+  let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= objects.length; i++) {
+    xref += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  }
+  const trailer = `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  return Buffer.concat([
+    body,
+    Buffer.from(xref, "utf8"),
+    Buffer.from(trailer, "utf8"),
+  ]);
+}
+
+function paethPredictor(a: number, b: number, c: number): number {
+  const p = a + b - c;
+  const pa = Math.abs(p - a);
+  const pb = Math.abs(p - b);
+  const pc = Math.abs(p - c);
+  if (pa <= pb && pa <= pc) return a;
+  if (pb <= pc) return b;
+  return c;
+}
+
+/**
+ * Decode PNG → raw RGB (8-bit). Supports color types 2 (RGB) and 6 (RGBA),
+ * non-interlaced only. Inlined from shared/document-download.ts for Vercel.
+ */
+function pngToRgb(
+  png: Buffer,
+): { width: number; height: number; rgb: Buffer } | null {
+  if (
+    png.length < 8 ||
+    png[0] !== 0x89 ||
+    png[1] !== 0x50 ||
+    png[2] !== 0x4e ||
+    png[3] !== 0x47
+  ) {
+    return null;
+  }
+
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = -1;
+  let interlace = 0;
+  const idatParts: Buffer[] = [];
+  let offset = 8;
+
+  while (offset + 12 <= png.length) {
+    const len = png.readUInt32BE(offset);
+    const type = png.subarray(offset + 4, offset + 8).toString("ascii");
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + len;
+    if (dataEnd + 4 > png.length) return null;
+    const data = png.subarray(dataStart, dataEnd);
+
+    if (type === "IHDR") {
+      if (len < 13) return null;
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data[8];
+      colorType = data[9];
+      interlace = data[12];
+    } else if (type === "IDAT") {
+      idatParts.push(Buffer.from(data));
+    } else if (type === "IEND") {
+      break;
+    }
+
+    offset = dataEnd + 4;
+  }
+
+  if (
+    !width ||
+    !height ||
+    bitDepth !== 8 ||
+    interlace !== 0 ||
+    (colorType !== 2 && colorType !== 6) ||
+    idatParts.length === 0
+  ) {
+    return null;
+  }
+
+  const bpp = colorType === 6 ? 4 : 3;
+  let inflated: Buffer;
+  try {
+    inflated = inflateSync(Buffer.concat(idatParts));
+  } catch {
+    return null;
+  }
+
+  const stride = width * bpp;
+  const expected = height * (1 + stride);
+  if (inflated.length < expected) return null;
+
+  const raw = Buffer.alloc(height * stride);
+  let src = 0;
+  for (let y = 0; y < height; y++) {
+    const filter = inflated[src++];
+    const rowStart = y * stride;
+    const prevStart = (y - 1) * stride;
+    for (let i = 0; i < stride; i++) {
+      const x = inflated[src++];
+      const a = i >= bpp ? raw[rowStart + i - bpp] : 0;
+      const b = y > 0 ? raw[prevStart + i] : 0;
+      const c = y > 0 && i >= bpp ? raw[prevStart + i - bpp] : 0;
+      let val: number;
+      switch (filter) {
+        case 0:
+          val = x;
+          break;
+        case 1:
+          val = (x + a) & 0xff;
+          break;
+        case 2:
+          val = (x + b) & 0xff;
+          break;
+        case 3:
+          val = (x + ((a + b) >> 1)) & 0xff;
+          break;
+        case 4:
+          val = (x + paethPredictor(a, b, c)) & 0xff;
+          break;
+        default:
+          return null;
+      }
+      raw[rowStart + i] = val;
+    }
+  }
+
+  if (colorType === 2) {
+    return { width, height, rgb: raw };
+  }
+
+  const rgb = Buffer.alloc(width * height * 3);
+  for (let i = 0, j = 0; i < raw.length; i += 4, j += 3) {
+    rgb[j] = raw[i];
+    rgb[j + 1] = raw[i + 1];
+    rgb[j + 2] = raw[i + 2];
+  }
+  return { width, height, rgb };
+}
+
+function rgbToSinglePagePdf(
+  width: number,
+  height: number,
+  rgb: Buffer,
+): Buffer {
+  const compressed = deflateSync(rgb);
+  const pageW = 612;
+  const pageH = 792;
+  const scale = Math.min(pageW / width, pageH / height);
+  const drawW = width * scale;
+  const drawH = height * scale;
+  const ox = (pageW - drawW) / 2;
+  const oy = (pageH - drawH) / 2;
+
+  const objects: Buffer[] = [];
+  const add = (body: string | Buffer) => {
+    objects.push(typeof body === "string" ? Buffer.from(body, "utf8") : body);
+  };
+
+  add("<< /Type /Catalog /Pages 2 0 R >>");
+  add("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+  add(
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW} ${pageH}] /Contents 4 0 R /Resources << /XObject << /Im0 5 0 R >> >> >>`,
+  );
+  const content = `q ${drawW.toFixed(2)} 0 0 ${drawH.toFixed(2)} ${ox.toFixed(2)} ${oy.toFixed(2)} cm /Im0 Do Q\n`;
+  add(
+    `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}endstream`,
+  );
+  add(
+    Buffer.concat([
+      Buffer.from(
+        `<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length ${compressed.length} >>\nstream\n`,
+        "utf8",
+      ),
+      compressed,
+      Buffer.from("\nendstream", "utf8"),
+    ]),
+  );
+
+  const parts: Buffer[] = [Buffer.from("%PDF-1.4\n", "utf8")];
+  const offsets: number[] = [0];
+  for (let i = 0; i < objects.length; i++) {
+    offsets.push(Buffer.concat(parts).length);
+    parts.push(
+      Buffer.from(`${i + 1} 0 obj\n`, "utf8"),
+      objects[i],
+      Buffer.from("\nendobj\n", "utf8"),
+    );
+  }
+  const body = Buffer.concat(parts);
+  const xrefStart = body.length;
+  let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i <= objects.length; i++) {
+    xref += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  }
+  const trailer = `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  return Buffer.concat([
+    body,
+    Buffer.from(xref, "utf8"),
+    Buffer.from(trailer, "utf8"),
+  ]);
+}
+
+/** PNG→PDF (RGB/RGBA 8-bit). Inlined from shared/document-download.ts. */
+function pngToSinglePagePdf(png: Buffer): Buffer | null {
+  const decoded = pngToRgb(png);
+  if (!decoded) return null;
+  return rgbToSinglePagePdf(decoded.width, decoded.height, decoded.rgb);
+}
+
+/**
+ * Normalize fetched document bytes for download/zip:
+ * - reject HTML CDN misses
+ * - wrap JPEG and PNG as PDF (brokers expect PDF attachments)
+ */
+function prepareDocumentDownloadBytes(
+  raw: Buffer,
+  opts: { documentType?: string | null; contentType?: string | null },
+): { data: Buffer; extension: string; contentType: string } | null {
+  if (!raw.length || isHtmlBuffer(raw)) return null;
+  if (raw.length >= 5 && raw.subarray(0, 5).toString("utf8") === "%PDF-") {
+    return {
+      data: raw,
+      extension: "pdf",
+      contentType: "application/pdf",
+    };
+  }
+  const kind = detectImageKind(raw);
+  if (kind === "jpeg") {
+    const pdf = jpegToSinglePagePdf(raw);
+    if (pdf) {
+      return {
+        data: pdf,
+        extension: "pdf",
+        contentType: "application/pdf",
+      };
+    }
+  }
+  if (kind === "png") {
+    const pdf = pngToSinglePagePdf(raw);
+    if (pdf) {
+      return {
+        data: pdf,
+        extension: "pdf",
+        contentType: "application/pdf",
+      };
+    }
+    return {
+      data: raw,
+      extension: "png",
+      contentType: "image/png",
+    };
+  }
+  const ct = String(opts.contentType || "").toLowerCase();
+  if (ct.includes("jpeg") || ct.includes("jpg")) {
+    const pdf = jpegToSinglePagePdf(raw);
+    if (pdf) {
+      return {
+        data: pdf,
+        extension: "pdf",
+        contentType: "application/pdf",
+      };
+    }
+  }
+  const ext =
+    opts.documentType === "image" ? "jpg" : ct.includes("pdf") ? "pdf" : "bin";
+  return {
+    data: raw,
+    extension: ext,
+    contentType: opts.contentType || "application/octet-stream",
+  };
+}
+
+async function assertBrokerCanAccessTaskDocument(
+  documentId: number,
+  brokerId: number,
+  brokerRole: string,
+): Promise<RowDataPacket | null> {
+  const hasGlobal = brokerRole === "admin";
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT td.id, td.file_path, td.original_filename, td.filename, td.document_type,
+            t.title AS task_title, tff.field_name, tff.field_label,
+            a.application_number, a.id AS application_id,
+            a.broker_user_id, a.partner_broker_id, c.assigned_broker_id
+     FROM task_documents td
+     INNER JOIN tasks t ON td.task_id = t.id
+     INNER JOIN loan_applications a ON t.application_id = a.id
+     INNER JOIN clients c ON a.client_user_id = c.id
+     LEFT JOIN task_form_fields tff ON tff.id = td.field_id
+     WHERE td.id = ? AND a.tenant_id = ?
+     LIMIT 1`,
+    [documentId, MORTGAGE_TENANT_ID],
+  );
+  const doc = rows[0];
+  if (!doc) return null;
+  if (hasGlobal) return doc;
+  const allowed =
+    Number(doc.assigned_broker_id) === brokerId ||
+    Number(doc.broker_user_id) === brokerId ||
+    Number(doc.partner_broker_id) === brokerId;
+  return allowed ? doc : null;
+}
+
+/**
+ * GET /api/documents/:documentId/download — labeled attachment via CDN proxy
+ */
+const handleDownloadTaskDocument: RequestHandler = async (req, res) => {
+  try {
+    const documentId = parseInt(String(req.params.documentId), 10);
+    const brokerId = (req as any).brokerId as number;
+    const brokerRole = String((req as any).brokerRole || "");
+    if (!Number.isFinite(documentId)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid document id" });
+    }
+    const doc = await assertBrokerCanAccessTaskDocument(
+      documentId,
+      brokerId,
+      brokerRole,
+    );
+    if (!doc) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Document not found" });
+    }
+    const url = resolveCdnFileUrl(String(doc.file_path));
+    if (!url) {
+      return res
+        .status(404)
+        .json({ success: false, error: "File path missing" });
+    }
+    const upstream = await fetch(url);
+    if (!upstream.ok) {
+      return res.status(502).json({
+        success: false,
+        error: `Upstream returned ${upstream.status}`,
+      });
+    }
+    const rawBuf = Buffer.from(await upstream.arrayBuffer());
+    const prepared = prepareDocumentDownloadBytes(rawBuf, {
+      documentType: doc.document_type as string,
+      contentType: upstream.headers.get("content-type"),
+    });
+    if (!prepared) {
+      return res.status(502).json({
+        success: false,
+        error: "Document file is missing or unreadable on storage",
+      });
+    }
+    const label = resolveDocumentDownloadLabel({
+      taskTitle: doc.task_title as string,
+      fieldName: doc.field_name as string,
+      fieldLabel: doc.field_label as string,
+    });
+    const downloadName = buildDocumentDownloadFilename({
+      applicationNumber: doc.application_number as string,
+      label,
+      fieldName: doc.field_name as string,
+      fieldLabel: doc.field_label as string,
+      extension: prepared.extension,
+    });
+    res.setHeader("Content-Type", prepared.contentType);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${downloadName.replace(/"/g, "")}"`,
+    );
+    res.send(prepared.data);
+  } catch (error) {
+    console.error("Error downloading document:", error);
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to download document" });
+  }
+};
+
+/**
+ * POST /api/documents/bulk-download — zip of selected document ids
+ * Body: { document_ids: number[] } OR { application_id: number }
+ */
+const handleBulkDownloadTaskDocuments: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const brokerRole = String((req as any).brokerRole || "");
+    const body = req.body as {
+      document_ids?: number[];
+      application_id?: number;
+    };
+    let ids: number[] = Array.isArray(body.document_ids)
+      ? body.document_ids
+          .map((n) => Number(n))
+          .filter((n) => Number.isFinite(n))
+      : [];
+    if (body.application_id) {
+      const appId = Number(body.application_id);
+      const hasGlobal =
+        brokerRole === "admin";
+      const accessSql = hasGlobal
+        ? `a.id = ? AND a.tenant_id = ?`
+        : `a.id = ? AND a.tenant_id = ? AND (c.assigned_broker_id = ? OR a.broker_user_id = ? OR a.partner_broker_id = ?)`;
+      const accessParams = hasGlobal
+        ? [appId, MORTGAGE_TENANT_ID]
+        : [appId, MORTGAGE_TENANT_ID, brokerId, brokerId, brokerId];
+      const [rows] = await pool.query<RowDataPacket[]>(
+        `SELECT td.id
+         FROM task_documents td
+         INNER JOIN tasks t ON td.task_id = t.id
+         INNER JOIN loan_applications a ON t.application_id = a.id
+         INNER JOIN clients c ON a.client_user_id = c.id
+         WHERE ${accessSql}`,
+        accessParams,
+      );
+      ids = rows.map((r) => Number(r.id));
+    }
+    if (!ids.length) {
+      return res.status(400).json({
+        success: false,
+        error: "No documents selected",
+      });
+    }
+    if (ids.length > 100) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Maximum 100 documents per zip. Select fewer or download in batches.",
+      });
+    }
+
+    const entries: Array<{ name: string; data: Buffer }> = [];
+    let loanLabel = "documents";
+    for (const id of ids) {
+      const doc = await assertBrokerCanAccessTaskDocument(
+        id,
+        brokerId,
+        brokerRole,
+      );
+      if (!doc) continue;
+      const url = resolveCdnFileUrl(String(doc.file_path));
+      if (!url) continue;
+      const upstream = await fetch(url);
+      if (!upstream.ok) continue;
+      const rawBuf = Buffer.from(await upstream.arrayBuffer());
+      const prepared = prepareDocumentDownloadBytes(rawBuf, {
+        documentType: doc.document_type as string,
+        contentType: upstream.headers.get("content-type"),
+      });
+      if (!prepared) continue;
+      const label = resolveDocumentDownloadLabel({
+        taskTitle: doc.task_title as string,
+        fieldName: doc.field_name as string,
+        fieldLabel: doc.field_label as string,
+      });
+      const name = buildDocumentDownloadFilename({
+        applicationNumber: doc.application_number as string,
+        label,
+        fieldName: doc.field_name as string,
+        fieldLabel: doc.field_label as string,
+        extension: prepared.extension,
+      });
+      if (doc.application_number) {
+        loanLabel = String(doc.application_number).replace(/[^\w.-]+/g, "_");
+      }
+      // Avoid duplicate names inside the zip
+      const uniqueName = entries.some((e) => e.name === name)
+        ? name.replace(/(\.[^.]+)$/, `_${id}$1`)
+        : name;
+      entries.push({ name: uniqueName, data: prepared.data });
+    }
+    if (!entries.length) {
+      return res.status(404).json({
+        success: false,
+        error: "No accessible documents could be downloaded",
+      });
+    }
+    const zip = buildStoreZip(entries);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${loanLabel}_documents.zip"`,
+    );
+    res.send(zip);
+  } catch (error) {
+    console.error("Error bulk-downloading documents:", error);
+    res.status(500).json({ success: false, error: "Failed to build zip" });
+  }
+};
+
+async function assertCalculatorClientAccess(
+  clientId: number,
+  brokerId: number,
+  brokerRole: string,
+): Promise<
+  | { ok: true; client: RowDataPacket }
+  | { ok: false; status: number; error: string }
+> {
+  const [[client]] = await pool.query<RowDataPacket[]>(
+    `SELECT id, assigned_broker_id, list_visibility, first_name, last_name, email, phone
+       FROM clients
+      WHERE id = ? AND tenant_id = ?
+      LIMIT 1`,
+    [clientId, MORTGAGE_TENANT_ID],
+  );
+  if (!client) {
+    return { ok: false, status: 404, error: "Client not found" };
+  }
+  if (brokerRole === "admin") {
+    return { ok: true, client };
+  }
+  const crmFlags = await getPerOwnerCrmFlags(
+    pool,
+    MORTGAGE_TENANT_ID,
+    brokerId,
+  );
+  if (crmFlags.activeForBroker) {
+    if (
+      Number(client.assigned_broker_id) !== brokerId ||
+      client.list_visibility !== "active"
+    ) {
+      return { ok: false, status: 403, error: "Access denied" };
+    }
+    return { ok: true, client };
+  }
+  if (Number(client.assigned_broker_id) === brokerId) {
+    return { ok: true, client };
+  }
+  const [[access]] = await pool.query<RowDataPacket[]>(
+    `SELECT 1 FROM loan_applications
+      WHERE client_user_id = ? AND tenant_id = ?
+        AND (broker_user_id = ? OR partner_broker_id = ?)
+      LIMIT 1`,
+    [clientId, MORTGAGE_TENANT_ID, brokerId, brokerId],
+  );
+  if (!access) {
+    return { ok: false, status: 403, error: "Access denied" };
+  }
+  return { ok: true, client };
+}
+
+const handleGetClientOpenLoans: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const brokerRole = (req as any).brokerRole as string;
+    const clientId = parseInt(String(req.params.clientId), 10);
+    if (!Number.isFinite(clientId)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid client ID" });
+    }
+
+    const clientAccess = await assertCalculatorClientAccess(
+      clientId,
+      brokerId,
+      brokerRole,
+    );
+    if (clientAccess.ok === false) {
+      return res
+        .status(clientAccess.status)
+        .json({ success: false, error: clientAccess.error });
+    }
+
+    const [loans] = await pool.query<RowDataPacket[]>(
+      `SELECT la.id, la.application_number, la.loan_type, la.loan_amount,
+              la.property_value, la.status, la.interest_rate, la.created_at,
+              la.broker_user_id, la.partner_broker_id
+         FROM loan_applications la
+        WHERE la.client_user_id = ? AND la.tenant_id = ?
+          AND la.status NOT IN ('draft', 'loan_funded')
+        ORDER BY la.created_at DESC
+        LIMIT 50`,
+      [clientId, MORTGAGE_TENANT_ID],
+    );
+
+    // Non-PO: only loans they can access
+    const filtered = [];
+    for (const loan of loans) {
+      if (
+        brokerRole === "admin" ||
+        Number(loan.broker_user_id) === brokerId ||
+        Number(loan.partner_broker_id) === brokerId ||
+        Number(clientAccess.client.assigned_broker_id) === brokerId
+      ) {
+        filtered.push(loan);
+      }
+    }
+
+    return res.json({
+      success: true,
+      loans: filtered.map((la) => ({
+        id: la.id as number,
+        application_number: la.application_number as string,
+        loan_type: la.loan_type as string,
+        loan_amount: Number(la.loan_amount),
+        property_value:
+          la.property_value != null ? Number(la.property_value) : null,
+        status: la.status as string,
+        interest_rate:
+          la.interest_rate != null ? Number(la.interest_rate) : null,
+        created_at: la.created_at,
+      })),
+    });
+  } catch (error) {
+    console.error("[calculator-saves] open-loans error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to load client open loans",
+    });
+  }
+};
+
+const handleReassignClient: RequestHandler = async (req, res) => {
+  try {
+    const brokerRole = (req as any).brokerRole;
+    const requestingBrokerId = (req as any).brokerId as number;
+
+    const { clientId } = req.params;
+    const { broker_id } = req.body as { broker_id: number };
+
+    if (!broker_id || typeof broker_id !== "number") {
+      return res
+        .status(400)
+        .json({ success: false, error: "broker_id is required" });
+    }
+
+    // Non-admins can only transfer a client to themselves
+    if (brokerRole !== "admin" && broker_id !== requestingBrokerId) {
+      return res.status(403).json({
+        success: false,
+        error: "You can only transfer clients to your own account",
+      });
+    }
+
+    // Verify client exists in this tenant
+    const [[client]] = await pool.query<any[]>(
+      "SELECT id, first_name, last_name FROM clients WHERE id = ? AND tenant_id = ? LIMIT 1",
+      [clientId, MORTGAGE_TENANT_ID],
+    );
+    if (!client) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Client not found" });
+    }
+
+    // Verify target broker exists in this tenant
+    const [[broker]] = await pool.query<any[]>(
+      "SELECT id, first_name, last_name FROM brokers WHERE id = ? AND tenant_id = ? LIMIT 1",
+      [broker_id, MORTGAGE_TENANT_ID],
+    );
+    if (!broker) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Broker not found" });
+    }
+
+    await pool.query(
+      "UPDATE clients SET assigned_broker_id = ?, updated_at = NOW() WHERE id = ? AND tenant_id = ?",
+      [broker_id, clientId, MORTGAGE_TENANT_ID],
+    );
+
+    return res.json({
+      success: true,
+      message: `${client.first_name} ${client.last_name} reassigned to ${broker.first_name} ${broker.last_name}`,
+    });
+  } catch (err) {
+    console.error("[handleReassignClient] Error:", err);
+    return res.status(500).json({ success: false, error: "Internal error" });
+  }
+};
+
+
+// ===== BILLING & QUOTA — inlined for Vercel serverless, from real-state =====
+// =====================================================
+// Billing & quota (inlined for Vercel serverless — no local imports)
+// =====================================================
+
+type UsageDimension =
+  | "sms_segments"
+  | "voice_minutes"
+  | "email_sends"
+  | "scheduler_bookings"
+  | "mortgi_ai_tokens";
+
+const COGS_SMS = 0.012;
+const COGS_VOICE = 0.011;
+const COGS_EMAIL = 0.0004;
+const COGS_MORTGI = 0.0000007;
+const STRIPE_FEE_PCT = 0.029;
+const STRIPE_FEE_FIXED = 0.3;
+
+function variableCogsUsd(dimension: UsageDimension, units: number): number {
+  switch (dimension) {
+    case "sms_segments":
+      return units * COGS_SMS;
+    case "voice_minutes":
+      return units * COGS_VOICE;
+    case "email_sends":
+      return units * COGS_EMAIL;
+    case "scheduler_bookings":
+      return 0;
+    case "mortgi_ai_tokens":
+      return units * COGS_MORTGI;
+    default:
+      return 0;
+  }
+}
+
+function stripeFeeUsd(amountUsd: number): number {
+  if (amountUsd <= 0) return 0;
+  return amountUsd * STRIPE_FEE_PCT + STRIPE_FEE_FIXED;
+}
+
+type TopUpTier = {
+  tierId: string;
+  units: number;
+  amountCents: number;
+  label: string;
+  chipLabel: string;
+};
+
+type TopUpChannelMeta = {
+  dimension: UsageDimension;
+  title: string;
+  unitLabel: string;
+  unitLabelShort: string;
+};
+
+const TOP_UP_CHANNELS: TopUpChannelMeta[] = [
+  {
+    dimension: "sms_segments",
+    title: "SMS",
+    unitLabel: "SMS segments",
+    unitLabelShort: "segments",
+  },
+  {
+    dimension: "voice_minutes",
+    title: "Voice",
+    unitLabel: "voice minutes",
+    unitLabelShort: "minutes",
+  },
+  {
+    dimension: "email_sends",
+    title: "Email",
+    unitLabel: "emails",
+    unitLabelShort: "emails",
+  },
+  {
+    dimension: "scheduler_bookings",
+    title: "Scheduler",
+    unitLabel: "bookings",
+    unitLabelShort: "bookings",
+  },
+  {
+    dimension: "mortgi_ai_tokens",
+    title: "Mortgi AI",
+    unitLabel: "AI tokens",
+    unitLabelShort: "tokens",
+  },
+];
+
+/** Tiered retail — volume steps with improved margins vs flat $18/1k SMS. */
+const TOP_UP_TIERS_BY_DIMENSION: Record<UsageDimension, TopUpTier[]> = {
+  sms_segments: [
+    {
+      tierId: "sms_1k",
+      units: 1_000,
+      amountCents: 2_000,
+      label: "SMS +1,000 segments",
+      chipLabel: "1k",
+    },
+    {
+      tierId: "sms_2_5k",
+      units: 2_500,
+      amountCents: 4_800,
+      label: "SMS +2,500 segments",
+      chipLabel: "2.5k",
+    },
+    {
+      tierId: "sms_5k",
+      units: 5_000,
+      amountCents: 9_000,
+      label: "SMS +5,000 segments",
+      chipLabel: "5k",
+    },
+    {
+      tierId: "sms_10k",
+      units: 10_000,
+      amountCents: 17_000,
+      label: "SMS +10,000 segments",
+      chipLabel: "10k",
+    },
+  ],
+  voice_minutes: [
+    {
+      tierId: "voice_500",
+      units: 500,
+      amountCents: 1_200,
+      label: "Voice +500 minutes",
+      chipLabel: "500",
+    },
+    {
+      tierId: "voice_1k",
+      units: 1_000,
+      amountCents: 2_000,
+      label: "Voice +1,000 minutes",
+      chipLabel: "1k",
+    },
+    {
+      tierId: "voice_2_5k",
+      units: 2_500,
+      amountCents: 4_800,
+      label: "Voice +2,500 minutes",
+      chipLabel: "2.5k",
+    },
+    {
+      tierId: "voice_5k",
+      units: 5_000,
+      amountCents: 9_000,
+      label: "Voice +5,000 minutes",
+      chipLabel: "5k",
+    },
+  ],
+  email_sends: [
+    {
+      tierId: "email_1k",
+      units: 1_000,
+      amountCents: 600,
+      label: "Email +1,000 sends",
+      chipLabel: "1k",
+    },
+    {
+      tierId: "email_5k",
+      units: 5_000,
+      amountCents: 2_500,
+      label: "Email +5,000 sends",
+      chipLabel: "5k",
+    },
+    {
+      tierId: "email_10k",
+      units: 10_000,
+      amountCents: 4_500,
+      label: "Email +10,000 sends",
+      chipLabel: "10k",
+    },
+  ],
+  scheduler_bookings: [
+    {
+      tierId: "scheduler_25",
+      units: 25,
+      amountCents: 700,
+      label: "Scheduler +25 bookings",
+      chipLabel: "25",
+    },
+    {
+      tierId: "scheduler_50",
+      units: 50,
+      amountCents: 1_200,
+      label: "Scheduler +50 bookings",
+      chipLabel: "50",
+    },
+    {
+      tierId: "scheduler_100",
+      units: 100,
+      amountCents: 2_000,
+      label: "Scheduler +100 bookings",
+      chipLabel: "100",
+    },
+  ],
+  mortgi_ai_tokens: [
+    {
+      tierId: "mortgi_100k",
+      units: 100_000,
+      amountCents: 600,
+      label: "Mortgi +100,000 tokens",
+      chipLabel: "100k",
+    },
+    {
+      tierId: "mortgi_250k",
+      units: 250_000,
+      amountCents: 1_400,
+      label: "Mortgi +250,000 tokens",
+      chipLabel: "250k",
+    },
+    {
+      tierId: "mortgi_500k",
+      units: 500_000,
+      amountCents: 2_500,
+      label: "Mortgi +500,000 tokens",
+      chipLabel: "500k",
+    },
+  ],
+};
+
+/** Legacy deep-link pack ids → dimension + tier index. */
+const LEGACY_TOP_UP_PACK_IDS: Record<
+  string,
+  { dimension: UsageDimension; tierIndex: number }
+> = {
+  sms_1k: { dimension: "sms_segments", tierIndex: 0 },
+  voice_1k: { dimension: "voice_minutes", tierIndex: 1 },
+  email_1k: { dimension: "email_sends", tierIndex: 0 },
+  scheduler_50: { dimension: "scheduler_bookings", tierIndex: 1 },
+  mortgi_100k: { dimension: "mortgi_ai_tokens", tierIndex: 0 },
+};
+
+type TopUpQuote = {
+  quoteKey: string;
+  tierId: string;
+  dimension: UsageDimension;
+  tierIndex: number;
+  units: number;
+  amountCents: number;
+  label: string;
+};
+
+type TopUpQuoteEconomics = {
+  variableCogsUsd: number;
+  stripeFeeUsd: number;
+  netMarginUsd: number;
+  marginPct: number;
+};
+
+function getTopUpTiers(dimension: UsageDimension): TopUpTier[] {
+  return TOP_UP_TIERS_BY_DIMENSION[dimension] ?? [];
+}
+
+function isUsageDimension(value: string): value is UsageDimension {
+  return (
+    value === "sms_segments" ||
+    value === "voice_minutes" ||
+    value === "email_sends" ||
+    value === "scheduler_bookings" ||
+    value === "mortgi_ai_tokens"
+  );
+}
+
+function computeTopUpQuote(
+  dimension: UsageDimension,
+  tierIndex: number,
+): TopUpQuote | null {
+  const tiers = getTopUpTiers(dimension);
+  const tier = tiers[tierIndex];
+  if (!tier) return null;
+  return {
+    quoteKey: `${dimension}:${tier.units}`,
+    tierId: tier.tierId,
+    dimension,
+    tierIndex,
+    units: tier.units,
+    amountCents: tier.amountCents,
+    label: tier.label,
+  };
+}
+
+function resolveLegacyTopUpPack(
+  packId: string,
+): { dimension: UsageDimension; tierIndex: number } | null {
+  const direct = LEGACY_TOP_UP_PACK_IDS[packId];
+  if (direct) return direct;
+
+  for (const [dimension, tiers] of Object.entries(
+    TOP_UP_TIERS_BY_DIMENSION,
+  ) as [UsageDimension, TopUpTier[]][]) {
+    const idx = tiers.findIndex((t) => t.tierId === packId);
+    if (idx >= 0) return { dimension, tierIndex: idx };
+  }
+  return null;
+}
+
+function computeTopUpQuoteEconomics(quote: TopUpQuote): TopUpQuoteEconomics {
+  const retailUsd = quote.amountCents / 100;
+  const variable = variableCogsUsd(quote.dimension, quote.units);
+  const stripe = stripeFeeUsd(retailUsd);
+  const netMarginUsd = retailUsd - variable - stripe;
+  const marginPct =
+    retailUsd > 0 ? Math.round((netMarginUsd / retailUsd) * 100) : 0;
+  return {
+    variableCogsUsd: variable,
+    stripeFeeUsd: stripe,
+    netMarginUsd,
+    marginPct,
+  };
+}
+
+/** Flatten all tiers for legacy `/packs` and pack_id lookups. */
+function buildLegacyTopUpPackCatalog(): Record<
+  string,
+  {
+    dimension: UsageDimension;
+    units: number;
+    label: string;
+    amountCents: number;
+  }
+> {
+  const catalog: Record<
+    string,
+    {
+      dimension: UsageDimension;
+      units: number;
+      label: string;
+      amountCents: number;
+    }
+  > = {};
+  for (const [dimension, tiers] of Object.entries(
+    TOP_UP_TIERS_BY_DIMENSION,
+  ) as [UsageDimension, TopUpTier[]][]) {
+    for (const tier of tiers) {
+      catalog[tier.tierId] = {
+        dimension,
+        units: tier.units,
+        label: tier.label,
+        amountCents: tier.amountCents,
+      };
+    }
+  }
+  return catalog;
+}
+
+const TOP_UP_PACK_DEFINITIONS = buildLegacyTopUpPackCatalog();
+
+type TopUpPackId = string;
+
+function suggestTopUpDimensionFromLegacyPack(packId: string): UsageDimension {
+  return resolveLegacyTopUpPack(packId)?.dimension ?? "sms_segments";
+}
+
+/**
+ * Platform-owner budget & expenditure math — aligned with live .env services.
+ * @see docs/BILLING_AND_QUOTA_PLAN.md · docs/INFRASTRUCTURE_COST_AUDIT.md
+ */
+
+/** Fixed infra line items (Vercel, Ably, TiDB, Resend, CDN/IMAP, 10DLC, Zoom API). */
+const FIXED_INFRA_BREAKDOWN = {
+  vercelUsd: 65,
+  ablyUsd: 63,
+  tidbUsd: 38,
+  resendUsd: 20,
+  /** disruptinglabs CDN + Hostgator IMAP inbound */
+  cdnHostgatorImapUsd: 15,
+  /** US A2P 10DLC campaign amortized */
+  tenDlcAmortizedUsd: 10,
+  /** Single Zoom API / central scheduler license */
+  zoomApiLicenseUsd: 16,
+} as const;
+
+type FixedInfraBreakdown = typeof FIXED_INFRA_BREAKDOWN;
+
+function sumFixedInfraBreakdown(
+  lines: FixedInfraBreakdown = FIXED_INFRA_BREAKDOWN,
+): number {
+  return (
+    lines.vercelUsd +
+    lines.ablyUsd +
+    lines.tidbUsd +
+    lines.resendUsd +
+    lines.cdnHostgatorImapUsd +
+    lines.tenDlcAmortizedUsd +
+    lines.zoomApiLicenseUsd
+  );
+}
+
+const BILLING_PLAN_DEFAULTS = {
+  platformFeeUsd: 350,
+  includedSmsSegments: 1000,
+  includedVoiceMinutes: 1500,
+  includedEmailSends: 5000,
+  includedSchedulerBookings: 100,
+  includedMortgiAiTokens: 500_000,
+  overageSmsPer1kUsd: 20,
+  overageVoicePer1kUsd: 20,
+  overageEmailPer1kUsd: 6,
+  overageSchedulerPer50Usd: 12,
+  overageMortgiPer100kTokensUsd: 6,
+  /** Twilio US long-code all-in (base + carrier) */
+  cogsSmsPerSegmentUsd: 0.012,
+  /** Twilio US voice blended */
+  cogsVoicePerMinuteUsd: 0.011,
+  /** Resend Pro marginal per send (plan fee in fixed infra) */
+  cogsEmailPerSendUsd: 0.0004,
+  /** Groq llama-3.3-70b blended */
+  cogsMortgiPerTokenUsd: 0.0000007,
+  /** WhatsApp/MMS often cost more — planning uplift when metered as SMS */
+  cogsWhatsappPerMessageUsd: 0.005,
+  cogsMmsPerMessageUsd: 0.022,
+  cogsTwilioNumberPerMonthUsd: 1.15,
+  /** Stripe US card-not-present */
+  cogsStripeFeePct: 0.029,
+  cogsStripeFeeFixedUsd: 0.3,
+  fixedInfraBreakdown: FIXED_INFRA_BREAKDOWN,
+  /** Sum of FIXED_INFRA_BREAKDOWN — replaces opaque $340 lump */
+  fixedInfraCogsUsd: sumFixedInfraBreakdown(),
+  twilioNumberAddonUsd: 9,
+  /** Retail per broker Zoom seat (annual $13.33/mo) */
+  zoomPerBrokerUsd: 13.33,
+  /** COGS per broker Zoom seat (pass-through) */
+  zoomPerBrokerCogsUsd: 13.33,
+} as const;
+
+type BillingPlanConfig = typeof BILLING_PLAN_DEFAULTS;
+
+type TopUpPackEconomics = {
+  packId: string;
+  retailUsd: number;
+  variableCogsUsd: number;
+  stripeFeeUsd: number;
+  netMarginUsd: number;
+  marginPct: number;
+};
+
+function computeTopUpPackEconomics(
+  packId: string,
+  plan: BillingPlanConfig = BILLING_PLAN_DEFAULTS,
+): TopUpPackEconomics {
+  const pack = TOP_UP_PACK_DEFINITIONS[packId];
+  if (!pack) {
+    return {
+      packId,
+      retailUsd: 0,
+      variableCogsUsd: 0,
+      stripeFeeUsd: 0,
+      netMarginUsd: 0,
+      marginPct: 0,
+    };
+  }
+  const retailUsd = pack.amountCents / 100;
+  const variableCogsUsd = computePackVariableCogsUsd(
+    pack.dimension,
+    pack.units,
+    plan,
+  );
+  const stripeFeeUsd = computeStripeProcessingFeeUsd(retailUsd, plan);
+  const netMarginUsd = retailUsd - variableCogsUsd - stripeFeeUsd;
+  const marginPct =
+    retailUsd > 0 ? Math.round((netMarginUsd / retailUsd) * 100) : 0;
+  return {
+    packId,
+    retailUsd,
+    variableCogsUsd,
+    stripeFeeUsd,
+    netMarginUsd,
+    marginPct,
+  };
+}
+
+function computeAllTopUpPackEconomics(
+  plan: BillingPlanConfig = BILLING_PLAN_DEFAULTS,
+): TopUpPackEconomics[] {
+  return Object.keys(TOP_UP_PACK_DEFINITIONS).map((id) =>
+    computeTopUpPackEconomics(id, plan),
+  );
+}
+
+function computeStripeProcessingFeeUsd(
+  amountUsd: number,
+  plan: BillingPlanConfig = BILLING_PLAN_DEFAULTS,
+): number {
+  if (amountUsd <= 0) return 0;
+  return amountUsd * plan.cogsStripeFeePct + plan.cogsStripeFeeFixedUsd;
+}
+
+function computePackVariableCogsUsd(
+  dimension: UsageDimension,
+  units: number,
+  plan: BillingPlanConfig = BILLING_PLAN_DEFAULTS,
+): number {
+  switch (dimension) {
+    case "sms_segments":
+      return units * plan.cogsSmsPerSegmentUsd;
+    case "voice_minutes":
+      return units * plan.cogsVoicePerMinuteUsd;
+    case "email_sends":
+      return units * plan.cogsEmailPerSendUsd;
+    case "scheduler_bookings":
+      return 0;
+    case "mortgi_ai_tokens":
+      return units * plan.cogsMortgiPerTokenUsd;
+    default:
+      return 0;
+  }
+}
+
+type BudgetForecastInputs = {
+  convoSmsPerMonth: number;
+  convoEmailPerMonth: number;
+  voiceMinutesPerMonth: number;
+  schedulerBookingsPerMonth: number;
+  blastsPerMonth: number;
+  recipientsPerBlast: number;
+  smsSegmentsPerRecipient: number;
+  emailPerBlast: boolean;
+  extraTwilioNumbers: number;
+  zoomBrokerLicenses: number;
+  mortgiAiTokensPerMonth: number;
+};
+
+type UsageSnapshot = {
+  periodStart: string;
+  periodEnd: string;
+  tenantId: number;
+  totalSmsSegments: number;
+  broadcastSmsSegments: number;
+  convoSmsSegments: number;
+  totalEmailSends: number;
+  broadcastEmailSends: number;
+  callsLogged: number;
+  voiceMinutesRecorded: number;
+  voiceMinutesEstimated?: number;
+  schedulerBookings: number;
+  mortgiAiTokens: number;
+  mortgiSessions: number;
+  mortgiUserMessages: number;
+};
+
+const TENANT_1_ACTUAL_30D: UsageSnapshot = {
+  periodStart: "2026-05-06",
+  periodEnd: "2026-06-05",
+  tenantId: 1,
+  totalSmsSegments: 831,
+  broadcastSmsSegments: 418,
+  convoSmsSegments: 413,
+  totalEmailSends: 1037,
+  broadcastEmailSends: 0,
+  callsLogged: 289,
+  voiceMinutesRecorded: 158,
+  voiceMinutesEstimated: 694,
+  schedulerBookings: 7,
+  mortgiAiTokens: 802,
+  mortgiSessions: 1,
+  mortgiUserMessages: 1,
+};
+
+type BroadcastEconomics = {
+  blastsPerMonth: number;
+  recipientsPerBlast: number;
+  segmentsPerRecipient: number;
+  smsSegments: number;
+  emailSends: number;
+  cogsUsd: number;
+  emailCogsUsd: number;
+  costPerBlastUsd: number;
+  shareOfSmsPct: number;
+  shareOfVariableCogsPct: number;
+  pctOfIncludedSms: number;
+  pctOfIncludedEmail: number;
+  smsOverageAttributed: number;
+  overageRetailAttributedUsd: number;
+};
+
+function computeBroadcastEconomics(
+  params: {
+    blastsPerMonth: number;
+    recipientsPerBlast: number;
+    segmentsPerRecipient: number;
+    emailPerBlast: boolean;
+    totalSmsSegments: number;
+    totalEmailSends: number;
+    convoSmsSegments: number;
+    convoEmailSends: number;
+    overSms: number;
+  },
+  plan: BillingPlanConfig = BILLING_PLAN_DEFAULTS,
+): BroadcastEconomics {
+  const smsSegments =
+    params.blastsPerMonth *
+    params.recipientsPerBlast *
+    params.segmentsPerRecipient;
+  const emailSends = params.emailPerBlast
+    ? params.blastsPerMonth * params.recipientsPerBlast
+    : 0;
+
+  const cogsUsd = smsSegments * plan.cogsSmsPerSegmentUsd;
+  const emailCogsUsd = emailSends * plan.cogsEmailPerSendUsd;
+  const variableCogs =
+    params.totalSmsSegments * plan.cogsSmsPerSegmentUsd +
+    params.totalEmailSends * plan.cogsEmailPerSendUsd;
+  const broadcastVariable = cogsUsd + emailCogsUsd;
+
+  const costPerBlastUsd =
+    params.blastsPerMonth > 0
+      ? (cogsUsd + emailCogsUsd) / params.blastsPerMonth
+      : 0;
+
+  const smsOverageAttributed = Math.min(smsSegments, params.overSms);
+  const overageRetailAttributedUsd =
+    ceilDiv(smsOverageAttributed, 1000) * plan.overageSmsPer1kUsd;
+
+  return {
+    blastsPerMonth: params.blastsPerMonth,
+    recipientsPerBlast: params.recipientsPerBlast,
+    segmentsPerRecipient: params.segmentsPerRecipient,
+    smsSegments,
+    emailSends,
+    cogsUsd,
+    emailCogsUsd,
+    costPerBlastUsd,
+    shareOfSmsPct:
+      params.totalSmsSegments > 0
+        ? Math.round((smsSegments / params.totalSmsSegments) * 100)
+        : 0,
+    shareOfVariableCogsPct:
+      variableCogs > 0
+        ? Math.round((broadcastVariable / variableCogs) * 100)
+        : 0,
+    pctOfIncludedSms: pct(smsSegments, plan.includedSmsSegments),
+    pctOfIncludedEmail: pct(emailSends, plan.includedEmailSends),
+    smsOverageAttributed,
+    overageRetailAttributedUsd,
+  };
+}
+
+type BudgetBreakdown = {
+  blastSmsSegments: number;
+  blastEmailSends: number;
+  broadcast: BroadcastEconomics;
+  totalSmsSegments: number;
+  totalEmailSends: number;
+  totalVoiceMinutes: number;
+  totalSchedulerBookings: number;
+  totalMortgiAiTokens: number;
+  overSms: number;
+  overVoice: number;
+  overEmail: number;
+  overScheduler: number;
+  overMortgiAiTokens: number;
+  mortgiCogsUsd: number;
+  overageRetailUsd: number;
+  platformFeeUsd: number;
+  addonsUsd: number;
+  ownerTotalUsd: number;
+  variableCogsUsd: number;
+  fixedInfraCogsUsd: number;
+  fixedInfraBreakdown: FixedInfraBreakdown;
+  zoomBrokerCogsUsd: number;
+  estimatedCogsUsd: number;
+  stripeFeesUsd: number;
+  grossMarginUsd: number;
+  estimatedMarginUsd: number;
+  pctSms: number;
+  pctVoice: number;
+  pctEmail: number;
+  pctScheduler: number;
+  pctMortgiAiTokens: number;
+};
+
+type ExpenditureBreakdown = {
+  usage: UsageSnapshot;
+  broadcast: BroadcastEconomics;
+  voiceMinutesBilled: number;
+  variableUsageCogsUsd: number;
+  fixedInfraCogsUsd: number;
+  fixedInfraBreakdown: FixedInfraBreakdown;
+  zoomBrokerCogsUsd: number;
+  totalPlatformCogsUsd: number;
+  overageRetailUsd: number;
+  platformFeeUsd: number;
+  addonsUsd: number;
+  ownerTotalUsd: number;
+  stripeFeesUsd: number;
+  grossMarginUsd: number;
+  /** Net margin after vendor COGS + Stripe processing */
+  estimatedMarginUsd: number;
+  pctSms: number;
+  pctVoice: number;
+  pctEmail: number;
+  pctScheduler: number;
+  pctMortgiAiTokens: number;
+  mortgiCogsUsd: number;
+};
+
+function ceilDiv(a: number, b: number): number {
+  return b <= 0 ? 0 : Math.ceil(a / b);
+}
+
+function pct(used: number, included: number): number {
+  return included > 0 ? Math.min(100, Math.round((used / included) * 100)) : 0;
+}
+
+function computeRevenueStripeFees(
+  platformFeeUsd: number,
+  overageRetailUsd: number,
+  addonsUsd: number,
+  plan: BillingPlanConfig = BILLING_PLAN_DEFAULTS,
+): number {
+  let fees = computeStripeProcessingFeeUsd(platformFeeUsd, plan);
+  if (overageRetailUsd > 0) {
+    fees += computeStripeProcessingFeeUsd(overageRetailUsd, plan);
+  }
+  if (addonsUsd > 0) {
+    fees += computeStripeProcessingFeeUsd(addonsUsd, plan);
+  }
+  return fees;
+}
+
+function computeBudgetForecast(
+  inputs: BudgetForecastInputs,
+  plan: BillingPlanConfig = BILLING_PLAN_DEFAULTS,
+): BudgetBreakdown {
+  const blastSmsSegments =
+    inputs.blastsPerMonth *
+    inputs.recipientsPerBlast *
+    inputs.smsSegmentsPerRecipient;
+  const blastEmailSends = inputs.emailPerBlast
+    ? inputs.blastsPerMonth * inputs.recipientsPerBlast
+    : 0;
+
+  const totalSmsSegments = inputs.convoSmsPerMonth + blastSmsSegments;
+  const totalEmailSends = inputs.convoEmailPerMonth + blastEmailSends;
+  const totalVoiceMinutes = inputs.voiceMinutesPerMonth;
+  const totalSchedulerBookings = inputs.schedulerBookingsPerMonth;
+
+  const overSms = Math.max(0, totalSmsSegments - plan.includedSmsSegments);
+  const overVoice = Math.max(0, totalVoiceMinutes - plan.includedVoiceMinutes);
+  const overEmail = Math.max(0, totalEmailSends - plan.includedEmailSends);
+  const overScheduler = Math.max(
+    0,
+    totalSchedulerBookings - plan.includedSchedulerBookings,
+  );
+  const totalMortgiAiTokens = inputs.mortgiAiTokensPerMonth;
+  const overMortgiAiTokens = Math.max(
+    0,
+    totalMortgiAiTokens - plan.includedMortgiAiTokens,
+  );
+
+  const overageRetailUsd =
+    ceilDiv(overSms, 1000) * plan.overageSmsPer1kUsd +
+    ceilDiv(overVoice, 1000) * plan.overageVoicePer1kUsd +
+    ceilDiv(overEmail, 1000) * plan.overageEmailPer1kUsd +
+    ceilDiv(overScheduler, 50) * plan.overageSchedulerPer50Usd +
+    ceilDiv(overMortgiAiTokens, 100_000) * plan.overageMortgiPer100kTokensUsd;
+
+  const platformFeeUsd = plan.platformFeeUsd;
+  const addonsUsd =
+    inputs.extraTwilioNumbers * plan.twilioNumberAddonUsd +
+    inputs.zoomBrokerLicenses * plan.zoomPerBrokerUsd;
+
+  const ownerTotalUsd = platformFeeUsd + overageRetailUsd + addonsUsd;
+
+  const mortgiCogsUsd = totalMortgiAiTokens * plan.cogsMortgiPerTokenUsd;
+  const variableCogsUsd =
+    totalSmsSegments * plan.cogsSmsPerSegmentUsd +
+    totalVoiceMinutes * plan.cogsVoicePerMinuteUsd +
+    totalEmailSends * plan.cogsEmailPerSendUsd +
+    mortgiCogsUsd +
+    inputs.extraTwilioNumbers * plan.cogsTwilioNumberPerMonthUsd;
+
+  const fixedInfraCogsUsd = sumFixedInfraBreakdown(plan.fixedInfraBreakdown);
+  const zoomBrokerCogsUsd =
+    inputs.zoomBrokerLicenses * plan.zoomPerBrokerCogsUsd;
+  const estimatedCogsUsd =
+    fixedInfraCogsUsd + variableCogsUsd + zoomBrokerCogsUsd;
+
+  const stripeFeesUsd = computeRevenueStripeFees(
+    platformFeeUsd,
+    overageRetailUsd,
+    addonsUsd,
+    plan,
+  );
+  const grossMarginUsd = ownerTotalUsd - estimatedCogsUsd;
+  const estimatedMarginUsd = grossMarginUsd - stripeFeesUsd;
+
+  const broadcast = computeBroadcastEconomics(
+    {
+      blastsPerMonth: inputs.blastsPerMonth,
+      recipientsPerBlast: inputs.recipientsPerBlast,
+      segmentsPerRecipient: inputs.smsSegmentsPerRecipient,
+      emailPerBlast: inputs.emailPerBlast,
+      totalSmsSegments,
+      totalEmailSends,
+      convoSmsSegments: inputs.convoSmsPerMonth,
+      convoEmailSends: inputs.convoEmailPerMonth,
+      overSms,
+    },
+    plan,
+  );
+
+  return {
+    blastSmsSegments,
+    blastEmailSends,
+    broadcast,
+    totalSmsSegments,
+    totalEmailSends,
+    totalVoiceMinutes,
+    totalSchedulerBookings,
+    totalMortgiAiTokens,
+    overSms,
+    overVoice,
+    overEmail,
+    overScheduler,
+    overMortgiAiTokens,
+    mortgiCogsUsd,
+    overageRetailUsd,
+    platformFeeUsd,
+    addonsUsd,
+    ownerTotalUsd,
+    variableCogsUsd,
+    fixedInfraCogsUsd,
+    fixedInfraBreakdown: plan.fixedInfraBreakdown,
+    zoomBrokerCogsUsd,
+    estimatedCogsUsd,
+    stripeFeesUsd,
+    grossMarginUsd,
+    estimatedMarginUsd,
+    pctSms: pct(totalSmsSegments, plan.includedSmsSegments),
+    pctVoice: pct(totalVoiceMinutes, plan.includedVoiceMinutes),
+    pctEmail: pct(totalEmailSends, plan.includedEmailSends),
+    pctScheduler: pct(totalSchedulerBookings, plan.includedSchedulerBookings),
+    pctMortgiAiTokens: pct(totalMortgiAiTokens, plan.includedMortgiAiTokens),
+  };
+}
+
+type ExpenditureOptions = {
+  extraTwilioNumbers?: number;
+  /** Extra broker Zoom seats beyond the central API license in fixed infra */
+  zoomBrokerLicenses?: number;
+  preferEstimatedVoiceMinutes?: boolean;
+};
+
+function computeActualExpenditure(
+  usage: UsageSnapshot,
+  options: ExpenditureOptions = {},
+  plan: BillingPlanConfig = BILLING_PLAN_DEFAULTS,
+): ExpenditureBreakdown {
+  const extraTwilioNumbers = options.extraTwilioNumbers ?? 0;
+  const zoomBrokerLicenses = options.zoomBrokerLicenses ?? 0;
+
+  const voiceMinutesBilled =
+    options.preferEstimatedVoiceMinutes && usage.voiceMinutesEstimated != null
+      ? usage.voiceMinutesEstimated
+      : Math.max(usage.voiceMinutesRecorded, usage.voiceMinutesEstimated ?? 0);
+
+  const mortgiCogsUsd = usage.mortgiAiTokens * plan.cogsMortgiPerTokenUsd;
+  const variableUsageCogsUsd =
+    usage.totalSmsSegments * plan.cogsSmsPerSegmentUsd +
+    voiceMinutesBilled * plan.cogsVoicePerMinuteUsd +
+    usage.totalEmailSends * plan.cogsEmailPerSendUsd +
+    mortgiCogsUsd +
+    extraTwilioNumbers * plan.cogsTwilioNumberPerMonthUsd;
+
+  const fixedInfraCogsUsd = sumFixedInfraBreakdown(plan.fixedInfraBreakdown);
+  const zoomBrokerCogsUsd = zoomBrokerLicenses * plan.zoomPerBrokerCogsUsd;
+  const totalPlatformCogsUsd =
+    fixedInfraCogsUsd + variableUsageCogsUsd + zoomBrokerCogsUsd;
+
+  const forecast = computeBudgetForecast(
+    {
+      convoSmsPerMonth: usage.convoSmsSegments,
+      convoEmailPerMonth: usage.totalEmailSends - usage.broadcastEmailSends,
+      voiceMinutesPerMonth: voiceMinutesBilled,
+      schedulerBookingsPerMonth: usage.schedulerBookings,
+      blastsPerMonth: 0,
+      recipientsPerBlast: 0,
+      smsSegmentsPerRecipient: 1,
+      emailPerBlast: false,
+      extraTwilioNumbers,
+      zoomBrokerLicenses,
+      mortgiAiTokensPerMonth: usage.mortgiAiTokens,
+    },
+    plan,
+  );
+
+  const ownerTotalUsd = forecast.ownerTotalUsd;
+  const stripeFeesUsd = forecast.stripeFeesUsd;
+  const grossMarginUsd = ownerTotalUsd - totalPlatformCogsUsd;
+  const estimatedMarginUsd = grossMarginUsd - stripeFeesUsd;
+
+  const broadcast = computeBroadcastEconomics(
+    {
+      blastsPerMonth: 0,
+      recipientsPerBlast: 0,
+      segmentsPerRecipient: 1,
+      emailPerBlast: false,
+      totalSmsSegments: usage.totalSmsSegments,
+      totalEmailSends: usage.totalEmailSends,
+      convoSmsSegments: usage.convoSmsSegments,
+      convoEmailSends: usage.totalEmailSends - usage.broadcastEmailSends,
+      overSms: forecast.overSms,
+    },
+    plan,
+  );
+
+  const broadcastCogsUsd =
+    usage.broadcastSmsSegments * plan.cogsSmsPerSegmentUsd +
+    usage.broadcastEmailSends * plan.cogsEmailPerSendUsd;
+  const broadcastActual: BroadcastEconomics = {
+    ...broadcast,
+    smsSegments: usage.broadcastSmsSegments,
+    emailSends: usage.broadcastEmailSends,
+    cogsUsd: usage.broadcastSmsSegments * plan.cogsSmsPerSegmentUsd,
+    emailCogsUsd: usage.broadcastEmailSends * plan.cogsEmailPerSendUsd,
+    costPerBlastUsd: 0,
+    shareOfSmsPct:
+      usage.totalSmsSegments > 0
+        ? Math.round(
+            (usage.broadcastSmsSegments / usage.totalSmsSegments) * 100,
+          )
+        : 0,
+    shareOfVariableCogsPct:
+      variableUsageCogsUsd > 0
+        ? Math.round((broadcastCogsUsd / variableUsageCogsUsd) * 100)
+        : 0,
+    pctOfIncludedSms: pct(usage.broadcastSmsSegments, plan.includedSmsSegments),
+    pctOfIncludedEmail: pct(usage.broadcastEmailSends, plan.includedEmailSends),
+  };
+
+  return {
+    usage,
+    broadcast: broadcastActual,
+    voiceMinutesBilled,
+    variableUsageCogsUsd,
+    fixedInfraCogsUsd,
+    fixedInfraBreakdown: plan.fixedInfraBreakdown,
+    zoomBrokerCogsUsd,
+    totalPlatformCogsUsd,
+    overageRetailUsd: forecast.overageRetailUsd,
+    platformFeeUsd: plan.platformFeeUsd,
+    addonsUsd: forecast.addonsUsd,
+    ownerTotalUsd,
+    stripeFeesUsd,
+    grossMarginUsd,
+    estimatedMarginUsd,
+    pctSms: pct(usage.totalSmsSegments, plan.includedSmsSegments),
+    pctVoice: pct(voiceMinutesBilled, plan.includedVoiceMinutes),
+    pctEmail: pct(usage.totalEmailSends, plan.includedEmailSends),
+    pctScheduler: pct(usage.schedulerBookings, plan.includedSchedulerBookings),
+    pctMortgiAiTokens: pct(usage.mortgiAiTokens, plan.includedMortgiAiTokens),
+    mortgiCogsUsd,
+  };
+}
+
+/** Internal COGS/margin — local `npm run dev` only. */
+function isBillingInternalEconomicsEnabled(
+  env: Record<string, string | undefined> = typeof process !== "undefined"
+    ? (process.env as Record<string, string | undefined>)
+    : {},
+): boolean {
+  const vercelEnv = String(env.VERCEL_ENV ?? "")
+    .trim()
+    .toLowerCase();
+  if (vercelEnv === "production" || vercelEnv === "preview") return false;
+  return env.NODE_ENV === "development";
+}
+
+const EMPTY_INFRA = {
+  vercelUsd: 0,
+  ablyUsd: 0,
+  tidbUsd: 0,
+  resendUsd: 0,
+  cdnHostgatorImapUsd: 0,
+  tenDlcAmortizedUsd: 0,
+  zoomApiLicenseUsd: 0,
+};
+
+function stripInternalBillingExpenditure(
+  expenditure: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    ...expenditure,
+    variableUsageCogsUsd: 0,
+    fixedInfraCogsUsd: 0,
+    fixedInfraBreakdown: EMPTY_INFRA,
+    zoomBrokerCogsUsd: 0,
+    totalPlatformCogsUsd: 0,
+    stripeFeesUsd: 0,
+    grossMarginUsd: 0,
+    estimatedMarginUsd: 0,
+    mortgiCogsUsd: 0,
+    broadcast: {
+      ...(expenditure.broadcast as Record<string, unknown>),
+      cogsUsd: 0,
+      emailCogsUsd: 0,
+      shareOfVariableCogsPct: 0,
+    },
+  };
+}
+
+function stripInternalBudgetForecast(
+  forecast: BudgetBreakdown,
+): BudgetBreakdown {
+  return {
+    ...forecast,
+    estimatedCogsUsd: 0,
+    stripeFeesUsd: 0,
+    grossMarginUsd: 0,
+    estimatedMarginUsd: 0,
+    broadcast: {
+      ...forecast.broadcast,
+      cogsUsd: 0,
+      emailCogsUsd: 0,
+      costPerBlastUsd: 0,
+      shareOfVariableCogsPct: 0,
+    },
+  };
+}
+
+function stripInternalPackEconomics(
+  packs: Array<Record<string, unknown> & { economics?: unknown }>,
+): Array<Record<string, unknown>> {
+  return packs.map(({ economics: _economics, ...pack }) => pack);
+}
+
+/**
+ * Billing access ladder — subscription grace/restricted/suspended + quota blocks.
+ * Shared by API and client for consistent UX gating.
+ */
+
+type BillingAccessLevel =
+  | "healthy"
+  | "soft_warn"
+  | "subscription_grace"
+  | "quota_blocked"
+  | "subscription_restricted"
+  | "subscription_suspended";
+
+/** Why the tenant is in subscription_grace (onboarding vs failed renewal). */
+type BillingGraceKind = "none" | "onboarding" | "payment_past_due";
+
+type BillingAccessInput = {
+  billingQuotaMode: "off" | "shadow" | "warn" | "enforce";
+  /** When false, billing is not live — no banners or blocks regardless of mode. */
+  billingUiEnabled?: boolean;
+  billingOverageEnabled: boolean;
+  subscriptionStatus: string | null;
+  pastDueAt: string | null;
+  graceEndsAt: string | null;
+  restrictedAt: string | null;
+  suspendedAt: string | null;
+  /** When billing UI went live — starts deploy onboarding grace window */
+  onboardingStartedAt: string | null;
+  graceDays: number;
+  suspendDays: number;
+  nowMs?: number;
+  pctSms: number;
+  pctEmail: number;
+  pctVoice: number;
+  pctScheduler?: number;
+  pctMortgi?: number;
+  suggestedPackId?: string | null;
+};
+
+type BillingAccessState = {
+  level: BillingAccessLevel;
+  graceKind: BillingGraceKind;
+  /** Block outbound SMS/email, broadcast, scheduler create, Mortgi, etc. */
+  blocksCostActions: boolean;
+  /** Full-screen billing wall for platform_owner */
+  showsFullWall: boolean;
+  /** Brokers cannot send (restricted or worse) */
+  blocksBrokerSends: boolean;
+  graceEndsAt: string | null;
+  restrictedAt: string | null;
+  suspendedAt: string | null;
+  onboardingStartedAt: string | null;
+  /** Seconds until grace ends (subscription_grace only) */
+  secondsUntilGraceEnd: number | null;
+  headline: string;
+  detail: string;
+  suggestedPackId: string | null;
+  whatStillWorks: string[];
+  showWarnBanner: boolean;
+};
+
+const DEFAULT_STILL_WORKS = [
+  "View pipeline, clients, and conversations",
+  "Receive inbound SMS and email",
+  "Client portal stays online",
+  "Export and read historical data",
+];
+
+const MS_PER_DAY = 86400000;
+
+function quotaExceeded(
+  mode: BillingAccessInput["billingQuotaMode"],
+  overage: boolean,
+  pcts: number[],
+): boolean {
+  if (mode !== "enforce") return false;
+  if (overage) return false;
+  return pcts.some((p) => p >= 100);
+}
+
+function softWarn(pcts: number[]): boolean {
+  return pcts.some((p) => p >= 80);
+}
+
+function ladderFromStart(
+  startIso: string,
+  graceDays: number,
+  suspendDays: number,
+  nowMs: number,
+  storedGraceEndsAt: string | null,
+): {
+  graceEndMs: number;
+  suspendMs: number;
+  secondsUntilGraceEnd: number | null;
+  graceEndsAt: string;
+} {
+  const startMs = new Date(startIso).getTime();
+  const graceEndMs = storedGraceEndsAt
+    ? new Date(storedGraceEndsAt).getTime()
+    : startMs + graceDays * MS_PER_DAY;
+  const suspendMs = startMs + suspendDays * MS_PER_DAY;
+  const secondsUntilGraceEnd =
+    nowMs < graceEndMs
+      ? Math.max(0, Math.floor((graceEndMs - nowMs) / 1000))
+      : null;
+  return {
+    graceEndMs,
+    suspendMs,
+    secondsUntilGraceEnd,
+    graceEndsAt: new Date(graceEndMs).toISOString(),
+  };
+}
+
+function resolveSubscriptionLadder(input: BillingAccessInput): {
+  level: BillingAccessLevel;
+  graceKind: BillingGraceKind;
+  graceEndsAt: string | null;
+  secondsUntilGraceEnd: number | null;
+} {
+  const now = input.nowMs ?? Date.now();
+  const status = (input.subscriptionStatus ?? "active").toLowerCase();
+  const graceDays = input.graceDays;
+  const suspendDays = input.suspendDays;
+
+  if (status === "active" || status === "trialing") {
+    return {
+      level: "healthy",
+      graceKind: "none",
+      graceEndsAt: null,
+      secondsUntilGraceEnd: null,
+    };
+  }
+
+  if (status === "past_due" && input.pastDueAt) {
+    const { graceEndMs, suspendMs, secondsUntilGraceEnd, graceEndsAt } =
+      ladderFromStart(
+        input.pastDueAt,
+        graceDays,
+        suspendDays,
+        now,
+        input.graceEndsAt,
+      );
+
+    if (now < graceEndMs) {
+      return {
+        level: "subscription_grace",
+        graceKind: "payment_past_due",
+        graceEndsAt,
+        secondsUntilGraceEnd,
+      };
+    }
+    if (now < suspendMs) {
+      return {
+        level: "subscription_restricted",
+        graceKind: "none",
+        graceEndsAt,
+        secondsUntilGraceEnd: null,
+      };
+    }
+    return {
+      level: "subscription_suspended",
+      graceKind: "none",
+      graceEndsAt,
+      secondsUntilGraceEnd: null,
+    };
+  }
+
+  if (
+    (status === "inactive" || status === "incomplete") &&
+    input.onboardingStartedAt
+  ) {
+    const startMs = new Date(input.onboardingStartedAt).getTime();
+    if (now < startMs) {
+      return {
+        level: "healthy",
+        graceKind: "none",
+        graceEndsAt: null,
+        secondsUntilGraceEnd: null,
+      };
+    }
+
+    const { graceEndMs, suspendMs, secondsUntilGraceEnd, graceEndsAt } =
+      ladderFromStart(
+        input.onboardingStartedAt,
+        graceDays,
+        suspendDays,
+        now,
+        null,
+      );
+
+    if (now < graceEndMs) {
+      return {
+        level: "subscription_grace",
+        graceKind: "onboarding",
+        graceEndsAt,
+        secondsUntilGraceEnd,
+      };
+    }
+    if (now < suspendMs) {
+      return {
+        level: "subscription_restricted",
+        graceKind: "none",
+        graceEndsAt,
+        secondsUntilGraceEnd: null,
+      };
+    }
+    return {
+      level: "subscription_suspended",
+      graceKind: "none",
+      graceEndsAt,
+      secondsUntilGraceEnd: null,
+    };
+  }
+
+  if (status === "canceled") {
+    return {
+      level: "subscription_suspended",
+      graceKind: "none",
+      graceEndsAt: null,
+      secondsUntilGraceEnd: null,
+    };
+  }
+
+  return {
+    level: "healthy",
+    graceKind: "none",
+    graceEndsAt: null,
+    secondsUntilGraceEnd: null,
+  };
+}
+
+function computeBillingAccessState(
+  input: BillingAccessInput,
+): BillingAccessState {
+  const suggestedPackId = input.suggestedPackId ?? "sms_1k";
+  const billingLive = input.billingUiEnabled !== false;
+
+  // Billing not live — today's production behavior (no banners, no blocks).
+  if (input.billingQuotaMode === "off" && !billingLive) {
+    return {
+      level: "healthy",
+      graceKind: "none",
+      blocksCostActions: false,
+      showsFullWall: false,
+      blocksBrokerSends: false,
+      graceEndsAt: null,
+      restrictedAt: input.restrictedAt,
+      suspendedAt: input.suspendedAt,
+      onboardingStartedAt: input.onboardingStartedAt,
+      secondsUntilGraceEnd: null,
+      headline: "All systems normal",
+      detail: "Usage and subscription are in good standing.",
+      suggestedPackId,
+      whatStillWorks: [],
+      showWarnBanner: false,
+    };
+  }
+
+  const pcts = [
+    input.pctSms,
+    input.pctEmail,
+    input.pctVoice,
+    input.pctScheduler ?? 0,
+    input.pctMortgi ?? 0,
+  ];
+  const blocksEnforcement = input.billingQuotaMode === "enforce";
+  const showUsageBanners =
+    input.billingQuotaMode === "warn" || input.billingQuotaMode === "enforce";
+
+  const stillWorks = [...DEFAULT_STILL_WORKS];
+
+  const ladder = resolveSubscriptionLadder(input);
+  let level = ladder.level;
+  let graceKind = ladder.graceKind;
+  let graceEndsAt = ladder.graceEndsAt;
+  let secondsUntilGraceEnd = ladder.secondsUntilGraceEnd;
+
+  const quotaBlock = quotaExceeded(
+    input.billingQuotaMode,
+    input.billingOverageEnabled,
+    pcts,
+  );
+
+  if (quotaBlock && level !== "subscription_suspended") {
+    level = "quota_blocked";
+    graceKind = "none";
+  } else if (level === "healthy" && showUsageBanners && softWarn(pcts)) {
+    level = "soft_warn";
+  }
+
+  const blocksCostActions =
+    blocksEnforcement &&
+    (level === "quota_blocked" ||
+      level === "subscription_restricted" ||
+      level === "subscription_suspended");
+
+  const showsFullWall = blocksEnforcement && level === "subscription_suspended";
+
+  const blocksBrokerSends = blocksCostActions;
+  const showWarnBanner =
+    billingLive &&
+    (level === "subscription_grace" ||
+      (level === "soft_warn" && showUsageBanners) ||
+      (blocksEnforcement &&
+        (level === "quota_blocked" || level === "subscription_restricted")));
+
+  let headline = "All systems normal";
+  let detail = "Usage and subscription are in good standing.";
+
+  switch (level) {
+    case "soft_warn":
+      headline = "Approaching monthly quota";
+      detail =
+        "You're at 80%+ on SMS, email, or voice. Add capacity before sends are blocked.";
+      break;
+    case "subscription_grace":
+      if (graceKind === "onboarding") {
+        headline = "Welcome — activate your platform subscription";
+        detail = blocksEnforcement
+          ? "You have a complimentary grace period after billing went live. Subscribe before it ends to keep outbound sends uninterrupted."
+          : "Billing is live. Complete your subscription during this grace window — enforcement is still off, so nothing is blocked yet.";
+      } else {
+        headline = "Monthly payment could not be processed";
+        detail =
+          "Your saved card was declined on the automatic renewal. Update payment before the grace period ends to avoid restrictions.";
+      }
+      break;
+    case "quota_blocked":
+      headline = "Monthly quota reached";
+      detail =
+        "Outbound SMS, email, broadcasts, and other metered actions are paused until you add capacity.";
+      break;
+    case "subscription_restricted":
+      headline = "Billing action required";
+      detail =
+        graceKind === "onboarding" || input.onboardingStartedAt
+          ? "Grace period ended. Subscribe to restore outbound SMS, email, broadcasts, and other metered features."
+          : "Grace period ended. Cost-generating features are paused until your platform payment is resolved.";
+      break;
+    case "subscription_suspended":
+      headline = "Account suspended";
+      detail =
+        "Resolve platform billing to restore full access. Read-only mode is active for your team.";
+      stillWorks.push("Billing & top-up page remains available");
+      break;
+    default:
+      break;
+  }
+
+  return {
+    level,
+    graceKind,
+    blocksCostActions,
+    showsFullWall,
+    blocksBrokerSends,
+    graceEndsAt,
+    restrictedAt: input.restrictedAt,
+    suspendedAt: input.suspendedAt,
+    onboardingStartedAt: input.onboardingStartedAt,
+    secondsUntilGraceEnd,
+    headline,
+    detail,
+    suggestedPackId,
+    whatStillWorks: blocksCostActions || showsFullWall ? stillWorks : [],
+    showWarnBanner,
+  };
+}
+
+/** Minimal billing notice for brokers/admins (no payment links or billing page access). */
+type BillingTeamNoticeLevel =
+  | "soft_warn"
+  | "subscription_grace"
+  | "subscription_restricted"
+  | "subscription_suspended"
+  | "quota_blocked";
+
+type BillingTeamNotice = {
+  show: boolean;
+  level: BillingTeamNoticeLevel | null;
+  graceKind: BillingGraceKind;
+  headline: string;
+  detail: string;
+  blocksOutbound: boolean;
+  secondsUntilGraceEnd: number | null;
+};
+
+const TEAM_NOTICE_LEVELS: BillingTeamNoticeLevel[] = [
+  "soft_warn",
+  "subscription_grace",
+  "subscription_restricted",
+  "subscription_suspended",
+  "quota_blocked",
+];
+
+function buildBillingTeamNotice(access: BillingAccessState): BillingTeamNotice {
+  const empty: BillingTeamNotice = {
+    show: false,
+    level: null,
+    graceKind: "none",
+    headline: "",
+    detail: "",
+    blocksOutbound: false,
+    secondsUntilGraceEnd: null,
+  };
+
+  if (!TEAM_NOTICE_LEVELS.includes(access.level as BillingTeamNoticeLevel)) {
+    return empty;
+  }
+
+  const level = access.level as BillingTeamNoticeLevel;
+
+  if (
+    (level === "subscription_restricted" ||
+      level === "subscription_suspended" ||
+      level === "quota_blocked") &&
+    !access.blocksCostActions
+  ) {
+    return empty;
+  }
+
+  switch (level) {
+    case "soft_warn":
+      return {
+        show: true,
+        level,
+        graceKind: "none",
+        headline: "Approaching monthly usage limit",
+        detail:
+          "Your team is at 80%+ on SMS, email, or voice. Contact your platform owner before outbound sends are blocked.",
+        blocksOutbound: false,
+        secondsUntilGraceEnd: null,
+      };
+    case "subscription_grace":
+      return {
+        show: true,
+        level,
+        graceKind: access.graceKind,
+        headline:
+          access.graceKind === "onboarding"
+            ? "Platform billing setup in progress"
+            : "Platform billing needs attention",
+        detail:
+          access.graceKind === "onboarding"
+            ? "Your administrator is activating platform billing. Outbound sends may pause after the grace period if subscription is not completed."
+            : "Your administrator is resolving a declined renewal payment. Outbound SMS, email, and broadcasts may pause when the grace period ends.",
+        blocksOutbound: false,
+        secondsUntilGraceEnd: access.secondsUntilGraceEnd,
+      };
+    case "subscription_restricted":
+      return {
+        show: true,
+        level,
+        graceKind: access.graceKind,
+        headline: "Outbound sends paused",
+        detail:
+          "Platform billing must be resolved by your administrator before you can send messages or broadcasts.",
+        blocksOutbound: true,
+        secondsUntilGraceEnd: null,
+      };
+    case "subscription_suspended":
+      return {
+        show: true,
+        level,
+        graceKind: "none",
+        headline: "Limited access — billing overdue",
+        detail:
+          "You can still view data and receive inbound messages. Outbound sends stay paused until your administrator resolves platform billing.",
+        blocksOutbound: true,
+        secondsUntilGraceEnd: null,
+      };
+    case "quota_blocked":
+      return {
+        show: true,
+        level,
+        graceKind: "none",
+        headline: "Monthly usage limit reached",
+        detail:
+          "Your team has hit the monthly SMS, email, or voice limit. Contact your platform owner to add capacity.",
+        blocksOutbound: true,
+        secondsUntilGraceEnd: null,
+      };
+    default:
+      return empty;
+  }
+}
+
+function formatGraceCountdown(seconds: number | null): string | null {
+  if (seconds == null || seconds <= 0) return null;
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h left`;
+  if (h > 0) return `${h}h ${m}m left`;
+  return `${m}m left`;
+}
+
+function billingTopUpPath(packId?: string | null): string {
+  const base = "/admin/billing?topup=1";
+  if (!packId) return base;
+  return `${base}&pack=${encodeURIComponent(packId)}`;
+}
+
+const execFileAsync = promisify(execFile);
+
+// =====================================================
+// BILLING & QUOTA (inlined for Vercel serverless entry)
+// =====================================================
+
+type BillingQuotaMode = "off" | "shadow" | "warn" | "enforce";
+
+type BillingConfig = {
+  billingQuotaMode: BillingQuotaMode;
+  billingUiEnabled: boolean;
+  billingOverageEnabled: boolean;
+  billingEnforceBroadcastDaily: boolean;
+  platformFeeUsd: number;
+  plan: BillingPlanConfig;
+  subscription: {
+    planCode: string;
+    status: string;
+    periodStart: string;
+    periodEnd: string | null;
+  } | null;
+};
+
+type ConsumeRequest = {
+  dimension: UsageDimension;
+  units: number;
+  source: string;
+  refType?: string;
+  refId?: string;
+  metadata?: Record<string, unknown>;
+};
+
+type QuotaUsageSlice = {
+  dimension: UsageDimension;
+  used: number;
+  included: number;
+  reserved: number;
+  pct: number;
+};
+
+type UnifiedQuotaSummary = {
+  mode: BillingQuotaMode;
+  periodStart: string;
+  sms_segments: QuotaUsageSlice;
+  voice_minutes: QuotaUsageSlice;
+  email_sends: QuotaUsageSlice;
+  scheduler_bookings: QuotaUsageSlice;
+  mortgi_ai_tokens: QuotaUsageSlice;
+};
+
+type QuotaResult = {
+  allowed: boolean;
+  mode: BillingQuotaMode;
+  recorded: boolean;
+  quotaExceeded?: boolean;
+  billingBlocked?: boolean;
+  billingAccessLevel?: BillingAccessLevel;
+  billingHeadline?: string;
+  billingDetail?: string;
+  suggestedPackId?: string | null;
+  warn?: boolean;
+  usage?: QuotaUsageSlice;
+};
+
+type ReserveUnits = Partial<Record<UsageDimension, number>>;
+
+type ReserveResult = {
+  allowed: boolean;
+  mode: BillingQuotaMode;
+  reservationId: number | null;
+  quotaExceeded?: boolean;
+  billingBlocked?: boolean;
+  billingAccessLevel?: BillingAccessLevel;
+  billingHeadline?: string;
+  billingDetail?: string;
+  suggestedPackId?: string | null;
+};
+
+const VOICE_MIN_PER_CALL_EST = 2.4;
+const COGS_SMS_PER_SEGMENT = BILLING_PLAN_DEFAULTS.cogsSmsPerSegmentUsd;
+const COGS_EMAIL_PER_SEND = BILLING_PLAN_DEFAULTS.cogsEmailPerSendUsd;
+const COGS_WHATSAPP_PER_MESSAGE =
+  BILLING_PLAN_DEFAULTS.cogsWhatsappPerMessageUsd;
+const COGS_MMS_PER_MESSAGE = BILLING_PLAN_DEFAULTS.cogsMmsPerMessageUsd;
+const BILLING_SUBSCRIBER_EMAIL_KEY = "billing_subscriber_email";
+
+type OutboundCostChannel = "sms" | "whatsapp" | "mms" | "email";
+
+function resolveOutboundCommunicationCostUsd(params: {
+  channel: OutboundCostChannel;
+  body?: string;
+  twilioPriceUsd?: number | null;
+}): number {
+  const twilio = params.twilioPriceUsd ?? 0;
+  if (twilio > 0) return twilio;
+  switch (params.channel) {
+    case "email":
+      return COGS_EMAIL_PER_SEND;
+    case "whatsapp":
+      return COGS_WHATSAPP_PER_MESSAGE;
+    case "mms":
+      return COGS_MMS_PER_MESSAGE;
+    case "sms":
+    default:
+      return smsSegmentsFromBody(params.body || "") * COGS_SMS_PER_SEGMENT;
+  }
+}
+
+const BILLING_SETTING_KEYS = [
+  "billing_quota_mode",
+  "billing_ui_enabled",
+  "billing_overage_enabled",
+  "billing_enforce_broadcast_daily",
+] as const;
+
+/** UCS-2-aware segment count (inlined from shared/short-links.ts). */
+function smsSegmentsFromBody(body: string): number {
+  const text = String(body ?? "");
+  const hasNonGsm = /[^\x00-\x7F]/.test(text);
+  const perSeg = hasNonGsm ? 67 : 160;
+  const charCount = text.length;
+  return charCount === 0 ? 1 : Math.ceil(charCount / perSeg);
+}
+
+/** MMS min segment-equivalents (~$0.022 / $0.012). Inlined from shared/short-links. */
+const BROADCAST_MMS_QUOTA_MIN_SEGMENTS = 2;
+
+function broadcastSmsQuotaUnits(body: string, hasMedia = false): number {
+  const base = smsSegmentsFromBody(body);
+  if (!hasMedia) return base;
+  return Math.max(base, BROADCAST_MMS_QUOTA_MIN_SEGMENTS);
+}
+
+/** Safe parse for conversation_threads.tags (JSON column — mysql2 may return array or string). */
+function parseThreadTags(raw: unknown): string[] {
+  if (raw == null || raw === "") return [];
+  if (Array.isArray(raw)) return raw.map(String);
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed === "null") return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+/** Safe parse for JSON DB columns (mysql2 may return object/array or string). */
+function safeJsonParse<T>(
+  raw: unknown,
+  fallback: T,
+  opts?: { asArray?: boolean },
+): T {
+  if (raw == null || raw === "") return fallback;
+  if (typeof raw === "object") {
+    if (opts?.asArray && !Array.isArray(raw)) return fallback;
+    return raw as T;
+  }
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed === "null") return fallback;
+    try {
+      const parsed = JSON.parse(trimmed) as T;
+      if (opts?.asArray && !Array.isArray(parsed)) return fallback;
+      return parsed;
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+function isMysqlDuplicateError(err: unknown): boolean {
+  const mysqlErr = err as { code?: string; errno?: number };
+  return mysqlErr?.code === "ER_DUP_ENTRY" || mysqlErr?.errno === 1062;
+}
+
+function estimateBroadcastUnits(params: {
+  channel: string;
+  smsBody?: string;
+  emailRecipientCount: number;
+  smsRecipientCount: number;
+  hasMedia?: boolean;
+}): { sms_segments: number; email_sends: number } {
+  const segmentsPerSms = broadcastSmsQuotaUnits(
+    params.smsBody || "",
+    !!params.hasMedia,
+  );
+  const sms_segments =
+    params.channel === "sms" || params.channel === "both"
+      ? params.smsRecipientCount * segmentsPerSms
+      : 0;
+  const email_sends =
+    params.channel === "email" || params.channel === "both"
+      ? params.emailRecipientCount
+      : 0;
+  return { sms_segments, email_sends };
+}
+
+function quotaExceededPayload(usage?: QuotaUsageSlice) {
+  return {
+    success: false,
+    error:
+      "Monthly quota exceeded. Open Billing & Usage to review limits or add capacity.",
+    quota_exceeded: true,
+    usage,
+  };
+}
+
+function quotaDenialPayload(result: QuotaResult) {
+  if (result.billingBlocked) {
+    return {
+      success: false,
+      ...billingAccessDeniedPayload({
+        level: result.billingAccessLevel ?? "subscription_restricted",
+        headline: result.billingHeadline ?? "Billing action required",
+        detail:
+          result.billingDetail ??
+          "Cost-generating features are paused until billing is resolved.",
+        graceKind: "none",
+        blocksCostActions: true,
+        showsFullWall: result.billingAccessLevel === "subscription_suspended",
+        blocksBrokerSends: true,
+        graceEndsAt: null,
+        restrictedAt: null,
+        suspendedAt: null,
+        onboardingStartedAt: null,
+        secondsUntilGraceEnd: null,
+        suggestedPackId: result.suggestedPackId ?? null,
+        whatStillWorks: [],
+        showWarnBanner: true,
+      }),
+      suggested_pack_id: result.suggestedPackId ?? null,
+    };
+  }
+  return quotaExceededPayload(result.usage);
+}
+
+function quotaDenialError(result: QuotaResult): string {
+  const payload = quotaDenialPayload(result);
+  return String(payload.error ?? "Action blocked by billing policy");
+}
+
+function reserveDenialPayload(result: ReserveResult) {
+  return quotaDenialPayload({
+    allowed: false,
+    mode: result.mode,
+    recorded: false,
+    quotaExceeded: result.quotaExceeded,
+    billingBlocked: result.billingBlocked,
+    billingAccessLevel: result.billingAccessLevel,
+    billingHeadline: result.billingHeadline,
+    billingDetail: result.billingDetail,
+    suggestedPackId: result.suggestedPackId,
+  });
+}
+
+function parseBool(
+  value: string | null | undefined,
+  fallback = false,
+): boolean {
+  if (value == null || value === "") return fallback;
+  return value === "true" || value === "1";
+}
+
+function parseMode(value: string | null | undefined): BillingQuotaMode {
+  if (value === "shadow" || value === "warn" || value === "enforce")
+    return value;
+  return "off";
+}
+
+function includedForDimension(
+  dimension: UsageDimension,
+  plan: BillingPlanConfig,
+): number {
+  switch (dimension) {
+    case "sms_segments":
+      return plan.includedSmsSegments;
+    case "voice_minutes":
+      return plan.includedVoiceMinutes;
+    case "email_sends":
+      return plan.includedEmailSends;
+    case "scheduler_bookings":
+      return plan.includedSchedulerBookings;
+    case "mortgi_ai_tokens":
+      return plan.includedMortgiAiTokens;
+    default:
+      return 0;
+  }
+}
+
+async function scalar(
+  pool: Pool,
+  sql: string,
+  params: unknown[] = [],
+): Promise<number> {
+  const [rows] = await pool.query<RowDataPacket[]>(sql, params);
+  return Number(rows[0]?.v ?? 0);
+}
+
+async function getTenantSetting(
+  pool: Pool,
+  tenantId: number,
+  key: string,
+  fallback = "",
+): Promise<string> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT setting_value FROM system_settings
+     WHERE setting_key = ? AND (tenant_id = ? OR tenant_id IS NULL)
+     ORDER BY tenant_id DESC LIMIT 1`,
+    [key, tenantId],
+  );
+  const value = rows[0]?.setting_value;
+  return value != null && String(value).length > 0 ? String(value) : fallback;
+}
+
+async function getBillingConfig(
+  pool: Pool,
+  tenantId: number,
+): Promise<BillingConfig> {
+  const [settingRows] = await pool.query<RowDataPacket[]>(
+    `SELECT setting_key, setting_value FROM system_settings
+     WHERE setting_key IN (?, ?, ?, ?)
+       AND (tenant_id = ? OR tenant_id IS NULL)
+     ORDER BY tenant_id DESC`,
+    [...BILLING_SETTING_KEYS, tenantId],
+  );
+
+  const settingsMap = new Map<string, string>();
+  for (const row of settingRows) {
+    if (!settingsMap.has(row.setting_key)) {
+      settingsMap.set(row.setting_key, String(row.setting_value ?? ""));
+    }
+  }
+
+  const [subRows] = await pool.query<RowDataPacket[]>(
+    `SELECT plan_code, status, platform_fee_usd, period_start, period_end,
+            included_sms_segments, included_voice_minutes, included_email_sends,
+            included_scheduler_bookings, included_mortgi_ai_tokens
+     FROM tenant_subscription WHERE tenant_id = ? LIMIT 1`,
+    [tenantId],
+  );
+  const sub = subRows[0];
+
+  const platformFeeUsd = sub
+    ? Number(sub.platform_fee_usd)
+    : BILLING_PLAN_DEFAULTS.platformFeeUsd;
+
+  const plan: BillingPlanConfig = sub
+    ? ({
+        ...BILLING_PLAN_DEFAULTS,
+        platformFeeUsd,
+        includedSmsSegments: Number(
+          sub.included_sms_segments ??
+            BILLING_PLAN_DEFAULTS.includedSmsSegments,
+        ),
+        includedVoiceMinutes: Number(
+          sub.included_voice_minutes ??
+            BILLING_PLAN_DEFAULTS.includedVoiceMinutes,
+        ),
+        includedEmailSends: Number(
+          sub.included_email_sends ?? BILLING_PLAN_DEFAULTS.includedEmailSends,
+        ),
+        includedSchedulerBookings: Number(
+          sub.included_scheduler_bookings ??
+            BILLING_PLAN_DEFAULTS.includedSchedulerBookings,
+        ),
+        includedMortgiAiTokens: Number(
+          sub.included_mortgi_ai_tokens ??
+            BILLING_PLAN_DEFAULTS.includedMortgiAiTokens,
+        ),
+      } as BillingPlanConfig)
+    : BILLING_PLAN_DEFAULTS;
+
+  return {
+    billingQuotaMode: parseMode(settingsMap.get("billing_quota_mode")),
+    billingUiEnabled: parseBool(settingsMap.get("billing_ui_enabled"), false),
+    billingOverageEnabled: parseBool(
+      settingsMap.get("billing_overage_enabled"),
+      false,
+    ),
+    billingEnforceBroadcastDaily: parseBool(
+      settingsMap.get("billing_enforce_broadcast_daily"),
+      true,
+    ),
+    platformFeeUsd,
+    plan,
+    subscription: sub
+      ? {
+          planCode: String(sub.plan_code),
+          status: String(sub.status),
+          periodStart:
+            toSqlDate(sub.period_start) ?? currentCalendarMonthStart(),
+          periodEnd: sub.period_end ? toSqlDate(sub.period_end) : null,
+        }
+      : null,
+  };
+}
+
+// =====================================================
+// Per-owner CRM (inlined for Vercel serverless — shared/per-owner-crm.ts is source for client/tests)
+// =====================================================
+
+function currentCalendarMonthStart(): string {
+  return new Date().toISOString().slice(0, 7) + "-01";
+}
+
+/** Normalize mysql2 DATE (Date object or string) to `YYYY-MM-DD` for SQL DATE columns. */
+function toSqlDate(value: unknown): string | null {
+  if (value == null) return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, "0");
+    const d = String(value.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const parsed = Date.parse(s);
+  if (!Number.isNaN(parsed)) {
+    const d = new Date(parsed);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+  return null;
+}
+
+function currentPeriodStart(config: BillingConfig): string {
+  return (
+    toSqlDate(config.subscription?.periodStart) ?? currentCalendarMonthStart()
+  );
+}
+
+// --- Billing period anchor (inlined from shared/billing-period.ts) ---
+
+type BillingPeriodAnchor = "stripe" | "calendar";
+
+const STRIPE_ANCHOR_BLOCKED_STATUSES = new Set([
+  "inactive",
+  "canceled",
+  "incomplete_expired",
+]);
+
+function calendarMonthEnd(monthStart: string): string {
+  const match = /^(\d{4})-(\d{2})-01$/.exec(monthStart);
+  if (!match) return monthStart;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${match[1]}-${match[2]}-${String(lastDay).padStart(2, "0")}`;
+}
+
+function resolveBillingPeriodAnchor(params: {
+  stripeSubscriptionId: string | null | undefined;
+  subscriptionStatus: string | null | undefined;
+}): BillingPeriodAnchor {
+  const subId = String(params.stripeSubscriptionId ?? "").trim();
+  if (!subId) return "calendar";
+  const status = String(params.subscriptionStatus ?? "inactive")
+    .trim()
+    .toLowerCase();
+  if (STRIPE_ANCHOR_BLOCKED_STATUSES.has(status)) return "calendar";
+  return "stripe";
+}
+
+function shouldAdvanceCalendarBillingPeriod(params: {
+  anchor: BillingPeriodAnchor;
+  storedPeriodStart: string | null;
+  calendarMonthStart: string;
+}): boolean {
+  if (params.anchor === "stripe") return false;
+  const stored = params.storedPeriodStart ?? params.calendarMonthStart;
+  return params.calendarMonthStart > stored;
+}
+
+function isBillingPeriodTransition(
+  previousStart: string | null | undefined,
+  nextStart: string | null | undefined,
+): boolean {
+  if (!nextStart) return false;
+  if (!previousStart) return true;
+  return previousStart !== nextStart;
+}
+
+function shouldSyncStripeSubscriptionPeriod(params: {
+  dbPeriodStart: string | null;
+  dbStatus: string | null;
+  stripePeriodStart: string | null;
+  stripeStatus: string;
+}): boolean {
+  const mappedDb = String(params.dbStatus ?? "").toLowerCase();
+  const mappedStripe = String(params.stripeStatus ?? "").toLowerCase();
+  if (mappedDb !== mappedStripe) return true;
+  if (!params.stripePeriodStart) return false;
+  return params.dbPeriodStart !== params.stripePeriodStart;
+}
+
+function resolveUsageSnapshotPeriod(params: {
+  subscriptionPeriodStart: string | null;
+  subscriptionPeriodEnd: string | null;
+  calendarMonthStart?: string;
+}): {
+  periodStart: string;
+  periodEnd: string;
+  sinceUtc: string;
+} {
+  const monthStart = params.calendarMonthStart ?? currentCalendarMonthStart();
+  const periodStart = params.subscriptionPeriodStart ?? monthStart;
+  const periodEnd =
+    params.subscriptionPeriodEnd ?? calendarMonthEnd(periodStart);
+  return {
+    periodStart,
+    periodEnd,
+    sinceUtc: `${periodStart} 00:00:00`,
+  };
+}
+
+/**
+ * Advance billing period on calendar-month rollover for tenants without a
+ * linked Stripe subscription. Stripe-linked tenants use current_period_* from webhooks.
+ */
+async function maybeAdvanceBillingPeriod(
+  pool: Pool,
+  tenantId: number,
+): Promise<void> {
+  const monthStart = currentCalendarMonthStart();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT period_start, stripe_subscription_id, status
+     FROM tenant_subscription WHERE tenant_id = ? LIMIT 1`,
+    [tenantId],
+  );
+  if (!rows[0]) return;
+
+  const anchor = resolveBillingPeriodAnchor({
+    stripeSubscriptionId: rows[0].stripe_subscription_id as string | null,
+    subscriptionStatus: String(rows[0].status ?? ""),
+  });
+  const subStart =
+    toSqlDate(rows[0].period_start) ?? currentCalendarMonthStart();
+  if (
+    !shouldAdvanceCalendarBillingPeriod({
+      anchor,
+      storedPeriodStart: subStart,
+      calendarMonthStart: monthStart,
+    })
+  ) {
+    return;
+  }
+
+  await pool.query(
+    `UPDATE tenant_subscription
+     SET period_start = ?,
+         period_end = ?,
+         updated_at = UTC_TIMESTAMP()
+     WHERE tenant_id = ?`,
+    [monthStart, calendarMonthEnd(monthStart), tenantId],
+  );
+}
+
+async function ensurePeriodGrants(
+  pool: Pool,
+  tenantId: number,
+  config: BillingConfig,
+): Promise<void> {
+  await maybeAdvanceBillingPeriod(pool, tenantId);
+  const refreshed = await getBillingConfig(pool, tenantId);
+  const periodStart = currentPeriodStart(refreshed);
+  const dimensions: UsageDimension[] = [
+    "sms_segments",
+    "voice_minutes",
+    "email_sends",
+    "scheduler_bookings",
+    "mortgi_ai_tokens",
+  ];
+  for (const dimension of dimensions) {
+    const included = includedForDimension(dimension, refreshed.plan);
+    await pool.query(
+      `INSERT INTO tenant_usage_period
+         (tenant_id, period_start, dimension, included_units, used_units, reserved_units)
+       VALUES (?, ?, ?, ?, 0, 0)
+       ON DUPLICATE KEY UPDATE
+         updated_at = UTC_TIMESTAMP()`,
+      [tenantId, periodStart, dimension, included],
+    );
+  }
+
+  await reconcileStalePeriodRows(pool, tenantId, periodStart, refreshed);
+}
+
+/** Move top-up credits stranded on old period_start rows onto the active subscription period. */
+async function reconcileStalePeriodRows(
+  pool: Pool,
+  tenantId: number,
+  canonicalPeriodStart: string,
+  config: BillingConfig,
+): Promise<void> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT period_start, dimension, included_units
+     FROM tenant_usage_period
+     WHERE tenant_id = ? AND period_start <> ?`,
+    [tenantId, canonicalPeriodStart],
+  );
+  for (const row of rows) {
+    const dimension = String(row.dimension) as UsageDimension;
+    const planIncluded = includedForDimension(dimension, config.plan);
+    const included = Number(row.included_units ?? 0);
+    const extra = included - planIncluded;
+    if (extra <= 0) continue;
+
+    await incrementPeriodIncluded(
+      pool,
+      tenantId,
+      canonicalPeriodStart,
+      dimension,
+      extra,
+      planIncluded,
+    );
+    await pool.query(
+      `UPDATE tenant_usage_period
+       SET included_units = ?, updated_at = UTC_TIMESTAMP()
+       WHERE tenant_id = ? AND period_start = ? AND dimension = ?`,
+      [planIncluded, tenantId, row.period_start, dimension],
+    );
+  }
+}
+
+async function incrementPeriodIncluded(
+  conn: Pool | PoolConnection,
+  tenantId: number,
+  periodStart: string,
+  dimension: UsageDimension,
+  units: number,
+  planIncluded: number,
+): Promise<void> {
+  if (units <= 0) return;
+  await conn.query(
+    `INSERT INTO tenant_usage_period
+       (tenant_id, period_start, dimension, included_units, used_units, reserved_units)
+     VALUES (?, ?, ?, ?, 0, 0)
+     ON DUPLICATE KEY UPDATE
+       included_units = included_units + ?,
+       updated_at = UTC_TIMESTAMP()`,
+    [tenantId, periodStart, dimension, planIncluded + units, units],
+  );
+}
+
+async function readPeriodRow(
+  pool: Pool,
+  tenantId: number,
+  periodStart: string,
+  dimension: UsageDimension,
+): Promise<{ used: number; included: number; reserved: number }> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT used_units, included_units, reserved_units
+     FROM tenant_usage_period
+     WHERE tenant_id = ? AND period_start = ? AND dimension = ?`,
+    [tenantId, periodStart, dimension],
+  );
+  const row = rows[0];
+  return {
+    used: Number(row?.used_units ?? 0),
+    included: Number(row?.included_units ?? 0),
+    reserved: Number(row?.reserved_units ?? 0),
+  };
+}
+
+async function getUnifiedQuotaSummary(
+  pool: Pool,
+  tenantId: number,
+): Promise<UnifiedQuotaSummary> {
+  const config = await getBillingConfig(pool, tenantId);
+  await ensurePeriodGrants(pool, tenantId, config);
+  const periodStart = currentPeriodStart(config);
+  const mode = config.billingQuotaMode;
+
+  const buildSlice = async (
+    dimension: UsageDimension,
+    liveUsed?: number,
+  ): Promise<QuotaUsageSlice> => {
+    const planIncluded = includedForDimension(dimension, config.plan);
+    const row = await readPeriodRow(pool, tenantId, periodStart, dimension);
+    const effectiveIncluded = Math.max(row.included || 0, planIncluded);
+    if (mode === "off" && liveUsed != null) {
+      return {
+        dimension,
+        used: liveUsed,
+        included: effectiveIncluded,
+        reserved: row.reserved,
+        pct: pct(liveUsed + row.reserved, effectiveIncluded),
+      };
+    }
+    const effectiveUsed =
+      mode === "off" && liveUsed != null ? liveUsed : row.used;
+    return {
+      dimension,
+      used: effectiveUsed,
+      included: effectiveIncluded,
+      reserved: row.reserved,
+      pct: pct(effectiveUsed + row.reserved, effectiveIncluded),
+    };
+  };
+
+  const snapshot =
+    mode === "off" ? await fetchTenantUsageSnapshot(pool, tenantId) : null;
+
+  return {
+    mode,
+    periodStart,
+    sms_segments: await buildSlice("sms_segments", snapshot?.totalSmsSegments),
+    voice_minutes: await buildSlice(
+      "voice_minutes",
+      snapshot
+        ? Math.max(
+            snapshot.voiceMinutesRecorded,
+            snapshot.voiceMinutesEstimated ?? 0,
+          )
+        : undefined,
+    ),
+    email_sends: await buildSlice("email_sends", snapshot?.totalEmailSends),
+    scheduler_bookings: await buildSlice(
+      "scheduler_bookings",
+      snapshot?.schedulerBookings,
+    ),
+    mortgi_ai_tokens: await buildSlice(
+      "mortgi_ai_tokens",
+      snapshot?.mortgiAiTokens,
+    ),
+  };
+}
+
+const BILLING_CAPACITY_DIMENSIONS: UsageDimension[] = [
+  "sms_segments",
+  "voice_minutes",
+  "email_sends",
+  "scheduler_bookings",
+  "mortgi_ai_tokens",
+];
+
+function topUpChannelTitle(dimension: UsageDimension): string {
+  return (
+    TOP_UP_CHANNELS.find((c) => c.dimension === dimension)?.title ?? dimension
+  );
+}
+
+function resolveTopUpPackDetails(
+  packId: string | undefined,
+  dimension: UsageDimension,
+  units: number,
+): { label: string; amountCents: number | null } {
+  const tiers = TOP_UP_TIERS_BY_DIMENSION[dimension] ?? [];
+  const tier = tiers.find((t) => t.tierId === packId);
+  if (tier) {
+    return { label: tier.label, amountCents: tier.amountCents };
+  }
+  const legacy = resolveLegacyTopUpPack(packId ?? "");
+  if (legacy) {
+    const legacyTier =
+      TOP_UP_TIERS_BY_DIMENSION[legacy.dimension]?.[legacy.tierIndex];
+    if (legacyTier) {
+      return { label: legacyTier.label, amountCents: legacyTier.amountCents };
+    }
+  }
+  return {
+    label: `${units.toLocaleString()} ${topUpChannelTitle(dimension)}`,
+    amountCents: null,
+  };
+}
+
+async function buildBillingPurchasesResponse(
+  pool: Pool,
+  tenantId: number,
+) {
+  const config = await getBillingConfig(pool, tenantId);
+  const quota = await getUnifiedQuotaSummary(pool, tenantId);
+  const canonicalPeriodStart = quota.periodStart;
+
+  const capacities = BILLING_CAPACITY_DIMENSIONS.map((dimension) => {
+    const slice = quota[dimension];
+    const planIncluded = includedForDimension(dimension, config.plan);
+    const topUpIncluded = Math.max(0, slice.included - planIncluded);
+    return {
+      dimension,
+      title: topUpChannelTitle(dimension),
+      planIncluded,
+      topUpIncluded,
+      totalIncluded: slice.included,
+      used: slice.used,
+      reserved: slice.reserved,
+      pct: slice.pct,
+    };
+  });
+
+  const [ledgerRows] = await pool.query<RowDataPacket[]>(
+    `SELECT id, dimension, units, ref_id, source, metadata_json, created_at
+     FROM tenant_usage_ledger
+     WHERE tenant_id = ? AND action = 'top_up'
+     ORDER BY created_at DESC
+     LIMIT 50`,
+    [tenantId],
+  );
+
+  const purchases = ledgerRows.map((row) => {
+    const dimension = String(row.dimension) as UsageDimension;
+    const units = Number(row.units ?? 0);
+    const meta = safeJsonParse<Record<string, unknown>>(row.metadata_json, {});
+    const packId = typeof meta.pack_id === "string" ? meta.pack_id : undefined;
+    const { label, amountCents: packAmount } = resolveTopUpPackDetails(
+      packId,
+      dimension,
+      units,
+    );
+    const metaAmount = Number(meta.amount_cents);
+    const amountCents =
+      Number.isFinite(metaAmount) && metaAmount > 0 ? metaAmount : packAmount;
+    const appliedPeriodStart =
+      typeof meta.period_start === "string"
+        ? meta.period_start.slice(0, 10)
+        : null;
+    const activeForCurrentPeriod =
+      appliedPeriodStart != null
+        ? appliedPeriodStart === canonicalPeriodStart
+        : meta.period_applied === true;
+
+    return {
+      id: Number(row.id),
+      type: "top_up" as const,
+      dimension,
+      units,
+      amountCents,
+      label,
+      paymentIntentId:
+        typeof row.ref_id === "string" && row.ref_id.startsWith("pi_")
+          ? row.ref_id
+          : null,
+      source: String(row.source ?? "stripe"),
+      appliedPeriodStart,
+      activeForCurrentPeriod,
+      createdAt: new Date(String(row.created_at)).toISOString(),
+    };
+  });
+
+  return {
+    activePeriod: {
+      periodStart: canonicalPeriodStart,
+      periodEnd: config.subscription?.periodEnd ?? null,
+      subscriptionStatus: config.subscription?.status ?? null,
+      platformFeeUsd: config.platformFeeUsd,
+      capacities,
+    },
+    purchases,
+  };
+}
+
+async function fetchTenantUsageSnapshot(
+  pool: Pool,
+  tenantId: number,
+): Promise<UsageSnapshot> {
+  const config = await getBillingConfig(pool, tenantId);
+  const { periodStart, periodEnd, sinceUtc } = resolveUsageSnapshotPeriod({
+    subscriptionPeriodStart: config.subscription?.periodStart ?? null,
+    subscriptionPeriodEnd: config.subscription?.periodEnd ?? null,
+  });
+
+  const convoSmsSegments = await scalar(
+    pool,
+    `SELECT COALESCE(SUM(CEIL(GREATEST(CHAR_LENGTH(COALESCE(c.body,'')), 1) / 160.0)), 0) AS v
+     FROM communications c
+     WHERE c.tenant_id = ? AND c.communication_type = 'sms' AND c.direction = 'outbound'
+       AND COALESCE(c.sent_at, c.created_at) >= ?
+       AND NOT EXISTS (
+         SELECT 1 FROM realtor_broadcast_recipients r
+         WHERE r.tenant_id = ? AND r.sms_ext_id IS NOT NULL AND r.sms_ext_id = c.external_id
+       )`,
+    [tenantId, sinceUtc, tenantId],
+  );
+
+  const broadcastSmsSegments = await scalar(
+    pool,
+    `SELECT COALESCE(SUM(CEIL(GREATEST(CHAR_LENGTH(COALESCE(rb.body_sms,'')), 1) / 160.0)), 0) AS v
+     FROM realtor_broadcast_recipients r
+     JOIN realtor_broadcasts rb ON rb.id = r.broadcast_id
+     WHERE r.tenant_id = ? AND r.sms_status IN ('sent', 'delivered')
+       AND r.sent_at >= ?`,
+    [tenantId, sinceUtc],
+  );
+
+  const totalEmailSends = await scalar(
+    pool,
+    `SELECT COUNT(*) AS v FROM communications
+     WHERE tenant_id = ? AND communication_type = 'email' AND direction = 'outbound'
+       AND COALESCE(sent_at, created_at) >= ?`,
+    [tenantId, sinceUtc],
+  );
+
+  const broadcastEmailSends = await scalar(
+    pool,
+    `SELECT COUNT(*) AS v FROM realtor_broadcast_recipients
+     WHERE tenant_id = ? AND email_status = 'sent' AND sent_at >= ?`,
+    [tenantId, sinceUtc],
+  );
+
+  const callsLogged = await scalar(
+    pool,
+    `SELECT COUNT(*) AS v FROM communications
+     WHERE tenant_id = ? AND communication_type = 'call'
+       AND COALESCE(sent_at, created_at) >= ?`,
+    [tenantId, sinceUtc],
+  );
+
+  const voiceMinutesRecorded = Math.round(
+    await scalar(
+      pool,
+      `SELECT ROUND(COALESCE(SUM(recording_duration), 0) / 60, 2) AS v
+       FROM communications
+       WHERE tenant_id = ? AND communication_type = 'call'
+         AND COALESCE(sent_at, created_at) >= ?`,
+      [tenantId, sinceUtc],
+    ),
+  );
+
+  const schedulerBookings = await scalar(
+    pool,
+    `SELECT COUNT(*) AS v FROM scheduled_meetings
+     WHERE tenant_id = ? AND created_at >= ?`,
+    [tenantId, sinceUtc],
+  );
+
+  const mortgiAiTokens = await scalar(
+    pool,
+    `SELECT COALESCE(SUM(tokens_used), 0) AS v FROM ai_chat_sessions
+     WHERE tenant_id = ? AND updated_at >= ?`,
+    [tenantId, sinceUtc],
+  );
+
+  const mortgiSessions = await scalar(
+    pool,
+    `SELECT COUNT(*) AS v FROM ai_chat_sessions
+     WHERE tenant_id = ? AND created_at >= ?`,
+    [tenantId, sinceUtc],
+  );
+
+  const mortgiUserMessages = await scalar(
+    pool,
+    `SELECT COALESCE(SUM(FLOOR(JSON_LENGTH(messages) / 2)), 0) AS v
+     FROM ai_chat_sessions WHERE tenant_id = ? AND updated_at >= ?`,
+    [tenantId, sinceUtc],
+  );
+
+  const totalSmsSegments = convoSmsSegments + broadcastSmsSegments;
+
+  return {
+    periodStart,
+    periodEnd,
+    tenantId,
+    totalSmsSegments,
+    broadcastSmsSegments,
+    convoSmsSegments,
+    totalEmailSends,
+    broadcastEmailSends,
+    callsLogged,
+    voiceMinutesRecorded,
+    voiceMinutesEstimated: Math.round(callsLogged * VOICE_MIN_PER_CALL_EST),
+    schedulerBookings,
+    mortgiAiTokens,
+    mortgiSessions,
+    mortgiUserMessages,
+  };
+}
+
+function createQuotaService(pool: Pool) {
+  async function getMode(tenantId: number): Promise<BillingQuotaMode> {
+    return parseMode(
+      await getTenantSetting(pool, tenantId, "billing_quota_mode", "off"),
+    );
+  }
+
+  async function writeLedger(
+    conn: Pool | PoolConnection,
+    tenantId: number,
+    req: ConsumeRequest,
+    action: "grant" | "consume" | "reserve" | "capture" | "release" | "top_up",
+    idempotencyKey?: string | null,
+  ): Promise<void> {
+    await conn.query(
+      `INSERT INTO tenant_usage_ledger
+         (tenant_id, dimension, units, source, ref_type, ref_id, action, metadata_json, idempotency_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        tenantId,
+        req.dimension,
+        req.units,
+        req.source,
+        req.refType ?? null,
+        req.refId ?? null,
+        action,
+        req.metadata ? JSON.stringify(req.metadata) : null,
+        idempotencyKey ?? null,
+      ],
+    );
+  }
+
+  async function adjustPeriod(
+    conn: Pool | PoolConnection,
+    tenantId: number,
+    dimension: UsageDimension,
+    deltas: { used?: number; reserved?: number },
+  ): Promise<void> {
+    const config = await getBillingConfig(pool, tenantId);
+    await ensurePeriodGrants(pool, tenantId, config);
+    const periodStart = currentPeriodStart(config);
+    const included = includedForDimension(dimension, config.plan);
+    const usedDelta = deltas.used ?? 0;
+    const reservedDelta = deltas.reserved ?? 0;
+    await conn.query(
+      `INSERT INTO tenant_usage_period
+         (tenant_id, period_start, dimension, included_units, used_units, reserved_units)
+       VALUES (?, ?, ?, ?, GREATEST(0, ?), GREATEST(0, ?))
+       ON DUPLICATE KEY UPDATE
+         used_units = GREATEST(0, used_units + ?),
+         reserved_units = GREATEST(0, reserved_units + ?),
+         updated_at = UTC_TIMESTAMP()`,
+      [
+        tenantId,
+        periodStart,
+        dimension,
+        included,
+        Math.max(0, usedDelta),
+        Math.max(0, reservedDelta),
+        usedDelta,
+        reservedDelta,
+      ],
+    );
+  }
+
+  async function evaluateUsage(
+    tenantId: number,
+    dimension: UsageDimension,
+    additionalUnits = 0,
+  ): Promise<QuotaUsageSlice> {
+    const config = await getBillingConfig(pool, tenantId);
+    await ensurePeriodGrants(pool, tenantId, config);
+    const periodStart = currentPeriodStart(config);
+    const included = includedForDimension(dimension, config.plan);
+    const row = await readPeriodRow(pool, tenantId, periodStart, dimension);
+    const projected = row.used + row.reserved + additionalUnits;
+    return {
+      dimension,
+      used: row.used,
+      included: row.included || included,
+      reserved: row.reserved,
+      pct: pct(projected, row.included || included),
+    };
+  }
+
+  async function isOverageEnabled(tenantId: number): Promise<boolean> {
+    return parseBool(
+      await getTenantSetting(
+        pool,
+        tenantId,
+        "billing_overage_enabled",
+        "false",
+      ),
+    );
+  }
+
+  async function billingCostActionGate(
+    tenantId: number,
+  ): Promise<QuotaResult | null> {
+    const config = await getBillingConfig(pool, tenantId);
+    // Subscription ladder and quota blocks only apply in enforce mode.
+    if (config.billingQuotaMode !== "enforce") return null;
+    const quota = await getUnifiedQuotaSummary(pool, tenantId);
+    const access = await getBillingAccessState(pool, tenantId, config, {
+      quota,
+    });
+    if (!access.blocksCostActions) return null;
+    return {
+      allowed: false,
+      mode: config.billingQuotaMode,
+      recorded: false,
+      billingBlocked: true,
+      billingAccessLevel: access.level,
+      billingHeadline: access.headline,
+      billingDetail: access.detail,
+      suggestedPackId: access.suggestedPackId,
+    };
+  }
+
+  return {
+    async check(tenantId: number, req: ConsumeRequest): Promise<QuotaResult> {
+      const billingGate = await billingCostActionGate(tenantId);
+      if (billingGate) return billingGate;
+
+      const mode = await getMode(tenantId);
+      if (mode === "off") {
+        return { allowed: true, mode, recorded: false };
+      }
+
+      if (mode === "shadow") {
+        await writeLedger(pool, tenantId, req, "consume");
+        await adjustPeriod(pool, tenantId, req.dimension, { used: req.units });
+        const usage = await evaluateUsage(tenantId, req.dimension);
+        return { allowed: true, mode, recorded: true, usage };
+      }
+
+      const usage = await evaluateUsage(tenantId, req.dimension, req.units);
+      const overageEnabled = await isOverageEnabled(tenantId);
+
+      if (mode === "warn") {
+        await writeLedger(pool, tenantId, req, "consume");
+        await adjustPeriod(pool, tenantId, req.dimension, { used: req.units });
+        return {
+          allowed: true,
+          mode,
+          recorded: true,
+          usage,
+          warn: usage.pct >= 80,
+        };
+      }
+
+      if (usage.pct >= 100 && !overageEnabled) {
+        return {
+          allowed: false,
+          mode,
+          recorded: false,
+          quotaExceeded: true,
+          usage,
+        };
+      }
+
+      await writeLedger(pool, tenantId, req, "consume");
+      await adjustPeriod(pool, tenantId, req.dimension, { used: req.units });
+      return {
+        allowed: true,
+        mode,
+        recorded: true,
+        usage,
+        warn: usage.pct >= 80,
+      };
+    },
+
+    async consume(tenantId: number, req: ConsumeRequest): Promise<QuotaResult> {
+      return this.check(tenantId, req);
+    },
+
+    /** Record usage after a successful vendor call (no re-gate). */
+    async recordConsumption(
+      tenantId: number,
+      req: ConsumeRequest,
+    ): Promise<void> {
+      const mode = await getMode(tenantId);
+      if (mode === "off") return;
+      await writeLedger(pool, tenantId, req, "consume");
+      await adjustPeriod(pool, tenantId, req.dimension, { used: req.units });
+    },
+
+    async precheck(
+      tenantId: number,
+      req: ConsumeRequest,
+    ): Promise<QuotaResult> {
+      const billingGate = await billingCostActionGate(tenantId);
+      if (billingGate) return billingGate;
+
+      const mode = await getMode(tenantId);
+      if (mode === "off" || mode === "shadow") {
+        return { allowed: true, mode, recorded: false };
+      }
+      const usage = await evaluateUsage(tenantId, req.dimension, req.units);
+      const overageEnabled = await isOverageEnabled(tenantId);
+      if (mode === "warn") {
+        return {
+          allowed: true,
+          mode,
+          recorded: false,
+          usage,
+          warn: usage.pct >= 80,
+        };
+      }
+      if (usage.pct >= 100 && !overageEnabled) {
+        return {
+          allowed: false,
+          mode,
+          recorded: false,
+          quotaExceeded: true,
+          usage,
+        };
+      }
+      return {
+        allowed: true,
+        mode,
+        recorded: false,
+        usage,
+        warn: usage.pct >= 80,
+      };
+    },
+
+    async reserve(
+      tenantId: number,
+      units: ReserveUnits,
+      opts: { broadcastId?: number; source?: string; ttlMinutes?: number } = {},
+    ): Promise<ReserveResult> {
+      const billingGate = await billingCostActionGate(tenantId);
+      if (billingGate) {
+        return {
+          allowed: false,
+          mode: billingGate.mode,
+          reservationId: null,
+          billingBlocked: true,
+          billingAccessLevel: billingGate.billingAccessLevel,
+          billingHeadline: billingGate.billingHeadline,
+          billingDetail: billingGate.billingDetail,
+          suggestedPackId: billingGate.suggestedPackId,
+        };
+      }
+
+      const mode = await getMode(tenantId);
+      if (mode === "off") {
+        return { allowed: true, mode, reservationId: null };
+      }
+
+      for (const [dimension, unitCount] of Object.entries(units)) {
+        if (!unitCount || unitCount <= 0) continue;
+        const usage = await evaluateUsage(
+          tenantId,
+          dimension as UsageDimension,
+          unitCount,
+        );
+        if (mode === "enforce") {
+          const overageEnabled = await isOverageEnabled(tenantId);
+          if (usage.pct >= 100 && !overageEnabled) {
+            return {
+              allowed: false,
+              mode,
+              reservationId: null,
+              quotaExceeded: true,
+            };
+          }
+        }
+      }
+
+      const expiresAt = new Date(
+        Date.now() + (opts.ttlMinutes ?? 120) * 60_000,
+      );
+      const [result] = await pool.query(
+        `INSERT INTO tenant_usage_reservations
+           (tenant_id, broadcast_id, units_json, expires_at, status)
+         VALUES (?, ?, ?, ?, 'pending')`,
+        [tenantId, opts.broadcastId ?? null, JSON.stringify(units), expiresAt],
+      );
+      const reservationId = Number(
+        (result as { insertId?: number }).insertId ?? 0,
+      );
+
+      for (const [dimension, unitCount] of Object.entries(units)) {
+        if (!unitCount || unitCount <= 0) continue;
+        const req: ConsumeRequest = {
+          dimension: dimension as UsageDimension,
+          units: unitCount,
+          source: opts.source ?? "broadcast",
+          refType: "broadcast",
+          refId:
+            opts.broadcastId != null ? String(opts.broadcastId) : undefined,
+        };
+        await writeLedger(pool, tenantId, req, "reserve");
+        await adjustPeriod(pool, tenantId, req.dimension, {
+          reserved: unitCount,
+        });
+      }
+
+      return { allowed: true, mode, reservationId };
+    },
+
+    async captureBroadcastDelivery(
+      tenantId: number,
+      broadcastId: number,
+      units: ReserveUnits,
+      recipientId?: number,
+    ): Promise<void> {
+      const mode = await getMode(tenantId);
+      if (mode === "off") return;
+
+      const hasPending = await this.hasOutstandingBroadcastReservation(
+        tenantId,
+        broadcastId,
+      );
+
+      for (const [dimension, unitCount] of Object.entries(units)) {
+        if (!unitCount || unitCount <= 0) continue;
+        const req: ConsumeRequest = {
+          dimension: dimension as UsageDimension,
+          units: unitCount,
+          source: "broadcast",
+          refType: "broadcast_recipient",
+          refId:
+            recipientId != null ? String(recipientId) : String(broadcastId),
+        };
+        if (hasPending) {
+          await writeLedger(pool, tenantId, req, "capture");
+          await adjustPeriod(pool, tenantId, req.dimension, {
+            reserved: -unitCount,
+            used: unitCount,
+          });
+        } else {
+          // Reservation expired or released — meter delivery without touching reserved.
+          await writeLedger(pool, tenantId, req, "consume");
+          await adjustPeriod(pool, tenantId, req.dimension, {
+            used: unitCount,
+          });
+        }
+      }
+    },
+
+    async releaseBroadcastReservation(
+      tenantId: number,
+      broadcastId: number,
+    ): Promise<void> {
+      const mode = await getMode(tenantId);
+      if (mode === "off") return;
+
+      const config = await getBillingConfig(pool, tenantId);
+      const periodStart = currentPeriodStart(config);
+
+      // Release every pending row — resend can stack multiple reservations.
+      for (;;) {
+        const [resRows] = await pool.query<RowDataPacket[]>(
+          `SELECT id, units_json FROM tenant_usage_reservations
+           WHERE tenant_id = ? AND broadcast_id = ? AND status = 'pending'
+           ORDER BY id ASC LIMIT 1`,
+          [tenantId, broadcastId],
+        );
+        if (!resRows.length) break;
+
+        const reservationId = Number(resRows[0].id);
+        const units = safeJsonParse<ReserveUnits>(
+          String(resRows[0].units_json || "{}"),
+          {},
+        );
+
+        for (const [dimension, reservedTotal] of Object.entries(units)) {
+          if (!reservedTotal || reservedTotal <= 0) continue;
+          const dim = dimension as UsageDimension;
+          const row = await readPeriodRow(pool, tenantId, periodStart, dim);
+          const releaseUnits = Math.min(row.reserved, reservedTotal);
+          if (releaseUnits <= 0) continue;
+          const req: ConsumeRequest = {
+            dimension: dim,
+            units: releaseUnits,
+            source: "broadcast",
+            refType: "broadcast",
+            refId: String(broadcastId),
+          };
+          await writeLedger(pool, tenantId, req, "release");
+          await adjustPeriod(pool, tenantId, dim, { reserved: -releaseUnits });
+        }
+
+        await pool.query(
+          `UPDATE tenant_usage_reservations SET status = 'released', updated_at = UTC_TIMESTAMP()
+           WHERE id = ?`,
+          [reservationId],
+        );
+      }
+    },
+
+    async settleBroadcast(
+      tenantId: number,
+      broadcastId: number,
+      actual: ReserveUnits,
+    ): Promise<void> {
+      const mode = await getMode(tenantId);
+      if (mode === "off") return;
+
+      await this.captureBroadcastDelivery(tenantId, broadcastId, actual);
+      await this.releaseBroadcastReservation(tenantId, broadcastId);
+
+      await pool.query(
+        `UPDATE tenant_usage_reservations
+         SET status = 'captured', updated_at = UTC_TIMESTAMP()
+         WHERE tenant_id = ? AND broadcast_id = ? AND status = 'pending'`,
+        [tenantId, broadcastId],
+      );
+    },
+
+    async hasOutstandingBroadcastReservation(
+      tenantId: number,
+      broadcastId: number,
+    ): Promise<boolean> {
+      const [rows] = await pool.query<RowDataPacket[]>(
+        `SELECT id FROM tenant_usage_reservations
+         WHERE tenant_id = ? AND broadcast_id = ? AND status = 'pending'
+         LIMIT 1`,
+        [tenantId, broadcastId],
+      );
+      return rows.length > 0;
+    },
+
+    /** Extend TTL on active broadcast reservations (call periodically during long sends). */
+    async extendBroadcastReservation(
+      tenantId: number,
+      broadcastId: number,
+      ttlMinutes = 120,
+    ): Promise<void> {
+      const expiresAt = new Date(Date.now() + ttlMinutes * 60_000);
+      await pool.query(
+        `UPDATE tenant_usage_reservations
+         SET expires_at = ?, updated_at = UTC_TIMESTAMP()
+         WHERE tenant_id = ? AND broadcast_id = ? AND status = 'pending'`,
+        [expiresAt, tenantId, broadcastId],
+      );
+    },
+
+    /** Release quota held by pending reservations past expires_at (cron sweeper). */
+    async expireStaleReservations(limit = 200): Promise<{ expired: number }> {
+      const [resRows] = await pool.query<RowDataPacket[]>(
+        `SELECT tur.id, tur.tenant_id, tur.broadcast_id, tur.units_json
+         FROM tenant_usage_reservations tur
+         WHERE tur.status = 'pending'
+           AND tur.expires_at <= UTC_TIMESTAMP()
+           AND (
+             tur.broadcast_id IS NULL
+             OR NOT EXISTS (
+               SELECT 1 FROM realtor_broadcasts rb
+               WHERE rb.id = tur.broadcast_id
+                 AND rb.status IN ('queued', 'scheduled', 'sending')
+             )
+           )
+         ORDER BY tur.expires_at ASC
+         LIMIT ?`,
+        [limit],
+      );
+      if (!resRows.length) return { expired: 0 };
+
+      let expired = 0;
+      for (const row of resRows) {
+        const tenantId = Number(row.tenant_id);
+        const reservationId = Number(row.id);
+        const broadcastId =
+          row.broadcast_id != null ? Number(row.broadcast_id) : null;
+        const mode = await getMode(tenantId);
+        if (mode !== "off") {
+          const config = await getBillingConfig(pool, tenantId);
+          const periodStart = currentPeriodStart(config);
+          const units = safeJsonParse<ReserveUnits>(row.units_json, {});
+
+          for (const [dimension, reservedTotal] of Object.entries(units)) {
+            if (!reservedTotal || reservedTotal <= 0) continue;
+            const dim = dimension as UsageDimension;
+            const periodRow = await readPeriodRow(
+              pool,
+              tenantId,
+              periodStart,
+              dim,
+            );
+            const releaseUnits = Math.min(periodRow.reserved, reservedTotal);
+            if (releaseUnits <= 0) continue;
+            const req: ConsumeRequest = {
+              dimension: dim,
+              units: releaseUnits,
+              source: "broadcast",
+              refType: "reservation",
+              refId: String(reservationId),
+            };
+            await writeLedger(pool, tenantId, req, "release");
+            await adjustPeriod(pool, tenantId, dim, {
+              reserved: -releaseUnits,
+            });
+          }
+        }
+
+        await pool.query(
+          `UPDATE tenant_usage_reservations
+           SET status = 'expired', updated_at = UTC_TIMESTAMP()
+           WHERE id = ? AND status = 'pending'`,
+          [reservationId],
+        );
+        expired += 1;
+        if (broadcastId != null) {
+          console.log(
+            `[quota] Expired stale reservation #${reservationId} for broadcast #${broadcastId} (tenant ${tenantId})`,
+          );
+        }
+      }
+
+      return { expired };
+    },
+
+    async grantTopUp(
+      tenantId: number,
+      dimension: UsageDimension,
+      units: number,
+      note: string,
+    ): Promise<void> {
+      const req: ConsumeRequest = {
+        dimension,
+        units,
+        source: "top_up",
+        refType: "manual",
+        metadata: { note },
+      };
+      await writeLedger(pool, tenantId, req, "top_up");
+      const config = await getBillingConfig(pool, tenantId);
+      await ensurePeriodGrants(pool, tenantId, config);
+      const refreshed = await getBillingConfig(pool, tenantId);
+      const periodStart = currentPeriodStart(refreshed);
+      const planIncluded = includedForDimension(dimension, refreshed.plan);
+      await incrementPeriodIncluded(
+        pool,
+        tenantId,
+        periodStart,
+        dimension,
+        units,
+        planIncluded,
+      );
+    },
+
+    /** Idempotent Stripe fulfillment — ledger + period grant in one transaction. */
+    async fulfillStripeTopUp(
+      tenantId: number,
+      paymentIntentId: string,
+      dimension: UsageDimension,
+      units: number,
+      packId: string,
+      source: "webhook" | "confirm",
+    ): Promise<{
+      granted: boolean;
+      alreadyFulfilled: boolean;
+      repaired?: boolean;
+    }> {
+      const packDetails = resolveTopUpPackDetails(packId, dimension, units);
+      const req: ConsumeRequest = {
+        dimension,
+        units,
+        source: "stripe",
+        refType: "stripe_payment",
+        refId: paymentIntentId,
+        metadata: {
+          pack_id: packId,
+          fulfillment_source: source,
+          amount_cents:
+            packDetails.amountCents != null
+              ? String(packDetails.amountCents)
+              : undefined,
+          label: packDetails.label,
+        },
+      };
+      const idempotencyKey = `stripe_top_up:${paymentIntentId}`;
+
+      const config = await getBillingConfig(pool, tenantId);
+      await ensurePeriodGrants(pool, tenantId, config);
+      const refreshed = await getBillingConfig(pool, tenantId);
+      const periodStart = currentPeriodStart(refreshed);
+      const planIncluded = includedForDimension(dimension, refreshed.plan);
+
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+
+        let inserted = true;
+        try {
+          await writeLedger(conn, tenantId, req, "top_up", idempotencyKey);
+        } catch (err: unknown) {
+          if (!isMysqlDuplicateError(err)) throw err;
+          inserted = false;
+        }
+
+        const [ledgerRows] = await conn.query<RowDataPacket[]>(
+          `SELECT metadata_json FROM tenant_usage_ledger
+           WHERE tenant_id = ? AND idempotency_key = ?
+           LIMIT 1`,
+          [tenantId, idempotencyKey],
+        );
+        if (!ledgerRows.length) {
+          throw new Error(
+            `Top-up ledger row missing after fulfillment attempt: ${paymentIntentId}`,
+          );
+        }
+
+        const meta = safeJsonParse<Record<string, unknown>>(
+          ledgerRows[0].metadata_json,
+          {},
+        );
+        const periodApplied = meta.period_applied === true;
+
+        if (!periodApplied) {
+          await incrementPeriodIncluded(
+            conn,
+            tenantId,
+            periodStart,
+            dimension,
+            units,
+            planIncluded,
+          );
+          await conn.query(
+            `UPDATE tenant_usage_ledger
+             SET metadata_json = JSON_SET(
+               COALESCE(metadata_json, JSON_OBJECT()),
+               '$.period_applied', true,
+               '$.period_start', ?
+             )
+             WHERE tenant_id = ? AND idempotency_key = ?`,
+            [periodStart, tenantId, idempotencyKey],
+          );
+        }
+
+        await conn.commit();
+
+        if (inserted) {
+          return { granted: true, alreadyFulfilled: false };
+        }
+        if (!periodApplied) {
+          return { granted: true, alreadyFulfilled: false, repaired: true };
+        }
+        return { granted: false, alreadyFulfilled: true };
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
+    },
+
+    async persistCommunicationCost(
+      communicationId: number,
+      params: {
+        channel: OutboundCostChannel;
+        body?: string;
+        twilioPriceUsd?: number | null;
+      },
+    ): Promise<void> {
+      const costUsd = resolveOutboundCommunicationCostUsd(params);
+      if (costUsd <= 0) return;
+      await pool.query(`UPDATE communications SET cost = ? WHERE id = ?`, [
+        costUsd,
+        communicationId,
+      ]);
+    },
+
+    getBillingConfig: (tenantId: number) => getBillingConfig(pool, tenantId),
+    fetchUsageSnapshot: (tenantId: number) =>
+      fetchTenantUsageSnapshot(pool, tenantId),
+    getUnifiedQuotaSummary: (tenantId: number) =>
+      getUnifiedQuotaSummary(pool, tenantId),
+    ensurePeriodGrants: async (tenantId: number) => {
+      const config = await getBillingConfig(pool, tenantId);
+      await ensurePeriodGrants(pool, tenantId, config);
+    },
+  };
+}
+
+type QuotaService = ReturnType<typeof createQuotaService>;
+
+type SubscriptionRow = {
+  status: string;
+  past_due_at: string | null;
+  grace_ends_at: string | null;
+  restricted_at: string | null;
+  suspended_at: string | null;
+};
+
+async function loadSubscriptionRow(
+  pool: Pool,
+  tenantId: number,
+): Promise<SubscriptionRow | null> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT status, past_due_at, grace_ends_at, restricted_at, suspended_at
+     FROM tenant_subscription WHERE tenant_id = ? LIMIT 1`,
+    [tenantId],
+  );
+  return (rows[0] as SubscriptionRow | undefined) ?? null;
+}
+
+/** Advance subscription timeline and persist milestone timestamps. */
+async function resolveSubscriptionTimeline(
+  pool: Pool,
+  tenantId: number,
+  graceDays: number,
+  suspendDays: number,
+): Promise<SubscriptionRow | null> {
+  const sub = await loadSubscriptionRow(pool, tenantId);
+  if (!sub) return null;
+
+  const now = new Date();
+
+  if (sub.status === "active" || sub.status === "trialing") {
+    if (
+      sub.past_due_at ||
+      sub.grace_ends_at ||
+      sub.restricted_at ||
+      sub.suspended_at
+    ) {
+      await pool.query(
+        `UPDATE tenant_subscription
+         SET past_due_at = NULL, grace_ends_at = NULL,
+             restricted_at = NULL, suspended_at = NULL,
+             updated_at = UTC_TIMESTAMP()
+         WHERE tenant_id = ?`,
+        [tenantId],
+      );
+      return {
+        ...sub,
+        past_due_at: null,
+        grace_ends_at: null,
+        restricted_at: null,
+        suspended_at: null,
+      };
+    }
+    return sub;
+  }
+
+  if (sub.status !== "past_due") {
+    if (
+      (sub.status === "inactive" || sub.status === "incomplete") &&
+      (sub.past_due_at ||
+        sub.grace_ends_at ||
+        sub.restricted_at ||
+        sub.suspended_at)
+    ) {
+      await pool.query(
+        `UPDATE tenant_subscription
+         SET past_due_at = NULL, grace_ends_at = NULL,
+             restricted_at = NULL, suspended_at = NULL,
+             updated_at = UTC_TIMESTAMP()
+         WHERE tenant_id = ?`,
+        [tenantId],
+      );
+      return {
+        ...sub,
+        past_due_at: null,
+        grace_ends_at: null,
+        restricted_at: null,
+        suspended_at: null,
+      };
+    }
+    return sub;
+  }
+
+  let pastDueAt = sub.past_due_at ? new Date(sub.past_due_at) : null;
+  let graceEndsAt = sub.grace_ends_at ? new Date(sub.grace_ends_at) : null;
+  let restrictedAt = sub.restricted_at ? new Date(sub.restricted_at) : null;
+  let suspendedAt = sub.suspended_at ? new Date(sub.suspended_at) : null;
+
+  if (!pastDueAt) {
+    pastDueAt = now;
+    graceEndsAt = new Date(now.getTime() + graceDays * 86400000);
+  }
+  if (!graceEndsAt && pastDueAt) {
+    graceEndsAt = new Date(pastDueAt.getTime() + graceDays * 86400000);
+  }
+
+  const suspendAt = pastDueAt
+    ? new Date(pastDueAt.getTime() + suspendDays * 86400000)
+    : null;
+
+  if (graceEndsAt && now >= graceEndsAt && !restrictedAt) {
+    restrictedAt = now;
+  }
+  if (suspendAt && now >= suspendAt && !suspendedAt) {
+    suspendedAt = now;
+  }
+
+  const changed =
+    !sub.past_due_at ||
+    !sub.grace_ends_at ||
+    (restrictedAt && !sub.restricted_at) ||
+    (suspendedAt && !sub.suspended_at);
+
+  if (changed) {
+    await pool.query(
+      `UPDATE tenant_subscription
+       SET past_due_at = ?, grace_ends_at = ?,
+           restricted_at = ?, suspended_at = ?,
+           updated_at = UTC_TIMESTAMP()
+       WHERE tenant_id = ?`,
+      [
+        pastDueAt?.toISOString().slice(0, 19).replace("T", " ") ?? null,
+        graceEndsAt?.toISOString().slice(0, 19).replace("T", " ") ?? null,
+        restrictedAt?.toISOString().slice(0, 19).replace("T", " ") ?? null,
+        suspendedAt?.toISOString().slice(0, 19).replace("T", " ") ?? null,
+        tenantId,
+      ],
+    );
+  }
+
+  return {
+    status: sub.status,
+    past_due_at: pastDueAt?.toISOString() ?? null,
+    grace_ends_at: graceEndsAt?.toISOString() ?? null,
+    restricted_at: restrictedAt?.toISOString() ?? null,
+    suspended_at: suspendedAt?.toISOString() ?? null,
+  };
+}
+
+/** Ensure a subscription row exists (idempotent bootstrap). */
+async function ensureTenantSubscription(
+  pool: Pool,
+  tenantId: number,
+): Promise<void> {
+  const monthStart = new Date().toISOString().slice(0, 7) + "-01";
+  await pool.query(
+    `INSERT INTO tenant_subscription (
+       tenant_id, plan_code, status, platform_fee_usd, period_start, period_end,
+       included_sms_segments, included_voice_minutes, included_email_sends,
+       included_scheduler_bookings, included_mortgi_ai_tokens, overage_enabled
+     ) VALUES (?, 'platform_standard', 'active', ?, ?, LAST_DAY(?), ?, ?, ?, ?, ?, 0)
+     ON DUPLICATE KEY UPDATE updated_at = UTC_TIMESTAMP()`,
+    [
+      tenantId,
+      BILLING_PLAN_DEFAULTS.platformFeeUsd,
+      monthStart,
+      monthStart,
+      BILLING_PLAN_DEFAULTS.includedSmsSegments,
+      BILLING_PLAN_DEFAULTS.includedVoiceMinutes,
+      BILLING_PLAN_DEFAULTS.includedEmailSends,
+      BILLING_PLAN_DEFAULTS.includedSchedulerBookings,
+      BILLING_PLAN_DEFAULTS.includedMortgiAiTokens,
+    ],
+  );
+}
+
+async function markSubscriptionPastDue(
+  pool: Pool,
+  tenantId: number,
+  graceDays: number,
+): Promise<void> {
+  await ensureTenantSubscription(pool, tenantId);
+  const now = new Date();
+  const graceEnds = new Date(now.getTime() + graceDays * 86400000);
+  const fmt = (d: Date) => d.toISOString().slice(0, 19).replace("T", " ");
+  await pool.query(
+    `UPDATE tenant_subscription
+     SET status = 'past_due',
+         past_due_at = COALESCE(past_due_at, ?),
+         grace_ends_at = COALESCE(grace_ends_at, ?),
+         restricted_at = NULL,
+         suspended_at = NULL,
+         updated_at = UTC_TIMESTAMP()
+     WHERE tenant_id = ?`,
+    [fmt(now), fmt(graceEnds), tenantId],
+  );
+}
+
+async function markSubscriptionActive(
+  pool: Pool,
+  tenantId: number,
+): Promise<void> {
+  await ensureTenantSubscription(pool, tenantId);
+  await pool.query(
+    `UPDATE tenant_subscription
+     SET status = 'active',
+         past_due_at = NULL,
+         grace_ends_at = NULL,
+         restricted_at = NULL,
+         suspended_at = NULL,
+         updated_at = UTC_TIMESTAMP()
+     WHERE tenant_id = ?`,
+    [tenantId],
+  );
+}
+
+async function getBillingAccessState(
+  pool: Pool,
+  tenantId: number,
+  config: BillingConfig,
+  options?: {
+    quota?: UnifiedQuotaSummary | null;
+    pctSms?: number;
+    pctEmail?: number;
+    pctVoice?: number;
+    pctScheduler?: number;
+    pctMortgi?: number;
+    suggestedPackId?: string | null;
+  },
+): Promise<BillingAccessState> {
+  const graceDays = Math.max(
+    1,
+    Number(await getTenantSetting(pool, tenantId, "billing_grace_days", "3")),
+  );
+  const suspendDays = Math.max(
+    graceDays + 1,
+    Number(await getTenantSetting(pool, tenantId, "billing_suspend_days", "7")),
+  );
+
+  await ensureBillingOnboardingStarted(pool, tenantId, config.billingUiEnabled);
+  const onboardingStartedAt = await getOnboardingStartedAt(pool, tenantId);
+
+  const sub = await resolveSubscriptionTimeline(
+    pool,
+    tenantId,
+    graceDays,
+    suspendDays,
+  );
+
+  const pctSms = options?.pctSms ?? options?.quota?.sms_segments.pct ?? 0;
+  const pctEmail = options?.pctEmail ?? options?.quota?.email_sends.pct ?? 0;
+  const pctVoice = options?.pctVoice ?? options?.quota?.voice_minutes.pct ?? 0;
+  const pctScheduler =
+    options?.pctScheduler ?? options?.quota?.scheduler_bookings.pct ?? 0;
+  const pctMortgi =
+    options?.pctMortgi ?? options?.quota?.mortgi_ai_tokens.pct ?? 0;
+
+  const suggestedPackId =
+    options?.suggestedPackId ??
+    (() => {
+      const slices = [
+        { pct: pctSms, pack: "sms_1k" },
+        { pct: pctEmail, pack: "email_1k" },
+        { pct: pctVoice, pack: "voice_1k" },
+        { pct: pctScheduler, pack: "scheduler_50" },
+        { pct: pctMortgi, pack: "mortgi_100k" },
+      ].sort((a, b) => b.pct - a.pct);
+      return slices[0].pct >= 70 ? slices[0].pack : "sms_1k";
+    })();
+
+  return computeBillingAccessState({
+    billingQuotaMode: config.billingUiEnabled ? config.billingQuotaMode : "off",
+    billingUiEnabled: config.billingUiEnabled,
+    billingOverageEnabled: config.billingOverageEnabled,
+    subscriptionStatus: sub?.status ?? config.subscription?.status ?? "active",
+    pastDueAt: sub?.past_due_at ?? null,
+    graceEndsAt: sub?.grace_ends_at ?? null,
+    restrictedAt: sub?.restricted_at ?? null,
+    suspendedAt: sub?.suspended_at ?? null,
+    onboardingStartedAt,
+    graceDays,
+    suspendDays,
+    pctSms,
+    pctEmail,
+    pctVoice,
+    pctScheduler,
+    pctMortgi,
+    suggestedPackId,
+  });
+}
+
+async function getGraceDaysForTenant(
+  pool: Pool,
+  tenantId: number,
+): Promise<number> {
+  const graceDays = Math.max(
+    1,
+    Number(await getTenantSetting(pool, tenantId, "billing_grace_days", "3")),
+  );
+  return graceDays;
+}
+
+async function getOnboardingStartedAt(
+  pool: Pool,
+  tenantId: number,
+): Promise<string | null> {
+  const raw = await getTenantSetting(
+    pool,
+    tenantId,
+    "billing_onboarding_started_at",
+    "",
+  );
+  if (!raw) return null;
+  const parsed = Date.parse(raw);
+  if (Number.isNaN(parsed)) return null;
+  return new Date(parsed).toISOString();
+}
+
+/** Start deploy onboarding grace clock when billing UI is enabled (once per tenant). */
+async function ensureBillingOnboardingStarted(
+  pool: Pool,
+  tenantId: number,
+  billingUiEnabled: boolean,
+): Promise<string | null> {
+  const existing = await getOnboardingStartedAt(pool, tenantId);
+  if (existing) return existing;
+  if (!billingUiEnabled) return null;
+
+  const now = new Date();
+  const iso = now.toISOString();
+  await pool.query(
+    `INSERT INTO system_settings
+       (tenant_id, setting_key, setting_value, setting_type, description)
+     VALUES (?, 'billing_onboarding_started_at', ?, 'string', 'UTC ISO timestamp when billing went live — starts onboarding grace')
+     ON DUPLICATE KEY UPDATE
+       setting_value = VALUES(setting_value),
+       setting_type = VALUES(setting_type),
+       description = VALUES(description),
+       updated_at = UTC_TIMESTAMP()`,
+    [tenantId, iso],
+  );
+  return iso;
+}
+
+async function getBillingTeamNotice(
+  pool: Pool,
+  tenantId: number,
+  config: BillingConfig,
+  options?: { quota?: UnifiedQuotaSummary | null },
+): Promise<BillingTeamNotice> {
+  const access = await getBillingAccessState(pool, tenantId, config, options);
+  return buildBillingTeamNotice(access);
+}
+
+function billingAccessDeniedPayload(access: BillingAccessState) {
+  return {
+    error: access.headline,
+    message: access.detail,
+    billing_access_level: access.level,
+    billing_action_required: true,
+  };
+}
+
+const BILLING_LOGO_URL =
+  "https://disruptinglabs.com/data/themortgageprofessionals/assets/images/logo.png";
+
+type BillingTopUpReceiptParams = {
+  recipientName: string;
+  companyName: string;
+  packLabel: string;
+  units: number;
+  dimension: UsageDimension;
+  amountUsd: number;
+  paymentIntentId: string;
+  billingUrl: string;
+  paidAt: Date;
+};
+
+const DIMENSION_LABELS: Record<UsageDimension, string> = {
+  sms_segments: "SMS segments",
+  voice_minutes: "Voice minutes",
+  email_sends: "Email sends",
+  scheduler_bookings: "Scheduler bookings",
+  mortgi_ai_tokens: "Mortgi AI tokens",
+};
+
+function formatUsd(amount: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(amount);
+}
+
+function formatUnits(units: number, dimension: UsageDimension): string {
+  const label = DIMENSION_LABELS[dimension] ?? dimension;
+  return `${units.toLocaleString("en-US")} ${label}`;
+}
+
+/** Branded HTML receipt for Stripe quota top-ups (matches share-link / voicemail layout). */
+function buildBillingTopUpReceiptEmailHtml(
+  params: BillingTopUpReceiptParams,
+): string {
+  const {
+    recipientName,
+    companyName,
+    packLabel,
+    units,
+    dimension,
+    amountUsd,
+    paymentIntentId,
+    billingUrl,
+    paidAt,
+  } = params;
+
+  const paidAtFormatted = paidAt.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "America/Los_Angeles",
+  });
+
+  const receiptRef = paymentIntentId.startsWith("pi_")
+    ? paymentIntentId.slice(3, 11).toUpperCase()
+    : paymentIntentId.slice(0, 8).toUpperCase();
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payment receipt — ${companyName}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
+        <tr>
+          <td style="background-color:#ffffff;padding:24px 32px;border-radius:16px 16px 0 0;border-bottom:3px solid #e8192c;text-align:center;">
+            <img src="${BILLING_LOGO_URL}" alt="${companyName}" style="height:52px;width:auto;display:inline-block;" />
+          </td>
+        </tr>
+        <tr>
+          <td style="background-color:#ffffff;padding:40px 32px 32px;">
+            <p style="margin:0 0 6px 0;color:#e8192c;font-size:12px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;">Payment receipt</p>
+            <h2 style="margin:0 0 12px 0;color:#0f172a;font-size:22px;font-weight:700;">Thank you for your payment</h2>
+            <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">
+              Hi <strong>${recipientName}</strong>, your quota top-up for <strong>${companyName}</strong> was successful. Capacity has been added to your account immediately.
+            </p>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:24px;">
+              <tr>
+                <td style="padding:20px 24px;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td style="padding:6px 0;color:#64748b;font-size:13px;width:140px;">Item</td>
+                      <td style="padding:6px 0;color:#0f172a;font-size:14px;font-weight:600;">${packLabel}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Capacity added</td>
+                      <td style="padding:6px 0;color:#0f172a;font-size:14px;">${formatUnits(units, dimension)}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Amount paid</td>
+                      <td style="padding:6px 0;color:#0f172a;font-size:16px;font-weight:700;">${formatUsd(amountUsd)}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Date</td>
+                      <td style="padding:6px 0;color:#0f172a;font-size:14px;">${paidAtFormatted} PT</td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Reference</td>
+                      <td style="padding:6px 0;color:#64748b;font-size:12px;font-family:ui-monospace,monospace;">${receiptRef}</td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
+              <tr>
+                <td align="center">
+                  <a href="${billingUrl}" style="display:inline-block;background-color:#e8192c;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:8px;font-weight:700;font-size:15px;letter-spacing:0.3px;">View billing &amp; usage →</a>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;line-height:1.5;">
+              This receipt confirms your one-time quota purchase. Monthly platform fees and subscription invoices are managed separately in billing.<br/>
+              If you did not authorize this payment, contact your platform administrator immediately.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background-color:#0f172a;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+            <p style="margin:0 0 4px 0;color:#ffffff;font-size:13px;font-weight:600;">${companyName}</p>
+            <p style="margin:0;color:#94a3b8;font-size:12px;">Platform billing &amp; usage</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+async function resolvePlatformOwnerRecipient(
+  pool: Pool,
+  tenantId: number,
+): Promise<{ email: string; name: string } | null> {
+  const recipients = await resolveBillingEmailRecipients(pool, tenantId);
+  return recipients[0] ?? null;
+}
+
+async function resolveAllPlatformOwnerRecipients(
+  pool: Pool,
+  tenantId: number,
+): Promise<Array<{ email: string; name: string }>> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT email, first_name, last_name
+     FROM brokers
+     WHERE tenant_id = ? AND role = 'admin' AND status = 'active'
+     ORDER BY id ASC`,
+    [tenantId],
+  );
+  return rows
+    .filter((row) => row.email && !String(row.email).startsWith("noemail_"))
+    .map((row) => ({
+      email: String(row.email),
+      name:
+        `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim() ||
+        "Platform owner",
+    }));
+}
+
+async function brokerNameForEmail(
+  pool: Pool,
+  tenantId: number,
+  email: string,
+  fallback = "Platform owner",
+): Promise<string> {
+  const [brokerRows] = await pool.query<RowDataPacket[]>(
+    `SELECT first_name, last_name
+     FROM brokers
+     WHERE tenant_id = ? AND email = ? AND status = 'active'
+     LIMIT 1`,
+    [tenantId, email],
+  );
+  const broker = brokerRows[0];
+  if (!broker) return fallback;
+  return (
+    `${broker.first_name ?? ""} ${broker.last_name ?? ""}`.trim() || fallback
+  );
+}
+
+/** Prefer explicit subscriber email, then stored subscriber, then all platform owners. */
+async function resolveBillingEmailRecipients(
+  pool: Pool,
+  tenantId: number,
+  explicitEmail?: string | null,
+): Promise<Array<{ email: string; name: string }>> {
+  if (explicitEmail && !explicitEmail.startsWith("noemail_")) {
+    return [
+      {
+        email: explicitEmail,
+        name: await brokerNameForEmail(pool, tenantId, explicitEmail),
+      },
+    ];
+  }
+
+  const stored = await getTenantSetting(
+    pool,
+    tenantId,
+    BILLING_SUBSCRIBER_EMAIL_KEY,
+    "",
+  );
+  if (stored && !stored.startsWith("noemail_")) {
+    return [
+      {
+        email: stored,
+        name: await brokerNameForEmail(pool, tenantId, stored),
+      },
+    ];
+  }
+
+  return resolveAllPlatformOwnerRecipients(pool, tenantId);
+}
+
+async function storeBillingSubscriberEmail(
+  pool: Pool,
+  tenantId: number,
+  email?: string | null,
+): Promise<void> {
+  if (!email || email.startsWith("noemail_")) return;
+  await pool.query(
+    `INSERT INTO system_settings (tenant_id, setting_key, setting_value, setting_type, description)
+     VALUES (?, ?, ?, 'string', 'Platform owner who subscribed — billing receipt recipient')
+     ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_at = UTC_TIMESTAMP()`,
+    [tenantId, BILLING_SUBSCRIBER_EMAIL_KEY, email],
+  );
+}
+
+async function fetchTenantCompanyName(
+  pool: Pool,
+  tenantId: number,
+  fallback = "The Mortgage Professionals",
+): Promise<string> {
+  const fromSettings = await getTenantSetting(
+    pool,
+    tenantId,
+    "company_name",
+    "",
+  );
+  if (fromSettings) return fromSettings;
+
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT COALESCE(company_name, name) AS name FROM tenants WHERE id = ? LIMIT 1`,
+    [tenantId],
+  );
+  return (rows[0]?.name as string | undefined) || fallback;
+}
+
+/** @deprecated Use TOP_UP_PACK_DEFINITIONS from @shared/billing-calculator */
+const TOP_UP_PACKS = TOP_UP_PACK_DEFINITIONS;
+
+type StripeFulfillFn = (
+  tenantId: number,
+  paymentIntentId: string,
+  dimension: UsageDimension,
+  units: number,
+  packId: string,
+  source: "webhook" | "confirm",
+) => Promise<{ granted: boolean; alreadyFulfilled: boolean }>;
+
+/** Fires once per successful top-up grant — used for Branded receipt emails. */
+type TopUpGrantedHandler = (params: {
+  tenantId: number;
+  paymentIntentId: string;
+  packId: string;
+  recipientEmail?: string;
+  amountCents: number;
+}) => void | Promise<void>;
+
+type StripePaymentMethodCard = {
+  brand?: string | null;
+  last4?: string | null;
+  exp_month?: number | null;
+  exp_year?: number | null;
+};
+
+type StripeClient = {
+  customers: {
+    create: (params: Record<string, unknown>) => Promise<{ id: string }>;
+    retrieve: (
+      id: string,
+      params?: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    update: (
+      id: string,
+      params: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+  };
+  setupIntents: {
+    create: (params: Record<string, unknown>) => Promise<{
+      id: string;
+      client_secret: string | null;
+    }>;
+    retrieve: (id: string) => Promise<{
+      id: string;
+      status: string;
+      payment_method: string | { id?: string } | null;
+      metadata: Record<string, string>;
+      customer: string | null;
+    }>;
+  };
+  checkout: {
+    sessions: {
+      create: (params: Record<string, unknown>) => Promise<{
+        url: string | null;
+        id: string;
+        payment_intent?: string | null;
+      }>;
+    };
+  };
+  billingPortal: {
+    sessions: {
+      create: (params: Record<string, unknown>) => Promise<{ url: string }>;
+    };
+  };
+  paymentIntents: {
+    create: (params: Record<string, unknown>) => Promise<{
+      id: string;
+      client_secret: string | null;
+      status: string;
+    }>;
+    retrieve: (id: string) => Promise<{
+      id: string;
+      status: string;
+      metadata: Record<string, string>;
+      amount: number;
+      customer?: string | null;
+      payment_method?: string | { id?: string } | null;
+    }>;
+  };
+  paymentMethods: {
+    retrieve: (id: string) => Promise<Record<string, unknown>>;
+    list: (params: Record<string, unknown>) => Promise<{
+      data: Array<Record<string, unknown>>;
+      has_more: boolean;
+    }>;
+  };
+  subscriptions: {
+    create: (
+      params: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    retrieve: (
+      id: string,
+      params?: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    update: (
+      id: string,
+      params: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    cancel: (id: string) => Promise<Record<string, unknown>>;
+    list: (params: Record<string, unknown>) => Promise<{
+      data: Array<Record<string, unknown>>;
+      has_more: boolean;
+    }>;
+  };
+  webhooks: {
+    constructEvent: (
+      payload: string | Buffer,
+      signature: string,
+      secret: string,
+    ) => {
+      id: string;
+      type: string;
+      data: { object: Record<string, unknown> };
+    };
+  };
+  invoices: {
+    list: (params: Record<string, unknown>) => Promise<{
+      data: Array<Record<string, unknown>>;
+      has_more: boolean;
+    }>;
+    retrieve: (
+      id: string,
+      params?: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    pay: (
+      id: string,
+      params?: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+  };
+};
+
+function getStripePublicConfig(): {
+  enabled: boolean;
+  publishableKey: string | null;
+  testMode: boolean;
+  webhookConfigured: boolean;
+  platformSubscriptionConfigured: boolean;
+} {
+  const secret = process.env.STRIPE_SECRET_KEY;
+  const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY || null;
+  const enabled = Boolean(secret && publishableKey);
+  return {
+    enabled,
+    publishableKey,
+    testMode: publishableKey?.startsWith("pk_test_") ?? false,
+    webhookConfigured: Boolean(process.env.STRIPE_WEBHOOK_SECRET),
+    platformSubscriptionConfigured: Boolean(getPlatformPriceId()),
+  };
+}
+
+function getPlatformPriceId(): string | null {
+  const id = process.env.STRIPE_PLATFORM_PRICE_ID?.trim();
+  return id && id.startsWith("price_") ? id : null;
+}
+
+function getBillingReturnBaseUrl(): string {
+  const raw =
+    process.env.ADMIN_URL ||
+    process.env.CLIENT_URL ||
+    process.env.BASE_URL ||
+    "http://localhost:8080";
+  return raw.replace(/\/$/, "");
+}
+
+/** Admin panel origin for broker emails and deep links — never the client portal. */
+function getAdminBaseUrl(): string {
+  const adminUrl = process.env.ADMIN_URL?.trim();
+  if (adminUrl) return adminUrl.replace(/\/$/, "");
+  const base = process.env.BASE_URL?.trim().replace(/\/$/, "");
+  if (base && /admin\./i.test(base)) return base;
+  return "https://the-mortgage-professionals.vercel.app";
+}
+
+type BillingSubscriptionReceiptParams = {
+  recipientName: string;
+  companyName: string;
+  amountUsd: number;
+  periodStart: string;
+  periodEnd: string;
+  subscriptionId: string;
+  invoiceId: string;
+  billingUrl: string;
+  paidAt: Date;
+};
+
+function billingReceiptSettingKey(invoiceId: string): string {
+  return `billing_receipt_sent_${invoiceId}`;
+}
+
+async function billingSubscriptionReceiptAlreadySent(
+  pool: Pool,
+  tenantId: number,
+  invoiceId: string,
+): Promise<boolean> {
+  const val = await getTenantSetting(
+    pool,
+    tenantId,
+    billingReceiptSettingKey(invoiceId),
+    "",
+  );
+  return val === "sent";
+}
+
+async function markBillingSubscriptionReceiptSent(
+  pool: Pool,
+  tenantId: number,
+  invoiceId: string,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO system_settings (tenant_id, setting_key, setting_value, setting_type, description)
+     VALUES (?, ?, 'sent', 'string', 'Subscription receipt email sent for Stripe invoice')
+     ON DUPLICATE KEY UPDATE setting_value = 'sent', updated_at = UTC_TIMESTAMP()`,
+    [tenantId, billingReceiptSettingKey(invoiceId)],
+  );
+}
+
+function billingPaymentFailedSettingKey(invoiceId: string): string {
+  return `billing_payment_failed_sent_${invoiceId}`;
+}
+
+async function billingPaymentFailedAlreadySent(
+  pool: Pool,
+  tenantId: number,
+  invoiceId: string,
+): Promise<boolean> {
+  const val = await getTenantSetting(
+    pool,
+    tenantId,
+    billingPaymentFailedSettingKey(invoiceId),
+    "",
+  );
+  return val === "sent";
+}
+
+async function markBillingPaymentFailedSent(
+  pool: Pool,
+  tenantId: number,
+  invoiceId: string,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO system_settings (tenant_id, setting_key, setting_value, setting_type, description)
+     VALUES (?, ?, 'sent', 'string', 'Payment failed notice sent for Stripe invoice')
+     ON DUPLICATE KEY UPDATE setting_value = 'sent', updated_at = UTC_TIMESTAMP()`,
+    [tenantId, billingPaymentFailedSettingKey(invoiceId)],
+  );
+}
+
+type BillingPaymentFailedParams = {
+  recipientName: string;
+  companyName: string;
+  amountUsd: number;
+  graceEndsAt: Date;
+  invoiceId: string;
+  billingUrl: string;
+  updatePaymentUrl?: string | null;
+};
+
+function buildBillingPaymentFailedEmailHtml(
+  params: BillingPaymentFailedParams,
+): string {
+  const {
+    recipientName,
+    companyName,
+    amountUsd,
+    graceEndsAt,
+    invoiceId,
+    billingUrl,
+    updatePaymentUrl,
+  } = params;
+
+  const graceFormatted = graceEndsAt.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "America/Los_Angeles",
+  });
+
+  const ref = invoiceId.startsWith("in_")
+    ? invoiceId.slice(3, 11).toUpperCase()
+    : invoiceId.slice(0, 8).toUpperCase();
+
+  const payCta = updatePaymentUrl
+    ? `<a href="${updatePaymentUrl}" style="display:inline-block;background-color:#e8192c;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:8px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Update payment method →</a>`
+    : `<a href="${billingUrl}" style="display:inline-block;background-color:#e8192c;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:8px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Open billing →</a>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Payment failed — ${companyName}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
+        <tr>
+          <td style="background-color:#ffffff;padding:24px 32px;border-radius:16px 16px 0 0;border-bottom:3px solid #e8192c;text-align:center;">
+            <img src="${BILLING_LOGO_URL}" alt="${companyName}" style="height:52px;width:auto;display:inline-block;" />
+          </td>
+        </tr>
+        <tr>
+          <td style="background-color:#ffffff;padding:40px 32px 32px;">
+            <p style="margin:0 0 6px 0;color:#e8192c;font-size:12px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;">Payment failed</p>
+            <h2 style="margin:0 0 12px 0;color:#0f172a;font-size:22px;font-weight:700;">Action required</h2>
+            <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">
+              Hi <strong>${recipientName}</strong>, we couldn't process the ${formatUsd(amountUsd)} monthly renewal for <strong>${companyName}</strong>. Outbound sends stay active during a short grace period, then pause if payment isn't updated.
+            </p>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#fff7ed;border:1px solid #fed7aa;border-radius:12px;margin-bottom:24px;">
+              <tr>
+                <td style="padding:20px 24px;">
+                  <p style="margin:0 0 8px 0;color:#9a3412;font-size:13px;font-weight:600;">Grace period ends</p>
+                  <p style="margin:0;color:#0f172a;font-size:16px;font-weight:700;">${graceFormatted} PT</p>
+                </td>
+              </tr>
+            </table>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:24px;">
+              <tr>
+                <td style="padding:20px 24px;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td style="padding:6px 0;color:#64748b;font-size:13px;width:140px;">Amount due</td>
+                      <td style="padding:6px 0;color:#0f172a;font-size:16px;font-weight:700;">${formatUsd(amountUsd)}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Reference</td>
+                      <td style="padding:6px 0;color:#64748b;font-size:12px;font-family:ui-monospace,monospace;">${ref}</td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
+              <tr>
+                <td align="center">${payCta}</td>
+              </tr>
+            </table>
+            <p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;line-height:1.5;">
+              Update your card before the grace period ends to avoid interruption to SMS, email, and other outbound features.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+function buildBillingSubscriptionReceiptEmailHtml(
+  params: BillingSubscriptionReceiptParams,
+): string {
+  const {
+    recipientName,
+    companyName,
+    amountUsd,
+    periodStart,
+    periodEnd,
+    subscriptionId,
+    invoiceId,
+    billingUrl,
+    paidAt,
+  } = params;
+
+  const paidAtFormatted = paidAt.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "America/Los_Angeles",
+  });
+
+  const ref = invoiceId.startsWith("in_")
+    ? invoiceId.slice(3, 11).toUpperCase()
+    : subscriptionId.replace("sub_", "").slice(0, 8).toUpperCase();
+
+  const plan = BILLING_PLAN_DEFAULTS;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Subscription confirmed — ${companyName}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
+        <tr>
+          <td style="background-color:#ffffff;padding:24px 32px;border-radius:16px 16px 0 0;border-bottom:3px solid #e8192c;text-align:center;">
+            <img src="${BILLING_LOGO_URL}" alt="${companyName}" style="height:52px;width:auto;display:inline-block;" />
+          </td>
+        </tr>
+        <tr>
+          <td style="background-color:#ffffff;padding:40px 32px 32px;">
+            <p style="margin:0 0 6px 0;color:#e8192c;font-size:12px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;">Subscription confirmed</p>
+            <h2 style="margin:0 0 12px 0;color:#0f172a;font-size:22px;font-weight:700;">You're all set</h2>
+            <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.6;">
+              Hi <strong>${recipientName}</strong>, your platform subscription for <strong>${companyName}</strong> is active. Your card is saved for monthly renewals and top-up purchases.
+            </p>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:24px;">
+              <tr>
+                <td style="padding:20px 24px;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td style="padding:6px 0;color:#64748b;font-size:13px;width:140px;">Plan</td>
+                      <td style="padding:6px 0;color:#0f172a;font-size:14px;font-weight:600;">Platform · ${formatUsd(amountUsd)}/month</td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Billing period</td>
+                      <td style="padding:6px 0;color:#0f172a;font-size:14px;">${periodStart} → ${periodEnd}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Included</td>
+                      <td style="padding:6px 0;color:#0f172a;font-size:14px;line-height:1.5;">
+                        ${plan.includedSmsSegments.toLocaleString()} SMS · ${plan.includedVoiceMinutes.toLocaleString()} voice min · ${plan.includedEmailSends.toLocaleString()} email
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Amount paid</td>
+                      <td style="padding:6px 0;color:#0f172a;font-size:16px;font-weight:700;">${formatUsd(amountUsd)}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Date</td>
+                      <td style="padding:6px 0;color:#0f172a;font-size:14px;">${paidAtFormatted} PT</td>
+                    </tr>
+                    <tr>
+                      <td style="padding:6px 0;color:#64748b;font-size:13px;">Reference</td>
+                      <td style="padding:6px 0;color:#64748b;font-size:12px;font-family:ui-monospace,monospace;">${ref}</td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:24px;">
+              <tr>
+                <td align="center">
+                  <a href="${billingUrl}" style="display:inline-block;background-color:#e8192c;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:8px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Open billing &amp; usage →</a>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;line-height:1.5;">
+              Included quotas renew each billing period. Top-ups are available anytime from billing if you need extra capacity.
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="background-color:#f1f5f9;padding:20px 32px;border-radius:0 0 16px 16px;text-align:center;">
+            <p style="margin:0;color:#94a3b8;font-size:11px;">© ${new Date().getFullYear()} ${companyName} · Powered by Encore CRM</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+function invoiceIdFromStripeSubscription(
+  subscription: Record<string, unknown>,
+): string {
+  const inv = subscription.latest_invoice;
+  if (typeof inv === "string" && inv) return inv;
+  if (inv && typeof inv === "object") {
+    return String((inv as { id?: string }).id ?? "");
+  }
+  return `sub_${String(subscription.id ?? "unknown")}`;
+}
+
+function invoiceAmountUsdFromSubscription(
+  subscription: Record<string, unknown>,
+): number {
+  const inv = subscription.latest_invoice;
+  if (inv && typeof inv === "object") {
+    const paid = Number((inv as { amount_paid?: number }).amount_paid ?? 0);
+    if (paid > 0) return paid / 100;
+  }
+  return BILLING_PLAN_DEFAULTS.platformFeeUsd;
+}
+
+/** Idempotent Branded subscription receipt (first payment + renewals). */
+async function sendBillingSubscriptionReceiptEmail(
+  pool: Pool,
+  tenantId: number,
+  subscription: Record<string, unknown>,
+  recipientEmail?: string | null,
+): Promise<{ sent: boolean; skipped?: string; error?: string }> {
+  const invoiceId = invoiceIdFromStripeSubscription(subscription);
+  if (!invoiceId) {
+    return { sent: false, skipped: "no_invoice_id" };
+  }
+  if (await billingSubscriptionReceiptAlreadySent(pool, tenantId, invoiceId)) {
+    return { sent: false, skipped: "already_sent" };
+  }
+
+  const recipients = await resolveBillingEmailRecipients(
+    pool,
+    tenantId,
+    recipientEmail,
+  );
+  if (!recipients.length) {
+    return { sent: false, skipped: "no_recipient" };
+  }
+
+  const companyName = await fetchTenantCompanyName(pool, tenantId);
+  const periodStart =
+    stripePeriodToSqlDate(subscription.current_period_start) ??
+    new Date().toISOString().slice(0, 10);
+  const periodEnd =
+    stripePeriodToSqlDate(subscription.current_period_end) ?? periodStart;
+  const subscriptionId = String(subscription.id ?? "");
+  const amountUsd = invoiceAmountUsdFromSubscription(subscription);
+  const billingUrl = `${getBillingReturnBaseUrl()}/admin/billing`;
+
+  let sentAny = false;
+  let lastError: string | undefined;
+
+  for (const recipient of recipients) {
+    const html = buildBillingSubscriptionReceiptEmailHtml({
+      recipientName: recipient.name,
+      companyName,
+      amountUsd,
+      periodStart,
+      periodEnd,
+      subscriptionId,
+      invoiceId,
+      billingUrl,
+      paidAt: new Date(),
+    });
+
+    const sendResult = await sendEmailMessage(
+      recipient.email,
+      `Subscription confirmed — ${companyName}`,
+      html,
+      true,
+      undefined,
+    );
+
+    if (sendResult.success) {
+      sentAny = true;
+    } else {
+      lastError = sendResult.error ?? "send_failed";
+    }
+  }
+
+  if (!sentAny) {
+    return { sent: false, error: lastError ?? "send_failed" };
+  }
+
+  await markBillingSubscriptionReceiptSent(pool, tenantId, invoiceId);
+  return { sent: true };
+}
+
+/** Idempotent payment-failed notice when Stripe renewal is declined. */
+async function sendBillingPaymentFailedEmail(
+  pool: Pool,
+  tenantId: number,
+  invoice: Record<string, unknown>,
+  graceEndsAt: Date,
+): Promise<{ sent: boolean; skipped?: string; error?: string }> {
+  const invoiceId = String(invoice.id ?? "");
+  if (!invoiceId) {
+    return { sent: false, skipped: "no_invoice_id" };
+  }
+  if (await billingPaymentFailedAlreadySent(pool, tenantId, invoiceId)) {
+    return { sent: false, skipped: "already_sent" };
+  }
+
+  const recipients = await resolveBillingEmailRecipients(pool, tenantId);
+  if (!recipients.length) {
+    return { sent: false, skipped: "no_recipient" };
+  }
+
+  const companyName = await fetchTenantCompanyName(pool, tenantId);
+  const amountUsd =
+    Number((invoice as { amount_due?: number }).amount_due ?? 0) / 100 ||
+    BILLING_PLAN_DEFAULTS.platformFeeUsd;
+  const billingUrl = `${getBillingReturnBaseUrl()}/admin/billing`;
+  const updatePaymentUrl =
+    (invoice as { hosted_invoice_url?: string | null }).hosted_invoice_url ??
+    billingUrl;
+
+  let sentAny = false;
+  let lastError: string | undefined;
+
+  for (const recipient of recipients) {
+    const html = buildBillingPaymentFailedEmailHtml({
+      recipientName: recipient.name,
+      companyName,
+      amountUsd,
+      graceEndsAt,
+      invoiceId,
+      billingUrl,
+      updatePaymentUrl,
+    });
+
+    const sendResult = await sendEmailMessage(
+      recipient.email,
+      `Payment failed — update your card (${companyName})`,
+      html,
+      true,
+      undefined,
+    );
+
+    if (sendResult.success) {
+      sentAny = true;
+    } else {
+      lastError = sendResult.error ?? "send_failed";
+    }
+  }
+
+  if (!sentAny) {
+    return { sent: false, error: lastError ?? "send_failed" };
+  }
+
+  await markBillingPaymentFailedSent(pool, tenantId, invoiceId);
+  return { sent: true };
+}
+
+/** Reset quota ledger/period rows to plan defaults for the canonical subscription period. */
+async function resetTenantBillingQuotaToPlanDefaults(
+  pool: Pool,
+  tenantId: number,
+): Promise<void> {
+  await pool.query(
+    `DELETE FROM tenant_usage_ledger WHERE tenant_id = ? AND action = 'top_up'`,
+    [tenantId],
+  );
+
+  const [subRows] = await pool.query<RowDataPacket[]>(
+    `SELECT period_start,
+            included_sms_segments, included_voice_minutes, included_email_sends,
+            included_scheduler_bookings, included_mortgi_ai_tokens
+     FROM tenant_subscription WHERE tenant_id = ? LIMIT 1`,
+    [tenantId],
+  );
+  const sub = subRows[0];
+  if (!sub) return;
+
+  const periodStart =
+    toSqlDate(sub.period_start) ?? currentCalendarMonthStart();
+
+  await pool.query(`DELETE FROM tenant_usage_period WHERE tenant_id = ?`, [
+    tenantId,
+  ]);
+
+  const dimensions: Array<[UsageDimension, number]> = [
+    [
+      "sms_segments",
+      Number(
+        sub.included_sms_segments ?? BILLING_PLAN_DEFAULTS.includedSmsSegments,
+      ),
+    ],
+    [
+      "voice_minutes",
+      Number(
+        sub.included_voice_minutes ??
+          BILLING_PLAN_DEFAULTS.includedVoiceMinutes,
+      ),
+    ],
+    [
+      "email_sends",
+      Number(
+        sub.included_email_sends ?? BILLING_PLAN_DEFAULTS.includedEmailSends,
+      ),
+    ],
+    [
+      "scheduler_bookings",
+      Number(
+        sub.included_scheduler_bookings ??
+          BILLING_PLAN_DEFAULTS.includedSchedulerBookings,
+      ),
+    ],
+    [
+      "mortgi_ai_tokens",
+      Number(
+        sub.included_mortgi_ai_tokens ??
+          BILLING_PLAN_DEFAULTS.includedMortgiAiTokens,
+      ),
+    ],
+  ];
+
+  for (const [dimension, includedUnits] of dimensions) {
+    await pool.query(
+      `INSERT INTO tenant_usage_period
+         (tenant_id, period_start, dimension, included_units, used_units, reserved_units)
+       VALUES (?, ?, ?, ?, 0, 0)`,
+      [tenantId, periodStart, dimension, includedUnits],
+    );
+  }
+}
+
+async function cancelAllStripeCustomerSubscriptions(
+  stripe: StripeClient,
+  customerId: string,
+): Promise<void> {
+  let startingAfter: string | undefined;
+  for (;;) {
+    const page = await stripe.subscriptions.list({
+      customer: customerId,
+      status: "all",
+      limit: 100,
+      ...(startingAfter ? { starting_after: startingAfter } : {}),
+    });
+    for (const sub of page.data) {
+      const status = String(sub.status ?? "");
+      if (status !== "canceled" && status !== "incomplete_expired") {
+        await stripe.subscriptions.cancel(String(sub.id));
+      }
+    }
+    if (!page.has_more || page.data.length === 0) break;
+    startingAfter = String(page.data[page.data.length - 1]?.id ?? "");
+    if (!startingAfter) break;
+  }
+}
+
+async function resetStripeSubscriptionForTest(
+  pool: Pool,
+  stripe: StripeClient,
+  tenantId: number,
+): Promise<{ reset: boolean; message: string }> {
+  const billing = await loadTenantStripeBilling(pool, tenantId);
+  const periodStart = currentCalendarMonthStart();
+
+  if (billing.stripeCustomerId) {
+    try {
+      await cancelAllStripeCustomerSubscriptions(
+        stripe,
+        billing.stripeCustomerId,
+      );
+    } catch (err) {
+      console.error(
+        "Stripe test reset: cancel customer subscriptions failed:",
+        err,
+      );
+      throw new Error("Failed to cancel Stripe test subscriptions");
+    }
+  } else if (billing.stripeSubscriptionId) {
+    try {
+      const sub = await stripe.subscriptions.retrieve(
+        billing.stripeSubscriptionId,
+      );
+      const status = String(sub.status ?? "");
+      if (status !== "canceled" && status !== "incomplete_expired") {
+        await stripe.subscriptions.cancel(billing.stripeSubscriptionId);
+      }
+    } catch (err) {
+      console.error("Stripe test reset cancel failed:", err);
+      throw new Error("Failed to cancel Stripe test subscription");
+    }
+  }
+
+  await pool.query(
+    `UPDATE tenant_subscription
+     SET stripe_subscription_id = NULL,
+         status = 'inactive',
+         period_start = ?,
+         period_end = NULL,
+         past_due_at = NULL,
+         grace_ends_at = NULL,
+         restricted_at = NULL,
+         suspended_at = NULL,
+         updated_at = UTC_TIMESTAMP()
+     WHERE tenant_id = ?`,
+    [periodStart, tenantId],
+  );
+
+  await resetTenantBillingQuotaToPlanDefaults(pool, tenantId);
+
+  await pool.query(
+    `DELETE FROM system_settings
+     WHERE tenant_id = ? AND setting_key LIKE 'billing_receipt_sent_%'`,
+    [tenantId],
+  );
+
+  await pool.query(`DELETE FROM stripe_webhook_events`);
+
+  return {
+    reset: true,
+    message:
+      "Test billing reset — subscription canceled, quotas cleared. Click “Start subscription checkout” to subscribe again.",
+  };
+}
+
+function mapStripeSubscriptionStatus(
+  status: string,
+): "active" | "trialing" | "past_due" | "canceled" | "inactive" {
+  const s = status.toLowerCase();
+  if (s === "active") return "active";
+  if (s === "trialing") return "trialing";
+  if (s === "canceled" || s === "incomplete_expired") return "canceled";
+  if (s === "past_due" || s === "unpaid") return "past_due";
+  if (s === "incomplete") return "inactive";
+  return "inactive";
+}
+
+function getSubscriptionPlatformPriceId(
+  subscription: Record<string, unknown>,
+): string | null {
+  const items = subscription.items as
+    | { data?: Array<{ price?: string | { id?: string } }> }
+    | undefined;
+  const price = items?.data?.[0]?.price;
+  if (!price) return null;
+  if (typeof price === "string") return price;
+  return price.id ?? null;
+}
+
+async function clearDbStripeSubscriptionId(
+  pool: Pool,
+  tenantId: number,
+): Promise<void> {
+  await pool.query(
+    `UPDATE tenant_subscription
+     SET stripe_subscription_id = NULL, status = 'inactive', updated_at = UTC_TIMESTAMP()
+     WHERE tenant_id = ?`,
+    [tenantId],
+  );
+}
+
+function stripePeriodToSqlDate(unixSeconds: unknown): string | null {
+  const n = Number(unixSeconds);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const d = new Date(n * 1000);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+/** Stripe Basil+ uses invoice.confirmation_secret; older API used payment_intent. Max 4 expand levels. */
+const SUBSCRIPTION_PAYMENT_EXPAND = [
+  "latest_invoice.confirmation_secret",
+  "latest_invoice.payment_intent",
+] as const;
+
+function extractSubscriptionPaymentClientSecret(
+  subscription: Record<string, unknown>,
+): string | null {
+  const invoice = subscription.latest_invoice as
+    | Record<string, unknown>
+    | string
+    | null
+    | undefined;
+  if (!invoice || typeof invoice === "string") return null;
+
+  const confirmationSecret = invoice.confirmation_secret as
+    | { client_secret?: string }
+    | null
+    | undefined;
+  if (typeof confirmationSecret?.client_secret === "string") {
+    return confirmationSecret.client_secret;
+  }
+
+  const pi = invoice.payment_intent as
+    | Record<string, unknown>
+    | string
+    | null
+    | undefined;
+  if (pi && typeof pi !== "string") {
+    const legacySecret = pi.client_secret;
+    if (typeof legacySecret === "string") return legacySecret;
+  }
+
+  const payments = invoice.payments as
+    | {
+        data?: Array<{
+          payment?: { payment_intent?: Record<string, unknown> | string };
+        }>;
+      }
+    | undefined;
+  const nestedPi = payments?.data?.[0]?.payment?.payment_intent;
+  if (nestedPi && typeof nestedPi !== "string") {
+    const nestedSecret = nestedPi.client_secret;
+    if (typeof nestedSecret === "string") return nestedSecret;
+  }
+
+  return null;
+}
+
+async function loadTenantStripeBilling(
+  pool: Pool,
+  tenantId: number,
+): Promise<{
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string | null;
+  status: string | null;
+}> {
+  const [rows] = await pool.query(
+    `SELECT stripe_customer_id, stripe_subscription_id, status
+     FROM tenant_subscription WHERE tenant_id = ? LIMIT 1`,
+    [tenantId],
+  );
+  const row = (
+    rows as {
+      stripe_customer_id?: string;
+      stripe_subscription_id?: string;
+      status?: string;
+    }[]
+  )[0];
+  return {
+    stripeCustomerId: row?.stripe_customer_id ?? null,
+    stripeSubscriptionId: row?.stripe_subscription_id ?? null,
+    status: row?.status ?? null,
+  };
+}
+
+async function syncStripeSubscriptionToDb(
+  pool: Pool,
+  tenantId: number,
+  subscription: Record<string, unknown>,
+): Promise<void> {
+  await ensureTenantSubscription(pool, tenantId);
+  const subId = String(subscription.id ?? "");
+  const mapped = mapStripeSubscriptionStatus(
+    String(subscription.status ?? "inactive"),
+  );
+  const periodStart = stripePeriodToSqlDate(subscription.current_period_start);
+  const periodEnd = stripePeriodToSqlDate(subscription.current_period_end);
+
+  const [prevRows] = await pool.query<RowDataPacket[]>(
+    `SELECT period_start FROM tenant_subscription WHERE tenant_id = ? LIMIT 1`,
+    [tenantId],
+  );
+  const previousPeriodStart = toSqlDate(prevRows[0]?.period_start);
+
+  await pool.query(
+    `UPDATE tenant_subscription
+     SET stripe_subscription_id = COALESCE(?, stripe_subscription_id),
+         status = ?,
+         period_start = COALESCE(?, period_start),
+         period_end = COALESCE(?, period_end),
+         updated_at = UTC_TIMESTAMP()
+     WHERE tenant_id = ?`,
+    [subId || null, mapped, periodStart, periodEnd, tenantId],
+  );
+
+  if (mapped === "active" || mapped === "trialing") {
+    await markSubscriptionActive(pool, tenantId);
+  } else if (mapped === "past_due") {
+    const graceDays = await getGraceDays(pool, tenantId);
+    await markSubscriptionPastDue(pool, tenantId, graceDays);
+  }
+
+  const periodChanged = isBillingPeriodTransition(
+    previousPeriodStart,
+    periodStart,
+  );
+  if (
+    periodChanged &&
+    periodStart &&
+    (mapped === "active" || mapped === "trialing" || mapped === "past_due")
+  ) {
+    const config = await getBillingConfig(pool, tenantId);
+    await ensurePeriodGrants(pool, tenantId, config);
+  }
+}
+
+function paymentMethodIdFromSetupIntent(
+  paymentMethod: string | { id?: string } | null | undefined,
+): string | null {
+  if (!paymentMethod) return null;
+  if (typeof paymentMethod === "string") return paymentMethod;
+  return paymentMethod.id ?? null;
+}
+
+function summarizePaymentMethod(
+  paymentMethod: Record<string, unknown> | null | undefined,
+): {
+  id: string;
+  brand: string;
+  last4: string;
+  expMonth: number;
+  expYear: number;
+} | null {
+  if (!paymentMethod || typeof paymentMethod !== "object") return null;
+  const id = String(paymentMethod.id ?? "");
+  const card = paymentMethod.card as StripePaymentMethodCard | undefined;
+  if (!id || !card?.last4) return null;
+  return {
+    id,
+    brand: String(card.brand ?? "card"),
+    last4: String(card.last4),
+    expMonth: Number(card.exp_month ?? 0),
+    expYear: Number(card.exp_year ?? 0),
+  };
+}
+
+async function fetchSavedPaymentMethodSummary(
+  stripe: StripeClient,
+  customerId: string,
+  subscriptionId?: string | null,
+): Promise<ReturnType<typeof summarizePaymentMethod>> {
+  try {
+    const customer = await stripe.customers.retrieve(customerId, {
+      expand: ["invoice_settings.default_payment_method"],
+    });
+    const invoiceSettings = customer.invoice_settings as
+      | { default_payment_method?: Record<string, unknown> | string | null }
+      | undefined;
+    const pm = invoiceSettings?.default_payment_method;
+    if (pm && typeof pm !== "string") {
+      const summarized = summarizePaymentMethod(pm);
+      if (summarized) return summarized;
+    }
+  } catch (err) {
+    console.warn("Stripe customer payment method lookup failed:", err);
+  }
+
+  if (!subscriptionId) return null;
+
+  try {
+    const sub = await stripe.subscriptions.retrieve(subscriptionId, {
+      expand: ["default_payment_method"],
+    });
+    const subPm = sub.default_payment_method;
+    if (subPm && typeof subPm !== "string") {
+      const summarized = summarizePaymentMethod(
+        subPm as Record<string, unknown>,
+      );
+      if (summarized) return summarized;
+    }
+    if (typeof subPm === "string") {
+      const retrieved = await stripe.paymentMethods.retrieve(subPm);
+      return summarizePaymentMethod(
+        retrieved as unknown as Record<string, unknown>,
+      );
+    }
+  } catch (err) {
+    console.warn("Stripe subscription payment method lookup failed:", err);
+  }
+
+  return null;
+}
+
+async function syncSubscriptionDefaultPaymentMethod(
+  pool: Pool,
+  stripe: StripeClient,
+  tenantId: number,
+  subscription: Record<string, unknown>,
+): Promise<ReturnType<typeof summarizePaymentMethod>> {
+  let pmId = paymentMethodIdFromSetupIntent(
+    subscription.default_payment_method as string | { id?: string } | null,
+  );
+
+  if (!pmId) {
+    const invoice = subscription.latest_invoice as
+      | Record<string, unknown>
+      | string
+      | null
+      | undefined;
+    if (invoice && typeof invoice !== "string") {
+      const pi = invoice.payment_intent as
+        | Record<string, unknown>
+        | string
+        | null
+        | undefined;
+      if (pi && typeof pi !== "string") {
+        pmId = paymentMethodIdFromSetupIntent(
+          pi.payment_method as string | { id?: string } | null,
+        );
+      }
+    }
+  }
+
+  if (!pmId) return null;
+
+  await applyDefaultPaymentMethod(pool, stripe, tenantId, pmId);
+  const billing = await loadTenantStripeBilling(pool, tenantId);
+  if (!billing.stripeCustomerId) return null;
+  return fetchSavedPaymentMethodSummary(
+    stripe,
+    billing.stripeCustomerId,
+    billing.stripeSubscriptionId,
+  );
+}
+
+async function applyDefaultPaymentMethod(
+  pool: Pool,
+  stripe: StripeClient,
+  tenantId: number,
+  paymentMethodId: string,
+): Promise<{ applied: boolean; brand: string | null }> {
+  const billing = await loadTenantStripeBilling(pool, tenantId);
+  if (!billing.stripeCustomerId) return { applied: false, brand: null };
+
+  // Never make a card the default if this account can't charge it (Amex on
+  // a Mexico-registered account) — renewals would fail forever.
+  const pm = await stripe.paymentMethods.retrieve(paymentMethodId);
+  const brand =
+    ((pm.card as { brand?: string } | undefined)?.brand ?? null) || null;
+  if (pm.type === "card" && !isSupportedCardBrand(brand)) {
+    console.warn(
+      `[billing] Not setting unsupported card brand as default: ${brand} (${paymentMethodId})`,
+    );
+    return { applied: false, brand };
+  }
+
+  await stripe.customers.update(billing.stripeCustomerId, {
+    invoice_settings: { default_payment_method: paymentMethodId },
+  });
+
+  // A subscription-level default_payment_method overrides the customer's, so
+  // set it on every live subscription in Stripe. Our row's
+  // stripe_subscription_id can point at an abandoned checkout attempt — using
+  // it left renewals charging a dead card after "Update card".
+  const subs = await stripe.subscriptions.list({
+    customer: billing.stripeCustomerId,
+    status: "all",
+    limit: 20,
+  });
+  for (const sub of subs.data) {
+    if (
+      ["active", "trialing", "past_due", "unpaid"].includes(
+        String(sub.status ?? ""),
+      )
+    ) {
+      await stripe.subscriptions.update(String(sub.id), {
+        default_payment_method: paymentMethodId,
+      });
+    }
+  }
+  return { applied: true, brand };
+}
+
+/**
+ * Card brands this Stripe account can actually charge. The platform account
+ * is registered in Mexico, where Amex is rejected with "Your card is not
+ * supported. Please use a Visa, MasterCard, or Carnet card". Override with
+ * STRIPE_SUPPORTED_CARD_BRANDS (comma-separated) if the account changes.
+ */
+function supportedCardBrands(): string[] {
+  const raw = process.env.STRIPE_SUPPORTED_CARD_BRANDS?.trim();
+  return (raw ? raw.split(",") : ["visa", "mastercard", "carnet"])
+    .map((b) => b.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function isSupportedCardBrand(
+  brand: string | null | undefined,
+): boolean {
+  return supportedCardBrands().includes(String(brand ?? "").toLowerCase());
+}
+
+// ── Overdue platform invoice (source of truth: Stripe) ──────────────────────
+// Drives the platform-owner "payment overdue" badge/interstitial and blocks
+// creating a new subscription while a renewal is unpaid. Deliberately reads
+// Stripe instead of tenant_subscription.status, which can be overwritten by
+// abandoned checkout attempts.
+
+type OverdueInvoiceInfo = {
+  invoice_id: string;
+  number: string | null;
+  amount_due_usd: number;
+  currency: string;
+  failed_at: string;
+  days_overdue: number;
+  attempt_count: number;
+  next_payment_attempt: string | null;
+  hosted_invoice_url: string | null;
+};
+
+const OVERDUE_INVOICE_CACHE_TTL_MS = 2 * 60 * 1000;
+const overdueInvoiceCache = new Map<
+  number,
+  { at: number; value: OverdueInvoiceInfo | null }
+>();
+
+function invalidateOverdueInvoiceCache(tenantId?: number): void {
+  if (tenantId == null) overdueInvoiceCache.clear();
+  else overdueInvoiceCache.delete(tenantId);
+}
+
+/**
+ * Oldest open, already-attempted renewal invoice with a balance. Ignores the
+ * first invoice of a never-paid checkout attempt (billing_reason
+ * "subscription_create"). Throws on Stripe errors (callers decide; errors
+ * are never cached).
+ */
+async function findOverdueStripeInvoice(
+  pool: Pool,
+  stripe: StripeClient,
+  tenantId: number,
+  opts: { fresh?: boolean } = {},
+): Promise<OverdueInvoiceInfo | null> {
+  const cached = overdueInvoiceCache.get(tenantId);
+  if (
+    !opts.fresh &&
+    cached &&
+    Date.now() - cached.at < OVERDUE_INVOICE_CACHE_TTL_MS
+  ) {
+    return cached.value;
+  }
+
+  const { stripeCustomerId } = await loadTenantStripeBilling(pool, tenantId);
+  if (!stripeCustomerId) {
+    overdueInvoiceCache.set(tenantId, { at: Date.now(), value: null });
+    return null;
+  }
+
+  const page = await stripe.invoices.list({
+    customer: stripeCustomerId,
+    status: "open",
+    limit: 20,
+  });
+  const candidates = page.data
+    .filter(
+      (inv) =>
+        Number(inv.amount_remaining ?? 0) > 0 &&
+        Number(inv.attempt_count ?? 0) >= 1 &&
+        String(inv.billing_reason ?? "") !== "subscription_create",
+    )
+    .sort((a, b) => Number(a.created ?? 0) - Number(b.created ?? 0));
+
+  const inv = candidates[0];
+  let value: OverdueInvoiceInfo | null = null;
+  if (inv) {
+    const transitions = (inv.status_transitions ?? {}) as {
+      finalized_at?: number | null;
+    };
+    const failedSec = Number(transitions.finalized_at ?? inv.created ?? 0);
+    const nextAttempt = inv.next_payment_attempt
+      ? Number(inv.next_payment_attempt)
+      : null;
+    value = {
+      invoice_id: String(inv.id),
+      number: (inv.number as string | null) ?? null,
+      amount_due_usd: Number(inv.amount_remaining ?? 0) / 100,
+      currency: String(inv.currency ?? "usd"),
+      failed_at: new Date(failedSec * 1000).toISOString(),
+      days_overdue: Math.max(
+        0,
+        Math.floor((Date.now() - failedSec * 1000) / 86400000),
+      ),
+      attempt_count: Number(inv.attempt_count ?? 0),
+      next_payment_attempt: nextAttempt
+        ? new Date(nextAttempt * 1000).toISOString()
+        : null,
+      hosted_invoice_url: (inv.hosted_invoice_url as string | null) ?? null,
+    };
+  }
+  overdueInvoiceCache.set(tenantId, { at: Date.now(), value });
+  return value;
+}
+
+// ── Pay the overdue renewal inside the app ──────────────────────────────────
+
+type OverduePaymentCard = {
+  id: string;
+  brand: string;
+  last4: string;
+  exp_month: number;
+  exp_year: number;
+  wallet: string | null;
+  is_default: boolean;
+  usable: boolean;
+  unusable_reason: string | null;
+};
+
+/** Issuer advice/reasons that mean "this card will never work — stop trying". */
+const DEAD_CARD_REASONS = new Set([
+  "invalid_account",
+  "lost_card",
+  "stolen_card",
+  "pickup_card",
+  "restricted_card",
+  "card_not_supported",
+]);
+
+const brandLabel = (brand: string) =>
+  brand === "amex"
+    ? "American Express"
+    : brand.charAt(0).toUpperCase() + brand.slice(1);
+
+/**
+ * Cards on file for the overdue-payment picker, each marked usable or not
+ * (unsupported brand, expired, or hard-declined on the overdue invoice).
+ * Usable cards first, then the customer's default.
+ */
+async function listOverduePaymentCards(
+  pool: Pool,
+  stripe: StripeClient,
+  tenantId: number,
+  overdue: OverdueInvoiceInfo | null,
+): Promise<OverduePaymentCard[]> {
+  const { stripeCustomerId } = await loadTenantStripeBilling(pool, tenantId);
+  if (!stripeCustomerId) return [];
+
+  const [customer, pms] = await Promise.all([
+    stripe.customers.retrieve(stripeCustomerId),
+    stripe.paymentMethods.list({
+      customer: stripeCustomerId,
+      type: "card",
+      limit: 20,
+    }),
+  ]);
+  const defaultPm = String(
+    ((customer.invoice_settings ?? {}) as { default_payment_method?: unknown })
+      .default_payment_method ?? "",
+  );
+
+  // Card the bank hard-declined on the overdue invoice (e.g. closed account).
+  const deadPms = new Set<string>();
+  if (overdue) {
+    try {
+      const inv = await stripe.invoices.retrieve(overdue.invoice_id, {
+        expand: ["payment_intent.latest_charge"],
+      });
+      const pi = inv.payment_intent as Record<string, unknown> | null;
+      const charge = (pi?.latest_charge ?? null) as Record<
+        string,
+        unknown
+      > | null;
+      const outcome = (charge?.outcome ?? {}) as {
+        advice_code?: string | null;
+        reason?: string | null;
+      };
+      if (
+        charge?.payment_method &&
+        (outcome.advice_code === "do_not_try_again" ||
+          DEAD_CARD_REASONS.has(String(outcome.reason ?? "")))
+      ) {
+        deadPms.add(String(charge.payment_method));
+      }
+    } catch (err) {
+      console.warn("[billing] Could not read last decline (non-fatal):", err);
+    }
+  }
+
+  const now = new Date();
+  const ym = now.getUTCFullYear() * 12 + now.getUTCMonth() + 1;
+  const cards = pms.data.map((pm): OverduePaymentCard => {
+    const card = (pm.card ?? {}) as {
+      brand?: string;
+      last4?: string;
+      exp_month?: number;
+      exp_year?: number;
+      wallet?: { type?: string } | null;
+    };
+    const brand = String(card.brand ?? "card");
+    const expMonth = Number(card.exp_month ?? 0);
+    const expYear = Number(card.exp_year ?? 0);
+    let reason: string | null = null;
+    if (!isSupportedCardBrand(brand)) {
+      reason = `${brandLabel(brand)} isn't accepted — use Visa or Mastercard`;
+    } else if (expYear * 12 + expMonth < ym) {
+      reason = "Expired";
+    } else if (deadPms.has(String(pm.id))) {
+      reason = "Declined by the bank — use another card";
+    }
+    return {
+      id: String(pm.id),
+      brand,
+      last4: String(card.last4 ?? ""),
+      exp_month: expMonth,
+      exp_year: expYear,
+      wallet: card.wallet?.type ?? null,
+      is_default: String(pm.id) === defaultPm,
+      usable: reason == null,
+      unusable_reason: reason,
+    };
+  });
+  return cards.sort(
+    (a, b) =>
+      Number(b.usable) - Number(a.usable) ||
+      Number(b.is_default) - Number(a.is_default),
+  );
+}
+
+type PayOverdueResult =
+  | { status: "paid"; invoice_id: string }
+  | { status: "requires_action"; client_secret: string }
+  | { status: "declined"; message: string }
+  | { status: "invalid"; message: string };
+
+async function finalizeOverduePayment(
+  pool: Pool,
+  stripe: StripeClient,
+  tenantId: number,
+  invoice: Record<string, unknown>,
+  paymentMethodId: string,
+): Promise<void> {
+  // The money has moved — nothing below may turn this into an error for the
+  // owner. Failures are logged; the invoice.payment_succeeded webhook also
+  // re-syncs the subscription.
+  invalidateOverdueInvoiceCache(tenantId);
+  try {
+    // Future renewals must use the card that just worked.
+    await applyDefaultPaymentMethod(pool, stripe, tenantId, paymentMethodId);
+  } catch (err) {
+    console.error("[billing] post-payment default card update failed:", err);
+  }
+  try {
+    const subRef = invoice.subscription;
+    const subId =
+      typeof subRef === "string"
+        ? subRef
+        : String((subRef as { id?: string } | null)?.id ?? "");
+    if (subId) {
+      const sub = await stripe.subscriptions.retrieve(subId);
+      await syncStripeSubscriptionToDb(pool, tenantId, sub);
+    }
+  } catch (err) {
+    console.error("[billing] post-payment subscription sync failed:", err);
+  }
+}
+
+/**
+ * Charge the overdue renewal invoice with a card on file, on-session (the
+ * owner is present, so 3-D Secure can be completed in the app).
+ */
+async function payOverdueInvoice(
+  pool: Pool,
+  stripe: StripeClient,
+  tenantId: number,
+  params: { invoiceId: string; paymentMethodId: string },
+): Promise<PayOverdueResult> {
+  const { invoiceId, paymentMethodId } = params;
+  if (!invoiceId || !paymentMethodId) {
+    return { status: "invalid", message: "Choose a card to pay with." };
+  }
+  const { stripeCustomerId } = await loadTenantStripeBilling(pool, tenantId);
+  if (!stripeCustomerId) {
+    return { status: "invalid", message: "No billing account on file." };
+  }
+
+  const invoice = await stripe.invoices.retrieve(invoiceId);
+  if (String(invoice.customer ?? "") !== stripeCustomerId) {
+    return { status: "invalid", message: "This invoice isn't yours." };
+  }
+  if (invoice.status === "paid") {
+    // e.g. second click, or returning after 3-D Secure.
+    await finalizeOverduePayment(
+      pool,
+      stripe,
+      tenantId,
+      invoice,
+      paymentMethodId,
+    );
+    return { status: "paid", invoice_id: invoiceId };
+  }
+  if (invoice.status !== "open") {
+    return {
+      status: "invalid",
+      message: "This invoice can no longer be paid.",
+    };
+  }
+
+  const pm = await stripe.paymentMethods.retrieve(paymentMethodId);
+  if (String(pm.customer ?? "") !== stripeCustomerId) {
+    return { status: "invalid", message: "That card isn't on your account." };
+  }
+  const brand = (pm.card as { brand?: string } | undefined)?.brand ?? null;
+  if (pm.type === "card" && !isSupportedCardBrand(brand)) {
+    return {
+      status: "declined",
+      message: `${brandLabel(String(brand))} cards aren't accepted. Please use a Visa or Mastercard.`,
+    };
+  }
+
+  try {
+    const paid = await stripe.invoices.pay(invoiceId, {
+      payment_method: paymentMethodId,
+      off_session: false,
+    });
+    if (paid.status === "paid") {
+      await finalizeOverduePayment(
+        pool,
+        stripe,
+        tenantId,
+        paid,
+        paymentMethodId,
+      );
+      return { status: "paid", invoice_id: invoiceId };
+    }
+  } catch (err) {
+    const e = err as {
+      code?: string;
+      type?: string;
+      message?: string;
+      raw?: { code?: string; message?: string };
+    };
+    const code = e.code ?? e.raw?.code ?? "";
+    // Bank asks for verification → hand the PaymentIntent to Stripe.js.
+    if (
+      code === "invoice_payment_intent_requires_action" ||
+      code === "authentication_required"
+    ) {
+      const withPi = await stripe.invoices.retrieve(invoiceId, {
+        expand: ["payment_intent"],
+      });
+      const pi = withPi.payment_intent as Record<string, unknown> | null;
+      if (pi?.client_secret && pi.status === "requires_action") {
+        return {
+          status: "requires_action",
+          client_secret: String(pi.client_secret),
+        };
+      }
+    }
+    // Concurrent click already paid it.
+    const latest = await stripe.invoices.retrieve(invoiceId);
+    if (latest.status === "paid") {
+      await finalizeOverduePayment(
+        pool,
+        stripe,
+        tenantId,
+        latest,
+        paymentMethodId,
+      );
+      return { status: "paid", invoice_id: invoiceId };
+    }
+    if (e.type === "StripeCardError" || code === "card_declined") {
+      return {
+        status: "declined",
+        message: e.message ?? "The card was declined. Try another card.",
+      };
+    }
+    throw err;
+  }
+
+  // invoices.pay returned without paying (shouldn't happen on-session).
+  const after = await stripe.invoices.retrieve(invoiceId, {
+    expand: ["payment_intent"],
+  });
+  const pi = after.payment_intent as Record<string, unknown> | null;
+  if (pi?.status === "requires_action" && pi.client_secret) {
+    return {
+      status: "requires_action",
+      client_secret: String(pi.client_secret),
+    };
+  }
+  return {
+    status: "declined",
+    message: "The payment didn't go through. Try another card.",
+  };
+}
+
+/**
+ * Before opening a platform subscription: a customer that already has a live
+ * one in Stripe must never get a second. Active/trialing wins over unpaid.
+ */
+function resolveLiveSubscriptionGuard(
+  subscriptions: Array<Record<string, unknown>>,
+):
+  | { action: "create" }
+  | { action: "already_active"; subscription: Record<string, unknown> }
+  | { action: "blocked_unpaid"; subscription: Record<string, unknown> } {
+  const status = (s: Record<string, unknown>) => String(s.status ?? "");
+  const active = subscriptions.find((s) =>
+    ["active", "trialing"].includes(status(s)),
+  );
+  if (active) return { action: "already_active", subscription: active };
+  const unpaid = subscriptions.find((s) =>
+    ["past_due", "unpaid"].includes(status(s)),
+  );
+  if (unpaid) return { action: "blocked_unpaid", subscription: unpaid };
+  return { action: "create" };
+}
+
+async function loadStripe(): Promise<StripeClient | null> {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) return null;
+  try {
+    const Stripe = (await import("stripe")).default;
+    return new Stripe(key, {
+      apiVersion: "2025-02-24.acacia",
+    }) as unknown as StripeClient;
+  } catch {
+    return null;
+  }
+}
+
+function packMetadata(tenantId: number, packId: string) {
+  const pack = TOP_UP_PACKS[packId];
+  if (!pack) return null;
+  return {
+    tenant_id: String(tenantId),
+    pack_id: packId,
+    quote_key: `${pack.dimension}:${pack.units}`,
+    dimension: pack.dimension,
+    units: String(pack.units),
+    amount_cents: String(pack.amountCents),
+    label: pack.label,
+  };
+}
+
+function quoteMetadata(tenantId: number, quote: TopUpQuote) {
+  return {
+    tenant_id: String(tenantId),
+    pack_id: quote.tierId,
+    quote_key: quote.quoteKey,
+    dimension: quote.dimension,
+    units: String(quote.units),
+    amount_cents: String(quote.amountCents),
+    label: quote.label,
+  };
+}
+
+function serializeTopUpQuote(quote: TopUpQuote, includeEconomics: boolean) {
+  const payload = {
+    quoteKey: quote.quoteKey,
+    tierId: quote.tierId,
+    dimension: quote.dimension,
+    tierIndex: quote.tierIndex,
+    units: quote.units,
+    amountCents: quote.amountCents,
+    label: quote.label,
+  };
+  if (!includeEconomics) return payload;
+  const economics = computeTopUpQuoteEconomics(quote);
+  return {
+    ...payload,
+    economics: {
+      variableCogsUsd: economics.variableCogsUsd,
+      stripeFeeUsd: economics.stripeFeeUsd,
+      netMarginUsd: economics.netMarginUsd,
+      marginPct: economics.marginPct,
+    },
+  };
+}
+
+async function getOrCreateStripeCustomer(
+  pool: Pool,
+  stripe: StripeClient,
+  tenantId: number,
+  email?: string | null,
+): Promise<string | null> {
+  const [rows] = await pool.query(
+    `SELECT stripe_customer_id FROM tenant_subscription WHERE tenant_id = ? LIMIT 1`,
+    [tenantId],
+  );
+  const existing = (rows as { stripe_customer_id?: string }[])[0]
+    ?.stripe_customer_id;
+  if (existing) {
+    try {
+      await stripe.customers.retrieve(existing);
+      return existing;
+    } catch (retrieveErr) {
+      // Only a genuinely missing customer may be replaced. Network errors,
+      // outages and live/test key mismatches ("a similar object exists in
+      // live mode") must NOT wipe the stored IDs — that would open a second
+      // customer + subscription and risk double billing.
+      const err = retrieveErr as { code?: string; message?: string };
+      const message = String(err?.message ?? "");
+      if (
+        err?.code !== "resource_missing" ||
+        /exists in (live|test) mode/i.test(message)
+      ) {
+        throw retrieveErr;
+      }
+      console.warn(
+        "[billing] Stale stripe_customer_id — recreating customer:",
+        existing,
+        retrieveErr,
+      );
+      await pool.query(
+        `UPDATE tenant_subscription
+         SET stripe_customer_id = NULL,
+             stripe_subscription_id = NULL,
+             status = 'inactive',
+             updated_at = UTC_TIMESTAMP()
+         WHERE tenant_id = ?`,
+        [tenantId],
+      );
+    }
+  }
+  if (!email) return null;
+
+  await ensureTenantSubscription(pool, tenantId);
+
+  const customer = await stripe.customers.create({
+    email,
+    metadata: { tenant_id: String(tenantId) },
+  });
+  await pool.query(
+    `UPDATE tenant_subscription SET stripe_customer_id = ?, updated_at = UTC_TIMESTAMP() WHERE tenant_id = ?`,
+    [customer.id, tenantId],
+  );
+  return customer.id;
+}
+
+async function fulfillFromMetadata(
+  fulfill: StripeFulfillFn,
+  defaultTenantId: number,
+  paymentIntentId: string,
+  metadata: Record<string, string>,
+  source: "webhook" | "confirm",
+  onTopUpGranted?: TopUpGrantedHandler,
+  recipientEmail?: string,
+): Promise<{ granted: boolean; alreadyFulfilled: boolean }> {
+  const tid = Number(metadata.tenant_id ?? defaultTenantId);
+  const dimension = metadata.dimension as UsageDimension | undefined;
+  const units = Number(metadata.units ?? 0);
+  const packId = metadata.pack_id ?? "unknown";
+  if (!dimension || units <= 0) {
+    return { granted: false, alreadyFulfilled: false };
+  }
+  const result = await fulfill(
+    tid,
+    paymentIntentId,
+    dimension,
+    units,
+    packId,
+    source,
+  );
+  if (result.granted && onTopUpGranted) {
+    const pack = TOP_UP_PACKS[packId];
+    const amountCents = Number(metadata.amount_cents ?? pack?.amountCents ?? 0);
+    Promise.resolve(
+      onTopUpGranted({
+        tenantId: tid,
+        paymentIntentId,
+        packId,
+        recipientEmail,
+        amountCents,
+      }),
+    ).catch((err) =>
+      console.error("[billing] Top-up receipt email failed:", err),
+    );
+  }
+  return result;
+}
+
+async function resolveTenantIdFromStripeObject(
+  pool: Pool,
+  obj: Record<string, unknown>,
+): Promise<number | null> {
+  const customerId =
+    typeof obj.customer === "string"
+      ? obj.customer
+      : typeof obj.customer === "object" && obj.customer != null
+        ? String((obj.customer as { id?: string }).id ?? "")
+        : null;
+  const subscriptionId =
+    typeof obj.subscription === "string"
+      ? obj.subscription
+      : obj.object === "subscription" && typeof obj.id === "string"
+        ? obj.id
+        : null;
+
+  if (subscriptionId) {
+    const [rows] = await pool.query(
+      `SELECT tenant_id FROM tenant_subscription WHERE stripe_subscription_id = ? LIMIT 1`,
+      [subscriptionId],
+    );
+    const tid = (rows as { tenant_id?: number }[])[0]?.tenant_id;
+    if (tid) return tid;
+  }
+
+  if (customerId) {
+    const [rows] = await pool.query(
+      `SELECT tenant_id FROM tenant_subscription WHERE stripe_customer_id = ? LIMIT 1`,
+      [customerId],
+    );
+    const tid = (rows as { tenant_id?: number }[])[0]?.tenant_id;
+    if (tid) return tid;
+  }
+
+  const metadata = (obj.metadata ?? {}) as Record<string, string>;
+  const metaTid = Number(metadata.tenant_id ?? 0);
+  if (metaTid > 0) return metaTid;
+
+  return null;
+}
+
+async function getGraceDays(pool: Pool, tenantId: number): Promise<number> {
+  const [rows] = await pool.query(
+    `SELECT setting_value FROM system_settings
+     WHERE setting_key = 'billing_grace_days' AND (tenant_id = ? OR tenant_id IS NULL)
+     ORDER BY tenant_id DESC LIMIT 1`,
+    [tenantId],
+  );
+  const val = Number(
+    (rows as { setting_value?: string }[])[0]?.setting_value ?? 3,
+  );
+  return Math.max(1, val || 3);
+}
+
+async function handleSubscriptionStatusChange(
+  pool: Pool,
+  tenantId: number,
+  status: string,
+): Promise<void> {
+  const normalized = status.toLowerCase();
+  if (normalized === "active" || normalized === "trialing") {
+    await markSubscriptionActive(pool, tenantId);
+    return;
+  }
+  if (normalized === "past_due" || normalized === "unpaid") {
+    const graceDays = await getGraceDays(pool, tenantId);
+    await markSubscriptionPastDue(pool, tenantId, graceDays);
+  }
+}
+
+/** Register before `express.json()` so Stripe signature verification gets raw body. */
+function registerStripeWebhookEarly(
+  app: express.Application,
+  pool: Pool,
+  tenantId: number,
+  fulfill: StripeFulfillFn,
+  onTopUpGranted?: TopUpGrantedHandler,
+) {
+  app.post(
+    "/api/billing/stripe/webhook",
+    express.raw({ type: "application/json" }),
+    async (req, res) => {
+      try {
+        const stripe = await loadStripe();
+        const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+        if (!stripe || !webhookSecret) {
+          return res.status(503).send("Stripe webhook not configured");
+        }
+
+        const signature = req.headers["stripe-signature"] as string;
+        let event: ReturnType<StripeClient["webhooks"]["constructEvent"]>;
+        try {
+          event = stripe.webhooks.constructEvent(
+            req.body,
+            signature,
+            webhookSecret,
+          );
+        } catch {
+          return res.status(400).send("Invalid Stripe signature");
+        }
+
+        const eventId = String(event.id ?? "");
+        if (!eventId) {
+          return res.status(400).send("Missing Stripe event id");
+        }
+
+        let webhookRecorded = false;
+        try {
+          await pool.query(
+            `INSERT INTO stripe_webhook_events (event_id, event_type) VALUES (?, ?)`,
+            [eventId, String(event.type ?? "unknown")],
+          );
+          webhookRecorded = true;
+        } catch (err: unknown) {
+          if (isMysqlDuplicateError(err)) {
+            return res.json({ received: true, duplicate: true });
+          }
+          throw err;
+        }
+
+        try {
+          await processStripeWebhookEvent(
+            pool,
+            stripe,
+            tenantId,
+            event,
+            fulfill,
+            onTopUpGranted,
+          );
+          return res.json({ received: true });
+        } catch (processErr) {
+          if (webhookRecorded) {
+            await pool
+              .query(`DELETE FROM stripe_webhook_events WHERE event_id = ?`, [
+                eventId,
+              ])
+              .catch((delErr) =>
+                console.error(
+                  "[billing] Failed to roll back webhook dedup row:",
+                  delErr,
+                ),
+              );
+          }
+          throw processErr;
+        }
+      } catch (error) {
+        console.error("Stripe webhook error:", error);
+        return res.status(500).send("Webhook handler failed");
+      }
+    },
+  );
+}
+
+async function processStripeWebhookEvent(
+  pool: Pool,
+  stripe: StripeClient,
+  defaultTenantId: number,
+  event: {
+    id: string;
+    type: string;
+    data: { object: Record<string, unknown> };
+  },
+  fulfill: StripeFulfillFn,
+  onTopUpGranted?: TopUpGrantedHandler,
+): Promise<void> {
+  // Any invoice change (paid, voided, failed retry) can flip the overdue badge.
+  if (event.type.startsWith("invoice.")) invalidateOverdueInvoiceCache();
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    const metadata = (session.metadata ?? {}) as Record<string, string>;
+    if (session.mode === "subscription" && session.subscription) {
+      const tid = await resolveTenantIdFromStripeObject(pool, session);
+      const subId =
+        typeof session.subscription === "string"
+          ? session.subscription
+          : String((session.subscription as { id?: string }).id ?? "");
+      if (tid && subId) {
+        const sub = await stripe.subscriptions.retrieve(subId);
+        await syncStripeSubscriptionToDb(pool, tid, sub);
+      }
+    } else if (metadata.pack_id) {
+      const piId =
+        typeof session.payment_intent === "string"
+          ? session.payment_intent
+          : null;
+      if (piId) {
+        await fulfillFromMetadata(
+          fulfill,
+          defaultTenantId,
+          piId,
+          metadata,
+          "webhook",
+          onTopUpGranted,
+        );
+      }
+    }
+  }
+
+  if (event.type === "payment_intent.succeeded") {
+    const intent = event.data.object;
+    const metadata = (intent.metadata ?? {}) as Record<string, string>;
+    const piId = String(intent.id ?? "");
+    if (piId && metadata.pack_id) {
+      await fulfillFromMetadata(
+        fulfill,
+        defaultTenantId,
+        piId,
+        metadata,
+        "webhook",
+        onTopUpGranted,
+      );
+    }
+  }
+
+  if (event.type === "customer.subscription.created") {
+    const subscription = event.data.object;
+    const tid = await resolveTenantIdFromStripeObject(pool, subscription);
+    if (tid) {
+      await syncStripeSubscriptionToDb(pool, tid, subscription);
+    } else {
+      console.warn(
+        "Stripe customer.subscription.created: unresolved tenant, skipping",
+      );
+    }
+  }
+
+  if (event.type === "setup_intent.succeeded") {
+    const setupIntent = event.data.object;
+    const tid = await resolveTenantIdFromStripeObject(pool, setupIntent);
+    const pmId = paymentMethodIdFromSetupIntent(
+      setupIntent.payment_method as string | { id?: string } | null,
+    );
+    if (tid && pmId) {
+      await applyDefaultPaymentMethod(pool, stripe, tid, pmId);
+    } else {
+      console.warn(
+        "Stripe setup_intent.succeeded: unresolved tenant or payment method",
+      );
+    }
+  }
+
+  if (event.type === "invoice.payment_failed") {
+    const invoice = event.data.object;
+    const tid = await resolveTenantIdFromStripeObject(pool, invoice);
+    if (tid) {
+      const graceDays = await getGraceDays(pool, tid);
+      await markSubscriptionPastDue(pool, tid, graceDays);
+      const [subRows] = await pool.query<RowDataPacket[]>(
+        `SELECT grace_ends_at FROM tenant_subscription WHERE tenant_id = ? LIMIT 1`,
+        [tid],
+      );
+      const graceEndsRaw = subRows[0]?.grace_ends_at;
+      const graceEndsAt = graceEndsRaw
+        ? new Date(String(graceEndsRaw))
+        : new Date(Date.now() + graceDays * 86400000);
+      sendBillingPaymentFailedEmail(pool, tid, invoice, graceEndsAt).catch(
+        (err) => console.error("[billing] Payment failed email error:", err),
+      );
+    } else {
+      console.warn(
+        "Stripe invoice.payment_failed: unresolved tenant, skipping",
+      );
+    }
+  }
+
+  if (event.type === "invoice.payment_succeeded") {
+    const invoice = event.data.object;
+    if (invoice.subscription) {
+      const tid = await resolveTenantIdFromStripeObject(pool, invoice);
+      if (tid) {
+        const subId =
+          typeof invoice.subscription === "string"
+            ? invoice.subscription
+            : String((invoice.subscription as { id?: string }).id ?? "");
+        if (subId) {
+          const sub = await stripe.subscriptions.retrieve(subId, {
+            expand: ["latest_invoice"],
+          });
+          await syncStripeSubscriptionToDb(pool, tid, sub);
+          sendBillingSubscriptionReceiptEmail(pool, tid, sub).catch((err) =>
+            console.error("[billing] Subscription receipt email failed:", err),
+          );
+        } else {
+          await markSubscriptionActive(pool, tid);
+        }
+      } else {
+        console.warn(
+          "Stripe invoice.payment_succeeded: unresolved tenant, skipping",
+        );
+      }
+    }
+  }
+
+  if (event.type === "customer.subscription.updated") {
+    const subscription = event.data.object;
+    const tid = await resolveTenantIdFromStripeObject(pool, subscription);
+    if (!tid) {
+      console.warn(
+        "Stripe customer.subscription.updated: unresolved tenant, skipping",
+      );
+    } else {
+      await syncStripeSubscriptionToDb(pool, tid, subscription);
+    }
+  }
+
+  if (event.type === "customer.subscription.deleted") {
+    const subscription = event.data.object;
+    const tid = await resolveTenantIdFromStripeObject(pool, subscription);
+    if (tid) {
+      await pool.query(
+        `UPDATE tenant_subscription SET status = 'canceled', updated_at = UTC_TIMESTAMP() WHERE tenant_id = ?`,
+        [tid],
+      );
+    } else {
+      console.warn(
+        "Stripe customer.subscription.deleted: unresolved tenant, skipping",
+      );
+    }
+  }
+}
+
+// =====================================================
+// Bulk CSV import (inlined for Vercel serverless — no local api imports)
+// =====================================================
+
+function registerStripeBillingRoutes(
+  app: express.Application,
+  pool: Pool,
+  tenantId: number,
+  fulfill: StripeFulfillFn,
+  verifyBrokerSession: RequestHandler,
+  getQuotaSummary: (tid: number) => Promise<unknown>,
+  onTopUpGranted?: TopUpGrantedHandler,
+) {
+  const requirePlatformOwner: RequestHandler = (req, res, next) => {
+    const brokerRole = (req as express.Request & { brokerRole?: string })
+      .brokerRole;
+    if (brokerRole !== "admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Only admins can access billing",
+      });
+    }
+    next();
+  };
+
+  const billingOwnerAuth: RequestHandler[] = [
+    verifyBrokerSession,
+    requirePlatformOwner,
+  ];
+
+  const BILLING_PAYMENT_UNAVAILABLE_MESSAGE =
+    "We're unable to take payment right now. Please try again later.";
+
+  const logBillingPaymentError = (context: string, detail: unknown): void => {
+    console.error(`[billing] ${context}:`, detail);
+  };
+
+  const respondPaymentUnavailable = (
+    res: express.Response,
+    context: string,
+    detail: unknown,
+    statusCode = 500,
+  ) => {
+    logBillingPaymentError(context, detail);
+    return res.status(statusCode).json({
+      success: false,
+      error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+    });
+  };
+
+  /**
+   * GET /api/billing/overdue — platform owner only.
+   * Unpaid renewal invoice from Stripe (null when nothing is owed).
+   * `?refresh=1` bypasses the 2-minute cache (after paying).
+   */
+  app.get("/api/billing/overdue", ...billingOwnerAuth, async (req, res) => {
+    try {
+      const stripe = await loadStripe();
+      if (!stripe) return res.json({ success: true, overdue: null });
+      const fresh = req.query.refresh === "1" || req.query.refresh === "true";
+      const overdue = await findOverdueStripeInvoice(pool, stripe, tenantId, {
+        fresh,
+      });
+      return res.json({ success: true, overdue });
+    } catch (error) {
+      logBillingPaymentError("overdue-invoice", error);
+      return res
+        .status(502)
+        .json({ success: false, error: "Could not check payment status" });
+    }
+  });
+
+  /**
+   * GET /api/billing/overdue/payment-options — platform owner only.
+   * The overdue invoice plus cards on file, each marked usable or not.
+   */
+  app.get(
+    "/api/billing/overdue/payment-options",
+    ...billingOwnerAuth,
+    async (_req, res) => {
+      try {
+        const stripe = await loadStripe();
+        if (!stripe) {
+          return res.json({ success: true, overdue: null, cards: [] });
+        }
+        const overdue = await findOverdueStripeInvoice(pool, stripe, tenantId, {
+          fresh: true,
+        });
+        const cards = overdue
+          ? await listOverduePaymentCards(pool, stripe, tenantId, overdue)
+          : [];
+        return res.json({
+          success: true,
+          overdue,
+          cards,
+          supported_brands: supportedCardBrands(),
+        });
+      } catch (error) {
+        logBillingPaymentError("overdue-payment-options", error);
+        return res
+          .status(502)
+          .json({ success: false, error: "Could not load payment options" });
+      }
+    },
+  );
+
+  /**
+   * POST /api/billing/overdue/pay — platform owner only.
+   * Pays the overdue renewal invoice in-app with a card on file.
+   * 200 { paid } | 200 { requires_action, client_secret } | 402 declined | 400 invalid
+   */
+  app.post(
+    "/api/billing/overdue/pay",
+    ...billingOwnerAuth,
+    async (req, res) => {
+      try {
+        const stripe = await loadStripe();
+        if (!stripe) {
+          return res.status(503).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+        const body = (req.body ?? {}) as {
+          invoice_id?: string;
+          payment_method_id?: string;
+        };
+        const result = await payOverdueInvoice(pool, stripe, tenantId, {
+          invoiceId: String(body.invoice_id ?? ""),
+          paymentMethodId: String(body.payment_method_id ?? ""),
+        });
+        console.log(
+          `[billing] overdue pay invoice=${body.invoice_id} pm=${body.payment_method_id} → ${result.status}`,
+        );
+        switch (result.status) {
+          case "paid":
+            return res.json({
+              success: true,
+              paid: true,
+              invoice_id: result.invoice_id,
+            });
+          case "requires_action":
+            return res.json({
+              success: true,
+              paid: false,
+              requires_action: true,
+              client_secret: result.client_secret,
+            });
+          case "declined":
+            return res
+              .status(402)
+              .json({ success: false, error: result.message });
+          default:
+            return res
+              .status(400)
+              .json({ success: false, error: result.message });
+        }
+      } catch (error) {
+        return respondPaymentUnavailable(res, "overdue-pay", error);
+      }
+    },
+  );
+
+  app.get("/api/billing/stripe/config", ...billingOwnerAuth, (_req, res) => {
+    const cfg = getStripePublicConfig();
+    return res.json({ success: true, ...cfg });
+  });
+
+  app.get("/api/billing/stripe/packs", ...billingOwnerAuth, (_req, res) => {
+    const packs = Object.entries(TOP_UP_PACK_DEFINITIONS).map(([id, pack]) => {
+      const economics = computeTopUpPackEconomics(
+        id as keyof typeof TOP_UP_PACK_DEFINITIONS,
+      );
+      return {
+        id,
+        ...pack,
+        economics: {
+          variableCogsUsd: economics.variableCogsUsd,
+          stripeFeeUsd: economics.stripeFeeUsd,
+          netMarginUsd: economics.netMarginUsd,
+          marginPct: economics.marginPct,
+        },
+      };
+    });
+    return res.json({
+      success: true,
+      packs: isBillingInternalEconomicsEnabled()
+        ? packs
+        : stripInternalPackEconomics(packs),
+    });
+  });
+
+  app.get(
+    "/api/billing/stripe/top-up-options",
+    ...billingOwnerAuth,
+    (_req, res) => {
+      const internal = isBillingInternalEconomicsEnabled();
+      const channels = TOP_UP_CHANNELS.map((channel) => ({
+        ...channel,
+        tiers: TOP_UP_TIERS_BY_DIMENSION[channel.dimension].map(
+          (tier, tierIndex) => {
+            const quote = computeTopUpQuote(channel.dimension, tierIndex)!;
+            const economics = internal
+              ? computeTopUpQuoteEconomics(quote)
+              : null;
+            return {
+              tierIndex,
+              tierId: tier.tierId,
+              units: tier.units,
+              amountCents: tier.amountCents,
+              label: tier.label,
+              chipLabel: tier.chipLabel,
+              ...(economics
+                ? {
+                    economics: {
+                      variableCogsUsd: economics.variableCogsUsd,
+                      stripeFeeUsd: economics.stripeFeeUsd,
+                      netMarginUsd: economics.netMarginUsd,
+                      marginPct: economics.marginPct,
+                    },
+                  }
+                : {}),
+            };
+          },
+        ),
+      }));
+      return res.json({ success: true, channels });
+    },
+  );
+
+  app.post("/api/billing/stripe/quote", ...billingOwnerAuth, (req, res) => {
+    const body = (req.body ?? {}) as {
+      dimension?: string;
+      tier_index?: number;
+    };
+    const dimension = String(body.dimension ?? "");
+    if (!isUsageDimension(dimension)) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid dimension" });
+    }
+    const tierIndex = Number(body.tier_index ?? 0);
+    const quote = computeTopUpQuote(dimension, tierIndex);
+    if (!quote) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid tier_index" });
+    }
+    return res.json({
+      success: true,
+      quote: serializeTopUpQuote(quote, isBillingInternalEconomicsEnabled()),
+    });
+  });
+
+  app.post(
+    "/api/billing/stripe/charge-quote",
+    ...billingOwnerAuth,
+    async (req, res) => {
+      try {
+        const stripe = await loadStripe();
+        if (!stripe) {
+          logBillingPaymentError("charge-quote", "Stripe keys not configured");
+          return res.status(503).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        const body = (req.body ?? {}) as {
+          dimension?: string;
+          tier_index?: number;
+        };
+        const dimension = String(body.dimension ?? "");
+        if (!isUsageDimension(dimension)) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid dimension" });
+        }
+        const tierIndex = Number(body.tier_index ?? 0);
+        const quote = computeTopUpQuote(dimension, tierIndex);
+        if (!quote) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid tier_index" });
+        }
+
+        const metadata = quoteMetadata(tenantId, quote);
+        const broker = (
+          req as express.Request & { broker?: { email?: string } }
+        ).broker;
+        const customerId = await getOrCreateStripeCustomer(
+          pool,
+          stripe,
+          tenantId,
+          broker?.email,
+        );
+        if (!customerId) {
+          return res.status(400).json({
+            success: false,
+            error: "No billing customer — complete subscription payment first",
+          });
+        }
+
+        const savedPm = await fetchSavedPaymentMethodSummary(
+          stripe,
+          customerId,
+        );
+        if (!savedPm) {
+          return res.status(400).json({
+            success: false,
+            error:
+              "No payment method on file. Complete subscription payment to save your card.",
+            code: "no_payment_method",
+          });
+        }
+
+        let intent;
+        try {
+          intent = await stripe.paymentIntents.create({
+            amount: quote.amountCents,
+            currency: "usd",
+            customer: customerId,
+            payment_method: savedPm.id,
+            off_session: true,
+            confirm: true,
+            payment_method_types: ["card"],
+            metadata,
+            description: quote.label,
+          });
+        } catch (chargeErr: unknown) {
+          const stripeErr = chargeErr as {
+            code?: string;
+            payment_intent?: { id?: string; client_secret?: string };
+          };
+          if (
+            stripeErr.code === "authentication_required" &&
+            stripeErr.payment_intent?.client_secret
+          ) {
+            return res.status(402).json({
+              success: false,
+              error: "Card authentication required",
+              code: "authentication_required",
+              client_secret: stripeErr.payment_intent.client_secret,
+              payment_intent_id: stripeErr.payment_intent.id,
+            });
+          }
+          throw chargeErr;
+        }
+
+        if (intent.status !== "succeeded") {
+          logBillingPaymentError(
+            "charge-quote",
+            `payment intent not succeeded: ${intent.status}`,
+          );
+          return res.status(400).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+            status: intent.status,
+            client_secret: intent.client_secret,
+            payment_intent_id: intent.id,
+          });
+        }
+
+        const result = await fulfillFromMetadata(
+          fulfill,
+          tenantId,
+          intent.id,
+          metadata,
+          "confirm",
+          onTopUpGranted,
+          broker?.email,
+        );
+        const quota = await getQuotaSummary(tenantId);
+
+        return res.json({
+          success: true,
+          granted: result.granted,
+          already_fulfilled: result.alreadyFulfilled,
+          quote: serializeTopUpQuote(quote, false),
+          quota,
+        });
+      } catch (error: unknown) {
+        return respondPaymentUnavailable(res, "charge-quote", error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/billing/stripe/payment-intent",
+    ...billingOwnerAuth,
+    async (req, res) => {
+      try {
+        const stripe = await loadStripe();
+        if (!stripe) {
+          logBillingPaymentError(
+            "payment-intent",
+            "Stripe keys not configured",
+          );
+          return res.status(503).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        const packId = String((req.body as { pack_id?: string }).pack_id ?? "");
+        const pack = TOP_UP_PACKS[packId];
+        if (!pack) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid pack_id" });
+        }
+
+        const metadata = packMetadata(tenantId, packId);
+        if (!metadata) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid pack" });
+        }
+
+        const broker = (
+          req as express.Request & { broker?: { email?: string } }
+        ).broker;
+        const customerId = await getOrCreateStripeCustomer(
+          pool,
+          stripe,
+          tenantId,
+          broker?.email,
+        );
+
+        const intent = await stripe.paymentIntents.create({
+          amount: pack.amountCents,
+          currency: "usd",
+          payment_method_types: ["card"],
+          metadata,
+          description: pack.label,
+          ...(customerId
+            ? { customer: customerId, setup_future_usage: "off_session" }
+            : {}),
+        });
+
+        if (!intent.client_secret) {
+          logBillingPaymentError(
+            "payment-intent",
+            "Stripe returned no client_secret",
+          );
+          return res.status(500).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        return res.json({
+          success: true,
+          client_secret: intent.client_secret,
+          payment_intent_id: intent.id,
+          pack: { id: packId, ...pack },
+        });
+      } catch (error: unknown) {
+        return respondPaymentUnavailable(res, "payment-intent", error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/billing/stripe/charge-pack",
+    ...billingOwnerAuth,
+    async (req, res) => {
+      try {
+        const stripe = await loadStripe();
+        if (!stripe) {
+          logBillingPaymentError("charge-pack", "Stripe keys not configured");
+          return res.status(503).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        const packId = String((req.body as { pack_id?: string }).pack_id ?? "");
+        const pack = TOP_UP_PACKS[packId];
+        if (!pack) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid pack_id" });
+        }
+
+        const metadata = packMetadata(tenantId, packId);
+        if (!metadata) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid pack" });
+        }
+
+        const broker = (
+          req as express.Request & { broker?: { email?: string } }
+        ).broker;
+        const customerId = await getOrCreateStripeCustomer(
+          pool,
+          stripe,
+          tenantId,
+          broker?.email,
+        );
+        if (!customerId) {
+          return res.status(400).json({
+            success: false,
+            error: "No billing customer — complete subscription payment first",
+          });
+        }
+
+        const savedPm = await fetchSavedPaymentMethodSummary(
+          stripe,
+          customerId,
+        );
+        if (!savedPm) {
+          return res.status(400).json({
+            success: false,
+            error:
+              "No payment method on file. Complete subscription payment to save your card.",
+            code: "no_payment_method",
+          });
+        }
+
+        let intent;
+        try {
+          intent = await stripe.paymentIntents.create({
+            amount: pack.amountCents,
+            currency: "usd",
+            customer: customerId,
+            payment_method: savedPm.id,
+            off_session: true,
+            confirm: true,
+            payment_method_types: ["card"],
+            metadata,
+            description: pack.label,
+          });
+        } catch (chargeErr: unknown) {
+          const stripeErr = chargeErr as {
+            code?: string;
+            payment_intent?: { id?: string; client_secret?: string };
+          };
+          if (
+            stripeErr.code === "authentication_required" &&
+            stripeErr.payment_intent?.client_secret
+          ) {
+            return res.status(402).json({
+              success: false,
+              error: "Card authentication required",
+              code: "authentication_required",
+              client_secret: stripeErr.payment_intent.client_secret,
+              payment_intent_id: stripeErr.payment_intent.id,
+            });
+          }
+          throw chargeErr;
+        }
+
+        if (intent.status !== "succeeded") {
+          logBillingPaymentError(
+            "charge-pack",
+            `payment intent not succeeded: ${intent.status}`,
+          );
+          return res.status(400).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+            status: intent.status,
+            client_secret: intent.client_secret,
+            payment_intent_id: intent.id,
+          });
+        }
+
+        const result = await fulfillFromMetadata(
+          fulfill,
+          tenantId,
+          intent.id,
+          metadata,
+          "confirm",
+          onTopUpGranted,
+          broker?.email,
+        );
+        const quota = await getQuotaSummary(tenantId);
+
+        return res.json({
+          success: true,
+          granted: result.granted,
+          already_fulfilled: result.alreadyFulfilled,
+          pack: {
+            id: packId,
+            label: pack.label,
+            units: pack.units,
+            dimension: pack.dimension,
+            amountCents: pack.amountCents,
+          },
+          quota,
+        });
+      } catch (error: unknown) {
+        return respondPaymentUnavailable(res, "charge-pack", error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/billing/stripe/confirm-payment",
+    ...billingOwnerAuth,
+    async (req, res) => {
+      try {
+        const stripe = await loadStripe();
+        if (!stripe) {
+          logBillingPaymentError(
+            "confirm-payment",
+            "Stripe keys not configured",
+          );
+          return res.status(503).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        const paymentIntentId = String(
+          (req.body as { payment_intent_id?: string }).payment_intent_id ?? "",
+        );
+        if (!paymentIntentId) {
+          return res.status(400).json({
+            success: false,
+            error: "payment_intent_id is required",
+          });
+        }
+
+        const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+        if (intent.status !== "succeeded") {
+          logBillingPaymentError(
+            "confirm-payment",
+            `payment intent not succeeded: ${intent.status}`,
+          );
+          return res.status(400).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+            status: intent.status,
+          });
+        }
+
+        const billingRow = await loadTenantStripeBilling(pool, tenantId);
+        const pmId =
+          typeof intent.payment_method === "string"
+            ? intent.payment_method
+            : (intent.payment_method as { id?: string } | null)?.id;
+        if (pmId && billingRow.stripeCustomerId) {
+          await applyDefaultPaymentMethod(pool, stripe, tenantId, pmId);
+        }
+
+        const metadata = intent.metadata ?? {};
+        const tid = Number(metadata.tenant_id ?? tenantId);
+        if (tid !== tenantId) {
+          return res.status(403).json({
+            success: false,
+            error: "Payment does not belong to this tenant",
+          });
+        }
+
+        const broker = (
+          req as express.Request & {
+            broker?: { email?: string };
+          }
+        ).broker;
+
+        const result = await fulfillFromMetadata(
+          fulfill,
+          tenantId,
+          paymentIntentId,
+          metadata,
+          "confirm",
+          onTopUpGranted,
+          broker?.email,
+        );
+
+        const pack = TOP_UP_PACKS[metadata.pack_id ?? ""];
+        const quota = await getQuotaSummary(tenantId);
+
+        return res.json({
+          success: true,
+          granted: result.granted,
+          already_fulfilled: result.alreadyFulfilled,
+          pack: pack
+            ? {
+                id: metadata.pack_id,
+                label: pack.label,
+                units: pack.units,
+                dimension: pack.dimension,
+                amountCents: pack.amountCents,
+              }
+            : null,
+          quota,
+        });
+      } catch (error: unknown) {
+        return respondPaymentUnavailable(res, "confirm-payment", error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/billing/stripe/checkout",
+    ...billingOwnerAuth,
+    async (req, res) => {
+      try {
+        const stripe = await loadStripe();
+        if (!stripe) {
+          logBillingPaymentError("checkout", "Stripe keys not configured");
+          return res.status(503).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        const packId = String((req.body as { pack_id?: string }).pack_id ?? "");
+        const pack = TOP_UP_PACKS[packId];
+        if (!pack) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid pack_id" });
+        }
+
+        const baseUrl = getBillingReturnBaseUrl();
+        const session = await stripe.checkout.sessions.create({
+          mode: "payment",
+          line_items: [
+            {
+              price_data: {
+                currency: "usd",
+                unit_amount: pack.amountCents,
+                product_data: { name: pack.label },
+              },
+              quantity: 1,
+            },
+          ],
+          success_url: `${baseUrl}/admin/billing?payment=success`,
+          cancel_url: `${baseUrl}/admin/billing?payment=cancel`,
+          metadata: packMetadata(tenantId, packId) ?? {},
+        });
+
+        return res.json({
+          success: true,
+          url: session.url,
+          session_id: session.id,
+        });
+      } catch (error: unknown) {
+        return respondPaymentUnavailable(res, "checkout", error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/billing/stripe/portal",
+    ...billingOwnerAuth,
+    async (req, res) => {
+      try {
+        const stripe = await loadStripe();
+        if (!stripe) {
+          logBillingPaymentError("portal", "Stripe keys not configured");
+          return res.status(503).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        const broker = (
+          req as express.Request & { broker?: { email?: string } }
+        ).broker;
+        const customerId = await getOrCreateStripeCustomer(
+          pool,
+          stripe,
+          tenantId,
+          broker?.email,
+        );
+        if (!customerId) {
+          return res.status(400).json({
+            success: false,
+            error:
+              "Subscribe or complete a payment first to create your Stripe customer profile.",
+          });
+        }
+
+        const flow = String((req.body as { flow?: string }).flow ?? "");
+        const baseUrl = getBillingReturnBaseUrl();
+        const sessionParams: Record<string, unknown> = {
+          customer: customerId,
+          return_url: `${baseUrl}/admin/billing`,
+        };
+        if (flow === "payment_method_update") {
+          sessionParams.flow_data = { type: "payment_method_update" };
+        }
+
+        const session =
+          await stripe.billingPortal.sessions.create(sessionParams);
+        return res.json({ success: true, url: session.url });
+      } catch (error: unknown) {
+        return respondPaymentUnavailable(res, "portal", error);
+      }
+    },
+  );
+
+  app.get(
+    "/api/billing/stripe/payment-method",
+    ...billingOwnerAuth,
+    async (_req, res) => {
+      try {
+        const stripe = await loadStripe();
+        if (!stripe) {
+          logBillingPaymentError(
+            "payment-method",
+            "Stripe keys not configured",
+          );
+          return res.status(503).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        const billing = await loadTenantStripeBilling(pool, tenantId);
+        if (!billing.stripeCustomerId) {
+          return res.json({ success: true, payment_method: null });
+        }
+
+        const paymentMethod = await fetchSavedPaymentMethodSummary(
+          stripe,
+          billing.stripeCustomerId,
+        );
+        return res.json({ success: true, payment_method: paymentMethod });
+      } catch (error: unknown) {
+        return respondPaymentUnavailable(res, "payment-method", error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/billing/stripe/payment-method-setup",
+    ...billingOwnerAuth,
+    async (req, res) => {
+      try {
+        const stripe = await loadStripe();
+        if (!stripe) {
+          logBillingPaymentError(
+            "payment-method-setup",
+            "Stripe keys not configured",
+          );
+          return res.status(503).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        const broker = (
+          req as express.Request & { broker?: { email?: string } }
+        ).broker;
+        const customerId = await getOrCreateStripeCustomer(
+          pool,
+          stripe,
+          tenantId,
+          broker?.email,
+        );
+        if (!customerId) {
+          return res.status(400).json({
+            success: false,
+            error:
+              "Subscribe or complete a payment first to save a card on file.",
+          });
+        }
+
+        const setupIntent = await stripe.setupIntents.create({
+          customer: customerId,
+          payment_method_types: ["card"],
+          metadata: { tenant_id: String(tenantId) },
+          usage: "off_session",
+        });
+
+        if (!setupIntent.client_secret) {
+          logBillingPaymentError(
+            "payment-method-setup",
+            "Stripe returned no client_secret",
+          );
+          return res.status(500).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        return res.json({
+          success: true,
+          client_secret: setupIntent.client_secret,
+          setup_intent_id: setupIntent.id,
+        });
+      } catch (error: unknown) {
+        return respondPaymentUnavailable(res, "payment-method-setup", error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/billing/stripe/confirm-payment-method",
+    ...billingOwnerAuth,
+    async (req, res) => {
+      try {
+        const stripe = await loadStripe();
+        if (!stripe) {
+          logBillingPaymentError(
+            "confirm-payment-method",
+            "Stripe keys not configured",
+          );
+          return res.status(503).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        const setupIntentId = String(
+          (req.body as { setup_intent_id?: string }).setup_intent_id ?? "",
+        );
+        if (!setupIntentId) {
+          return res.status(400).json({
+            success: false,
+            error: "setup_intent_id is required",
+          });
+        }
+
+        const setupIntent = await stripe.setupIntents.retrieve(setupIntentId);
+        const metadata = setupIntent.metadata ?? {};
+        const tid = Number(metadata.tenant_id ?? tenantId);
+        if (tid !== tenantId) {
+          return res.status(403).json({
+            success: false,
+            error: "Setup intent does not belong to this tenant",
+          });
+        }
+
+        if (setupIntent.status !== "succeeded") {
+          logBillingPaymentError(
+            "confirm-payment-method",
+            `setup intent not succeeded: ${setupIntent.status}`,
+          );
+          return res.status(400).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+            status: setupIntent.status,
+          });
+        }
+
+        const pmId = paymentMethodIdFromSetupIntent(setupIntent.payment_method);
+        if (!pmId) {
+          return res.status(400).json({
+            success: false,
+            error: "No payment method on setup intent",
+          });
+        }
+
+        const applied = await applyDefaultPaymentMethod(
+          pool,
+          stripe,
+          tenantId,
+          pmId,
+        );
+        if (!applied.applied && applied.brand) {
+          return res.status(422).json({
+            success: false,
+            error: `${applied.brand.toUpperCase()} cards aren't accepted. Please use a Visa or Mastercard.`,
+            unsupported_brand: applied.brand,
+          });
+        }
+
+        const billing = await loadTenantStripeBilling(pool, tenantId);
+        const paymentMethod = billing.stripeCustomerId
+          ? await fetchSavedPaymentMethodSummary(
+              stripe,
+              billing.stripeCustomerId,
+            )
+          : null;
+
+        return res.json({ success: true, payment_method: paymentMethod });
+      } catch (error: unknown) {
+        return respondPaymentUnavailable(res, "confirm-payment-method", error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/billing/stripe/subscription-setup",
+    ...billingOwnerAuth,
+    async (req, res) => {
+      try {
+        const stripe = await loadStripe();
+        const priceId = getPlatformPriceId();
+        if (!stripe) {
+          logBillingPaymentError(
+            "subscription-setup",
+            "Stripe keys not configured",
+          );
+          return res.status(503).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+        if (!priceId) {
+          logBillingPaymentError(
+            "subscription-setup",
+            "STRIPE_PLATFORM_PRICE_ID missing or invalid",
+          );
+          return res.status(503).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        const broker = (
+          req as express.Request & { broker?: { email?: string } }
+        ).broker;
+        if (!broker?.email) {
+          return res.status(400).json({
+            success: false,
+            error:
+              "Your broker account must have an email address to start a subscription.",
+          });
+        }
+
+        const customerId = await getOrCreateStripeCustomer(
+          pool,
+          stripe,
+          tenantId,
+          broker.email,
+        );
+        if (!customerId) {
+          logBillingPaymentError(
+            "subscription-setup",
+            "getOrCreateStripeCustomer returned null",
+          );
+          return res.status(500).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        // Never open a second subscription while a renewal is unpaid: that
+        // created a throwaway $350 subscription on every Billing page visit
+        // and risked charging twice. The owner pays the open invoice instead.
+        const overdueInvoice = await findOverdueStripeInvoice(
+          pool,
+          stripe,
+          tenantId,
+          { fresh: true },
+        );
+        if (overdueInvoice) {
+          return res.status(409).json({
+            success: false,
+            error:
+              "Your last renewal is unpaid. Pay the overdue invoice instead of starting a new subscription.",
+            overdue: overdueInvoice,
+          });
+        }
+
+        const billing = await loadTenantStripeBilling(pool, tenantId);
+        const forceNew = Boolean(
+          (req.body as { force_new?: boolean }).force_new,
+        );
+
+        if (forceNew && billing.stripeSubscriptionId) {
+          try {
+            const stale = await stripe.subscriptions.retrieve(
+              billing.stripeSubscriptionId,
+            );
+            const staleStatus = String(stale.status ?? "");
+            if (
+              staleStatus === "incomplete" ||
+              staleStatus === "incomplete_expired" ||
+              staleStatus === "canceled"
+            ) {
+              if (staleStatus !== "canceled") {
+                await stripe.subscriptions.cancel(billing.stripeSubscriptionId);
+              }
+              await pool.query(
+                `UPDATE tenant_subscription
+                 SET stripe_subscription_id = NULL, status = 'inactive', updated_at = UTC_TIMESTAMP()
+                 WHERE tenant_id = ?`,
+                [tenantId],
+              );
+              billing.stripeSubscriptionId = null;
+            }
+          } catch (cancelErr) {
+            console.warn("Stripe subscription reset failed:", cancelErr);
+          }
+        }
+
+        if (billing.stripeSubscriptionId) {
+          const existing = await stripe.subscriptions.retrieve(
+            billing.stripeSubscriptionId,
+            {
+              expand: [...SUBSCRIPTION_PAYMENT_EXPAND],
+            },
+          );
+          const stripeStatus = String(existing.status ?? "");
+          const existingPriceId = getSubscriptionPlatformPriceId(
+            existing as Record<string, unknown>,
+          );
+          if (existingPriceId && existingPriceId !== priceId) {
+            console.warn(
+              `Stripe subscription ${billing.stripeSubscriptionId} uses price ${existingPriceId}, expected ${priceId}; recreating`,
+            );
+            try {
+              if (
+                stripeStatus !== "canceled" &&
+                stripeStatus !== "incomplete_expired"
+              ) {
+                await stripe.subscriptions.cancel(billing.stripeSubscriptionId);
+              }
+            } catch (cancelErr) {
+              console.warn(
+                "Stripe subscription price-mismatch cancel failed:",
+                cancelErr,
+              );
+            }
+            await clearDbStripeSubscriptionId(pool, tenantId);
+            billing.stripeSubscriptionId = null;
+          } else if (stripeStatus === "active" || stripeStatus === "trialing") {
+            const savedPm = await fetchSavedPaymentMethodSummary(
+              stripe,
+              customerId,
+              billing.stripeSubscriptionId,
+            );
+            if (savedPm) {
+              await syncStripeSubscriptionToDb(pool, tenantId, existing);
+              return res.json({
+                success: true,
+                already_active: true,
+                subscription_id: billing.stripeSubscriptionId,
+                stripe_status: stripeStatus,
+              });
+            }
+          } else if (stripeStatus === "incomplete") {
+            const clientSecret =
+              extractSubscriptionPaymentClientSecret(existing);
+            if (clientSecret) {
+              return res.json({
+                success: true,
+                client_secret: clientSecret,
+                subscription_id: billing.stripeSubscriptionId,
+                stripe_status: stripeStatus,
+              });
+            }
+          }
+        }
+
+        // Source of truth is Stripe, not our row: if the customer already has
+        // a live subscription (the row may point at an abandoned attempt),
+        // re-point the row to it and never open a second one.
+        const liveSubs = await stripe.subscriptions.list({
+          customer: customerId,
+          status: "all",
+          limit: 20,
+        });
+        const liveGuard = resolveLiveSubscriptionGuard(liveSubs.data);
+        if (liveGuard.action !== "create") {
+          await syncStripeSubscriptionToDb(
+            pool,
+            tenantId,
+            liveGuard.subscription,
+          );
+          if (liveGuard.action === "already_active") {
+            return res.json({
+              success: true,
+              already_active: true,
+              subscription_id: String(liveGuard.subscription.id ?? ""),
+              stripe_status: String(liveGuard.subscription.status ?? ""),
+            });
+          }
+          return res.status(409).json({
+            success: false,
+            error:
+              "Your subscription has an unpaid renewal. Pay the overdue invoice instead of starting a new subscription.",
+          });
+        }
+
+        const subscription = await stripe.subscriptions.create({
+          customer: customerId,
+          items: [{ price: priceId }],
+          payment_behavior: "default_incomplete",
+          payment_settings: { save_default_payment_method: "on_subscription" },
+          expand: [...SUBSCRIPTION_PAYMENT_EXPAND],
+          metadata: { tenant_id: String(tenantId) },
+        });
+
+        const subscriptionId = String(subscription.id ?? "");
+        const clientSecret =
+          extractSubscriptionPaymentClientSecret(subscription);
+        if (!subscriptionId || !clientSecret) {
+          logBillingPaymentError(
+            "subscription-setup",
+            "subscription created without client_secret",
+          );
+          return res.status(500).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        await pool.query(
+          `UPDATE tenant_subscription
+           SET stripe_subscription_id = ?, status = 'inactive', updated_at = UTC_TIMESTAMP()
+           WHERE tenant_id = ?`,
+          [subscriptionId, tenantId],
+        );
+
+        return res.json({
+          success: true,
+          client_secret: clientSecret,
+          subscription_id: subscriptionId,
+          stripe_status: String(subscription.status ?? "incomplete"),
+        });
+      } catch (error: unknown) {
+        return respondPaymentUnavailable(res, "subscription-setup", error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/billing/stripe/confirm-subscription",
+    ...billingOwnerAuth,
+    async (req, res) => {
+      try {
+        const stripe = await loadStripe();
+        if (!stripe) {
+          logBillingPaymentError(
+            "confirm-subscription",
+            "Stripe keys not configured",
+          );
+          return res.status(503).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+
+        const subscriptionId = String(
+          (req.body as { subscription_id?: string }).subscription_id ?? "",
+        );
+        if (!subscriptionId) {
+          return res.status(400).json({
+            success: false,
+            error: "subscription_id is required",
+          });
+        }
+
+        let subscription = await stripe.subscriptions.retrieve(subscriptionId, {
+          expand: ["latest_invoice", "default_payment_method"],
+        });
+        const metadata = (subscription.metadata ?? {}) as Record<
+          string,
+          string
+        >;
+        const tid = Number(metadata.tenant_id ?? tenantId);
+        if (tid !== tenantId) {
+          return res.status(403).json({
+            success: false,
+            error: "Subscription does not belong to this tenant",
+          });
+        }
+
+        let stripeStatus = String(subscription.status ?? "");
+        if (stripeStatus !== "active" && stripeStatus !== "trialing") {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          subscription = await stripe.subscriptions.retrieve(subscriptionId, {
+            expand: ["latest_invoice", "default_payment_method"],
+          });
+          stripeStatus = String(subscription.status ?? "");
+        }
+        if (stripeStatus !== "active" && stripeStatus !== "trialing") {
+          logBillingPaymentError(
+            "confirm-subscription",
+            `subscription not active yet: ${stripeStatus}`,
+          );
+          return res.status(400).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+            stripe_status: stripeStatus,
+          });
+        }
+
+        await syncStripeSubscriptionToDb(pool, tenantId, subscription);
+        const paymentMethod = await syncSubscriptionDefaultPaymentMethod(
+          pool,
+          stripe,
+          tenantId,
+          subscription,
+        );
+        const broker = (
+          req as express.Request & { broker?: { email?: string } }
+        ).broker;
+        if (broker?.email) {
+          await storeBillingSubscriberEmail(pool, tenantId, broker.email);
+        }
+        const receiptEmail = await sendBillingSubscriptionReceiptEmail(
+          pool,
+          tenantId,
+          subscription,
+          broker?.email,
+        ).catch((err) => {
+          console.error("[billing] Subscription receipt email failed:", err);
+          return { sent: false, error: "send_failed" };
+        });
+        await getUnifiedQuotaSummary(pool, tenantId);
+        const config = await getBillingConfig(pool, tenantId);
+
+        return res.json({
+          success: true,
+          stripe_status: stripeStatus,
+          subscription: config.subscription,
+          payment_method: paymentMethod,
+          receipt_email: receiptEmail,
+        });
+      } catch (error: unknown) {
+        return respondPaymentUnavailable(res, "confirm-subscription", error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/billing/stripe/reset-subscription-test",
+    ...billingOwnerAuth,
+    async (req, res) => {
+      try {
+        const stripePublic = getStripePublicConfig();
+        if (!stripePublic.testMode) {
+          return res.status(403).json({
+            success: false,
+            error: "Test reset is only available with Stripe test keys",
+          });
+        }
+        const stripe = await loadStripe();
+        if (!stripe) {
+          logBillingPaymentError("charge-quote", "Stripe keys not configured");
+          return res.status(503).json({
+            success: false,
+            error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
+          });
+        }
+        const result = await resetStripeSubscriptionForTest(
+          pool,
+          stripe,
+          tenantId,
+        );
+        return res.json({ success: true, ...result });
+      } catch (error: unknown) {
+        console.error("Stripe test reset error:", error);
+        return res.status(500).json({
+          success: false,
+          error: "Failed to reset test subscription",
+        });
+      }
+    },
+  );
+}
+// ===== END BILLING & QUOTA =====
+
 const handleInboundEmail: RequestHandler = async (req, res) => {
   try {
     // Verify shared secret to reject unauthenticated POSTs
     const secret = process.env.INBOUND_WEBHOOK_SECRET;
-    if (secret) {
-      const provided =
-        req.headers["x-webhook-secret"] ||
-        req.headers["x-postmark-secret"] ||
-        req.query.secret;
-      if (provided !== secret) {
-        return res.status(401).json({ success: false, error: "Unauthorized" });
-      }
+    const provided =
+      req.headers["x-webhook-secret"] ||
+      req.headers["x-postmark-secret"] ||
+      req.query.secret;
+    if (secret ? provided !== secret : process.env.NODE_ENV === "production") {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
     }
 
     // ---- Normalise payload across Postmark / Mailgun / SendGrid ----
@@ -18495,8 +28837,7 @@ const handleInboundEmail: RequestHandler = async (req, res) => {
         body,
         conversationId,
         messageId || null,
-        webhookMailboxId,
-      ],
+        webhookMailboxId],
     );
 
     try {
@@ -18532,6 +28873,18 @@ const handleInboundEmail: RequestHandler = async (req, res) => {
       conversationId,
       MORTGAGE_TENANT_ID,
     );
+
+    // Real-time: open Email/Conversations panes must see the inbound message.
+    try {
+      await publishConversationNewMessage(conversationId, {
+        direction: "inbound",
+        communicationType: "email",
+        body,
+      });
+      await publishThreadUpdated(conversationId, { communicationType: "email" });
+    } catch (ablyErr) {
+      console.warn("Ably publish (inbound email) failed (non-fatal):", ablyErr);
+    }
 
     res.json({ success: true });
   } catch (error) {
@@ -18571,38 +28924,132 @@ const handleInboundEmail: RequestHandler = async (req, res) => {
  *  4. Marks all active executions waiting on that conversation as responded.
  *  5. Returns an empty TwiML <Response> (stops Twilio from sending an auto-reply).
  */
+/** Applies a STOP/START reply to every contact and queued broadcast for this phone. */
+async function setSmsBroadcastConsent(
+  phoneLast10: string,
+  optedIn: boolean,
+): Promise<void> {
+  if (phoneLast10.length !== 10) return;
+  const flag = optedIn ? 1 : 0;
+  await pool.query(
+    `UPDATE brokers SET sms_blast_opted_in = ?, updated_at = NOW()
+     WHERE tenant_id = ?
+       AND (RIGHT(REGEXP_REPLACE(twilio_caller_id, '[^0-9]', ''), 10) = ?
+         OR RIGHT(REGEXP_REPLACE(phone, '[^0-9]', ''), 10) = ?)`,
+    [flag, MORTGAGE_TENANT_ID, phoneLast10, phoneLast10],
+  );
+  await pool.query(
+    `UPDATE clients SET sms_blast_opted_in = ?, updated_at = NOW()
+     WHERE tenant_id = ? AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', ''), 10) = ?`,
+    [flag, MORTGAGE_TENANT_ID, phoneLast10],
+  );
+  if (optedIn) {
+    await pool.query(
+      `DELETE FROM sms_opt_outs WHERE tenant_id = ? AND phone_last10 = ?`,
+      [MORTGAGE_TENANT_ID, phoneLast10],
+    );
+    return;
+  }
+  await pool.query(
+    `INSERT IGNORE INTO sms_opt_outs (tenant_id, phone_last10) VALUES (?, ?)`,
+    [MORTGAGE_TENANT_ID, phoneLast10],
+  );
+  await pool.query(
+    `UPDATE realtor_broadcast_recipients
+     SET sms_status = 'opted_out', updated_at = NOW()
+     WHERE tenant_id = ? AND sms_status = 'pending'
+       AND RIGHT(REGEXP_REPLACE(recipient_phone, '[^0-9]', ''), 10) = ?`,
+    [MORTGAGE_TENANT_ID, phoneLast10],
+  );
+}
+
+const handleBroadcastUnsubscribe: RequestHandler = async (req, res) => {
+  try {
+    const token = typeof req.query.token === "string" ? req.query.token : "";
+    if (!token) {
+      return res.status(400).send("<h3>Invalid unsubscribe link.</h3>");
+    }
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT recipient_email FROM realtor_broadcast_recipients
+       WHERE unsubscribe_token = ? AND tenant_id = ? LIMIT 1`,
+      [token, MORTGAGE_TENANT_ID],
+    );
+    if (!rows.length) {
+      return res.status(400).send("<h3>This unsubscribe link is invalid.</h3>");
+    }
+    const email = String(rows[0].recipient_email || "").trim().toLowerCase();
+    if (email) {
+      await pool.query(
+        `INSERT IGNORE INTO realtor_email_unsubscribes (tenant_id, email) VALUES (?, ?)`,
+        [MORTGAGE_TENANT_ID, email],
+      );
+      await pool.query(
+        `UPDATE realtor_broadcast_recipients
+         SET email_status = 'unsubscribed', updated_at = NOW()
+         WHERE tenant_id = ? AND LOWER(TRIM(recipient_email)) = ?
+           AND (email_status = 'pending' OR unsubscribe_token = ?)`,
+        [MORTGAGE_TENANT_ID, email, token],
+      );
+    }
+    return res.status(200).send(
+      `<html><body style="font-family:sans-serif;padding:40px;max-width:500px;margin:auto;">
+        <h2>You've been unsubscribed.</h2>
+        <p>You will no longer receive broadcast emails from The Mortgage Professionals.</p>
+      </body></html>`,
+    );
+  } catch (err) {
+    console.error("[Broadcast unsubscribe] error:", err);
+    return res.status(500).send("<h3>An error occurred. Please try again.</h3>");
+  }
+};
+
+/**
+ * Verifies a Twilio webhook signature. The canonical URL comes from `explicitUrl`,
+ * APP_URL/BASE_URL, or the forwarded host; forging any of them still requires the
+ * auth token, so an unset URL no longer disables the check.
+ */
+function isValidTwilioRequest(
+  req: express.Request,
+  explicitUrl?: string,
+): boolean {
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  if (!authToken) return process.env.NODE_ENV !== "production";
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  const base = process.env.APP_URL || `https://${host}`;
+  return twilio.validateRequest(
+    authToken,
+    (req.headers["x-twilio-signature"] as string) ?? "",
+    explicitUrl || `${base}${req.originalUrl}`,
+    req.body as Record<string, any>,
+  );
+}
+
+/** Cron auth: a missing CRON_SECRET locks the route in production. */
+function isAuthorizedCron(req: express.Request): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return process.env.NODE_ENV !== "production";
+  const authHeader = req.headers.authorization;
+  const provided =
+    (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null) ||
+    (req.headers["x-cron-secret"] as string | undefined) ||
+    (req.query.secret as string | undefined);
+  return provided === secret;
+}
+
 const handleInboundSMS: RequestHandler = async (req, res) => {
   try {
     // Security: validate using Twilio signature (preferred) OR fallback to shared secret
-    const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
-    const webhookUrl = process.env.TWILIO_SMS_WEBHOOK_URL; // e.g. https://the-mortgage-professionals.vercel.app/api/webhooks/inbound-sms
-
-    if (twilioAuthToken && webhookUrl) {
-      const twilioSignature =
-        (req.headers["x-twilio-signature"] as string) ?? "";
-      const isValid = twilio.validateRequest(
-        twilioAuthToken,
-        twilioSignature,
-        webhookUrl,
-        req.body as Record<string, any>,
-      );
-      if (!isValid) {
-        console.warn("⚠️  Inbound SMS rejected — invalid Twilio signature");
-        res.set("Content-Type", "text/xml");
-        return res.status(200).send("<Response></Response>");
-      }
-    } else {
-      // Fallback to shared secret in header or query param
-      const secret = process.env.INBOUND_WEBHOOK_SECRET;
-      if (secret) {
-        const provided =
-          req.headers["x-webhook-secret"] ?? (req.query.secret as string);
-        if (provided !== secret) {
-          console.warn("⚠️  Inbound SMS rejected — bad webhook secret");
-          res.set("Content-Type", "text/xml");
-          return res.status(200).send("<Response></Response>");
-        }
-      }
+    const sharedSecret = process.env.INBOUND_WEBHOOK_SECRET;
+    const providedSecret =
+      req.headers["x-webhook-secret"] ?? (req.query.secret as string);
+    const secretOk = !!sharedSecret && providedSecret === sharedSecret;
+    if (
+      !secretOk &&
+      !isValidTwilioRequest(req, process.env.TWILIO_SMS_WEBHOOK_URL)
+    ) {
+      console.warn("⚠️  Inbound SMS rejected — invalid signature or secret");
+      res.set("Content-Type", "text/xml");
+      return res.status(200).send("<Response></Response>");
     }
 
     // Parse Twilio fields (sent as form-encoded or JSON depending on config)
@@ -18649,6 +29096,31 @@ const handleInboundSMS: RequestHandler = async (req, res) => {
 
     // Normalise phones
     const fromPhone = fromRaw.replace(/[^\d+]/g, "");
+    const inboundKeyword = body.trim().toUpperCase();
+    const fromLast10ForConsent = normalizePhoneLast10(fromPhone);
+    if (["START", "UNSTOP"].includes(inboundKeyword)) {
+      await setSmsBroadcastConsent(fromLast10ForConsent, true);
+      res.set("Content-Type", "text/xml");
+      return res
+        .status(200)
+        .send(
+          "<Response><Message>You are now subscribed to SMS broadcast messages. Reply STOP to unsubscribe.</Message></Response>",
+        );
+    }
+    if (
+      ["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"].includes(
+        inboundKeyword,
+      )
+    ) {
+      await setSmsBroadcastConsent(fromLast10ForConsent, false);
+      res.set("Content-Type", "text/xml");
+      return res
+        .status(200)
+        .send(
+          "<Response><Message>You have been unsubscribed from broadcast messages. Reply START to opt back in.</Message></Response>",
+        );
+    }
+
     const toPhone = toRaw.replace(/[^\d+]/g, "") || null; // The Twilio number that received this SMS
 
     // ── Find the client by phone number ──────────────────────────────────────
@@ -18777,8 +29249,7 @@ const handleInboundSMS: RequestHandler = async (req, res) => {
         primaryContentType,
         conversationId,
         msgType,
-        messageSid || null,
-      ],
+        messageSid || null],
     );
 
     try {
@@ -18840,16 +29311,12 @@ const handleInboundSMS: RequestHandler = async (req, res) => {
 
     // ── Notify connected browsers via Ably ───────────────────────────────────
     if (conversationId) {
-      await publishToAbly(`conversation:${conversationId}`, "new-message", {
-        conversationId,
+      await publishConversationNewMessage(conversationId, {
         direction: "inbound",
         communicationType: "sms",
-        body: body.slice(0, 200),
+        body,
       });
-      await publishToAbly("conversations:all", "thread-updated", {
-        conversationId,
-        thread: { status: "active" },
-      });
+      await publishThreadUpdated(conversationId, { communicationType: "sms" });
     }
 
     // ── Sync to reminder flows ────────────────────────────────────────────────
@@ -18892,6 +29359,7 @@ const handleAblyToken: RequestHandler = async (req, res) => {
         "conversation:*": ["subscribe"],
         "conversations:all": ["subscribe"],
         "voice:incoming": ["subscribe"],
+        "voice:voicemail": ["subscribe"],
         [`broker-notifications:${brokerId}`]: ["subscribe"],
       },
       ttl: 3_600_000, // 1 hour in ms
@@ -19214,8 +29682,7 @@ const handleGetConversationMessages: RequestHandler = async (req, res) => {
         brokerId,
         brokerId,
         brokerId,
-        brokerId,
-      ];
+        brokerId];
     }
     const [threadCheck] = await pool.query<RowDataPacket[]>(
       threadCheckSql,
@@ -19445,7 +29912,7 @@ const handleDeleteConversationMessage: RequestHandler = async (req, res) => {
 
 /**
  * POST /api/conversations/send
- * Send a new message (SMS, WhatsApp, or Email)
+ * Send a new message (SMS or Email)
  */
 const handleSendMessage: RequestHandler = async (req, res) => {
   try {
@@ -19490,17 +29957,10 @@ const handleSendMessage: RequestHandler = async (req, res) => {
       });
     }
 
-    if (communication_type === "whatsapp" && WHATSAPP_CHANNEL_TEMP_DISABLED) {
-      return res.status(503).json({
-        success: false,
-        message: "WhatsApp is temporarily disabled across the platform",
-      });
-    }
-
-    if (!["email", "sms", "whatsapp"].includes(communication_type)) {
+    if (!["email", "sms"].includes(communication_type)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid communication_type. Must be email, sms, or whatsapp",
+        message: "Invalid communication_type. Must be email or sms",
       });
     }
 
@@ -19753,7 +30213,7 @@ const handleSendMessage: RequestHandler = async (req, res) => {
     }
 
     if (
-      ["sms", "whatsapp"].includes(communication_type) &&
+      ["sms"].includes(communication_type) &&
       !finalRecipientPhone
     ) {
       console.error(
@@ -19761,7 +30221,7 @@ const handleSendMessage: RequestHandler = async (req, res) => {
       );
       return res.status(400).json({
         success: false,
-        message: "recipient_phone is required for SMS/WhatsApp communications",
+        message: "recipient_phone is required for SMS communications",
       });
     }
 
@@ -19840,8 +30300,7 @@ const handleSendMessage: RequestHandler = async (req, res) => {
             [
               MORTGAGE_TENANT_ID,
               finalRecipientPhone || null,
-              finalRecipientEmail || null,
-            ],
+              finalRecipientEmail || null],
           );
           if (clientRows.length > 0) {
             clientFirstName = clientRows[0].first_name || "";
@@ -20023,8 +30482,7 @@ const handleSendMessage: RequestHandler = async (req, res) => {
               cc_recipients: Array.isArray(cc) ? cc : [],
             })
           : null,
-        scheduled_at || null,
-      ],
+        scheduled_at || null],
     )) as [ResultSetHeader, any];
 
     const communicationId = result.insertId;
@@ -20136,17 +30594,6 @@ const handleSendMessage: RequestHandler = async (req, res) => {
           }
           break;
 
-        case "whatsapp":
-          if (finalRecipientPhone) {
-            sendResult = await sendWhatsAppMessage(
-              finalRecipientPhone,
-              processedBody,
-            );
-          } else {
-            sendResult = { success: false, error: "No phone number available" };
-          }
-          break;
-
         case "email":
           if (finalRecipientEmail) {
             // Auto-detect HTML content so template-based emails render correctly
@@ -20183,8 +30630,7 @@ const handleSendMessage: RequestHandler = async (req, res) => {
                   pool.query<RowDataPacket[]>(
                     `SELECT company_name, name FROM tenants WHERE id = ? LIMIT 1`,
                     [MORTGAGE_TENANT_ID],
-                  ),
-                ]);
+                  )]);
                 const brokerFirst =
                   (brokerRow as RowDataPacket[])[0]?.first_name || "";
                 const brokerLast =
@@ -20300,8 +30746,7 @@ const handleSendMessage: RequestHandler = async (req, res) => {
           template_used: template_id ? true : false,
           scheduled: scheduled_at ? true : false,
         }),
-        sendResult.success ? "success" : "failure",
-      ],
+        sendResult.success ? "success" : "failure"],
     );
 
     if (!sendResult.success) {
@@ -20457,14 +30902,12 @@ const handleSaveContactFromConversation: RequestHandler = async (req, res) => {
       "1099",
       "Self-Employed",
       "Investor",
-      "Mixed",
-    ];
+      "Mixed"];
     const VALID_CITIZENSHIP = [
       "us_citizen",
       "permanent_resident",
       "non_resident",
-      "other",
-    ];
+      "other"];
     if (income_type && !VALID_INCOME_TYPES.includes(income_type)) {
       return res
         .status(400)
@@ -20541,8 +30984,7 @@ const handleSaveContactFromConversation: RequestHandler = async (req, res) => {
         annual_income != null ? Number(annual_income) : null,
         credit_score != null ? Number(credit_score) : null,
         citizenship_status || null,
-        brokerId,
-      ],
+        brokerId],
     );
     const newClientId: number = result.insertId;
     const fullName = `${first_name.trim()} ${last_name.trim()}`;
@@ -20572,8 +31014,7 @@ const handleSaveContactFromConversation: RequestHandler = async (req, res) => {
         providedEmail,
         isRandomId ? canonicalConvId : conversationId,
         conversationId,
-        MORTGAGE_TENANT_ID,
-      ],
+        MORTGAGE_TENANT_ID],
     );
 
     // Link inbound communications to new client
@@ -20601,8 +31042,7 @@ const handleSaveContactFromConversation: RequestHandler = async (req, res) => {
           newClientId,
           brokerId,
           loan_type,
-          notes?.trim() || null,
-        ],
+          notes?.trim() || null],
       );
       draftApplicationId = loanResult.insertId;
       draftApplicationNumber = appNumber;
@@ -20681,8 +31121,7 @@ const handleUpdateConversation: RequestHandler = async (req, res) => {
         brokerId,
         brokerId,
         brokerId,
-        brokerId,
-      ];
+        brokerId];
     }
     const [threadCheck] = await pool.query<RowDataPacket[]>(
       threadCheckSql,
@@ -20858,7 +31297,7 @@ const handleGetConversationTemplates: RequestHandler = async (req, res) => {
     let whereCondition = "WHERE tenant_id = ? AND is_active = 1";
     const queryParams: any[] = [MORTGAGE_TENANT_ID];
 
-    if (type && ["email", "sms", "whatsapp"].includes(type as string)) {
+    if (type && ["email", "sms"].includes(type as string)) {
       whereCondition += " AND template_type = ?";
       queryParams.push(type);
     }
@@ -20988,7 +31427,6 @@ const handleGetConversationStats: RequestHandler = async (req, res) => {
       channels: {
         email: 0,
         sms: 0,
-        whatsapp: 0,
       },
       by_priority: {
         low: 0,
@@ -21025,64 +31463,6 @@ const handleGetConversationStats: RequestHandler = async (req, res) => {
   }
 };
 
-/**
- * GET /api/conversations/check-whatsapp?phone=+12345678900
- * Check if a phone number is registered on WhatsApp via Twilio Lookup v2.
- * Returns { registered: boolean } — cached in memory for 24 h to minimise Lookup costs.
- */
-const whatsappCheckCache = new Map<
-  string,
-  { registered: boolean; ts: number }
->();
-const WHATSAPP_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-const handleCheckWhatsApp: RequestHandler = async (req, res) => {
-  const { phone } = req.query as { phone?: string };
-  if (!phone) {
-    return res
-      .status(400)
-      .json({ success: false, message: "phone is required" });
-  }
-
-  const normalised = phone.trim().replace(/\s+/g, "");
-
-  // Return from cache if fresh
-  const cached = whatsappCheckCache.get(normalised);
-  if (cached && Date.now() - cached.ts < WHATSAPP_CACHE_TTL_MS) {
-    return res.json({
-      success: true,
-      registered: cached.registered,
-      cached: true,
-    });
-  }
-
-  if (!twilioClient) {
-    // Twilio not configured – default to false
-    return res.json({
-      success: true,
-      registered: false,
-      reason: "twilio_not_configured",
-    });
-  }
-
-  try {
-    const lookup = await twilioClient.lookups.v2
-      .phoneNumbers(normalised)
-      .fetch({ fields: "whatsapp" });
-
-    const registered: boolean = lookup?.whatsapp?.registered ?? false;
-    whatsappCheckCache.set(normalised, { registered, ts: Date.now() });
-    return res.json({ success: true, registered });
-  } catch (err: any) {
-    console.error("WhatsApp Lookup error:", err?.message ?? err);
-    // On lookup failure fall back to optimistic true so UI doesn't block
-    return res.json({
-      success: true,
-      registered: true,
-      reason: "lookup_failed",
-    });
-  }
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VOICE / CALLING  (Twilio Voice SDK + REST)
@@ -21111,26 +31491,14 @@ function getVoiceBaseUrl(): string {
  * avoid URL-mismatch false positives.
  */
 const twilioWebhookGuard: RequestHandler = (req, res, next) => {
-  const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
-  const baseUrl = process.env.APP_URL; // only validate when canonical URL is known
-  if (!twilioAuthToken || !baseUrl) return next();
-
-  const twilioSignature = (req.headers["x-twilio-signature"] as string) ?? "";
-  const webhookUrl = `${baseUrl}${req.originalUrl}`;
-  const isValid = twilio.validateRequest(
-    twilioAuthToken,
-    twilioSignature,
-    webhookUrl,
-    req.body as Record<string, string>,
-  );
-  if (!isValid) {
+  if (!isValidTwilioRequest(req)) {
     console.warn(
       `⚠️  Twilio webhook rejected — invalid signature: ${req.path}`,
     );
     res.set("Content-Type", "text/xml");
     return res.status(403).send("<Response></Response>");
   }
-  return next();
+  next();
 };
 
 async function getOrCreateTwimlAppSid(): Promise<string | null> {
@@ -22225,8 +32593,7 @@ const handleVoicemailRecording: RequestHandler = async (req, res) => {
         externalId,
         conversationId,
         mp3Url,
-        durationSec,
-      ],
+        durationSec],
     );
 
     await upsertConversationThread({
@@ -22257,10 +32624,7 @@ const handleVoicemailRecording: RequestHandler = async (req, res) => {
       durationSec,
       callSid: CallSid,
     }).catch(() => {});
-    await publishToAbly("conversations:all", "thread-updated", {
-      conversationId,
-      tenantId: MORTGAGE_TENANT_ID,
-    }).catch(() => {});
+    await publishThreadUpdated(conversationId).catch(() => {});
 
     // Send an immediate email notification to the banker so they're alerted
     // even when auto-transcription is disabled (transcription email fires
@@ -22439,13 +32803,30 @@ const handleVoicemailTranscription: RequestHandler = async (req, res) => {
                 : "";
               const subject = `🎙️ New Voicemail from ${callerDisplay}${durationDisplay}`;
 
-              await sendEmailMessage(banker.email, subject, html, true).catch(
-                (e) =>
-                  console.error(
-                    "[handleVoicemailTranscription] email send failed:",
-                    e,
-                  ),
+              // Prefer personal-line banker id when available
+              const [bankerIdRows] = await pool.query<RowDataPacket[]>(
+                `SELECT id FROM brokers
+                 WHERE tenant_id = ? AND status = 'active' AND email = ?
+                 LIMIT 1`,
+                [MORTGAGE_TENANT_ID, banker.email],
               );
+              const bankerId = bankerIdRows[0]?.id as number | undefined;
+              if (bankerId) {
+                await deliverBrokerEmailAlert({
+                  brokerId: bankerId,
+                  event: "voicemail",
+                  subject,
+                  html,
+                });
+              } else {
+                await sendEmailMessage(banker.email, subject, html, true).catch(
+                  (e) =>
+                    console.error(
+                      "[handleVoicemailTranscription] email send failed:",
+                      e,
+                    ),
+                );
+              }
             }
           }
         }
@@ -22567,8 +32948,7 @@ const handleVoiceIncoming: RequestHandler = async (req, res) => {
         r.id as number,
         r.call_forwarding_enabled
           ? (r.call_forwarding_phone as string | null)
-          : null,
-      ]),
+          : null]),
     );
 
     const VoiceResponse = twilio.twiml.VoiceResponse;
@@ -22626,8 +33006,7 @@ const handleVoiceIncoming: RequestHandler = async (req, res) => {
           MORTGAGE_TENANT_ID,
           body,
           (req.body?.CallSid as string) || null,
-          conversationId,
-        ],
+          conversationId],
       )
       .then(([commResult]) =>
         upsertConversationThread({
@@ -22655,8 +33034,7 @@ const handleVoiceIncoming: RequestHandler = async (req, res) => {
         // reappear immediately in the UI even though the DB upsert honours the
         // 5-minute reopen guard above.  The client will re-fetch on its next
         // poll cycle if the thread genuinely needs to appear.
-        publishToAbly("conversations:all", "thread-updated", {
-          conversationId,
+        publishThreadUpdated(conversationId, {
           communicationType: "call",
         }).catch(() => undefined),
       )
@@ -22734,8 +33112,7 @@ const handleGetPhoneNumbers: RequestHandler = async (req, res) => {
         `SELECT id, first_name, last_name, twilio_phone_sid, twilio_caller_id
          FROM brokers WHERE tenant_id = ? AND status = 'active' ORDER BY first_name ASC`,
         [MORTGAGE_TENANT_ID],
-      ),
-    ]);
+      )]);
 
     const brokers: {
       id: number;
@@ -22996,8 +33373,7 @@ const handleVoiceLog: RequestHandler = async (req, res) => {
         direction ?? "outbound",
         body,
         call_sid ?? null,
-        conversationId,
-      ],
+        conversationId],
     );
 
     await upsertConversationThread({
@@ -23061,8 +33437,7 @@ const handleRecordingStatus: RequestHandler = async (req, res) => {
         mp3Url,
         RecordingDuration ? parseInt(RecordingDuration, 10) : null,
         CallSid,
-        MORTGAGE_TENANT_ID,
-      ],
+        MORTGAGE_TENANT_ID],
     );
 
     return res.sendStatus(204);
@@ -23255,7 +33630,12 @@ const handleGetSmsMedia: RequestHandler = async (req, res) => {
     try {
       const { JWT_SECRET } = process.env;
       if (!JWT_SECRET) throw new Error("JWT_SECRET not set");
-      (await import("jsonwebtoken")).default.verify(token, JWT_SECRET);
+      const decoded = (await import("jsonwebtoken")).default.verify(
+        token,
+        JWT_SECRET,
+        { algorithms: ["HS256"] },
+      ) as any;
+      if (decoded.userType !== "broker") throw new Error("not a broker");
     } catch {
       return res.status(401).json({ error: "Invalid token" });
     }
@@ -23325,8 +33705,7 @@ const mmsUpload = multer({
       "audio/ogg",
       "audio/amr",
       "audio/wav",
-      "application/pdf",
-    ];
+      "application/pdf"];
     if (allowed.includes(file.mimetype)) {
       cb(null, true);
     } else {
@@ -23439,8 +33818,7 @@ const handleGetCallHistory: RequestHandler = async (req, res) => {
         brokerId,
         brokerId,
         limit,
-        offset,
-      ],
+        offset],
     );
 
     return res.json({
@@ -23783,10 +34161,10 @@ const handleGetReportsOverview: RequestHandler = async (req, res) => {
     const [loanStats] = await pool.query<RowDataPacket[]>(
       `SELECT 
         COUNT(*) as total_loans,
-        SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved_loans,
-        SUM(CASE WHEN status = 'submitted' THEN 1 ELSE 0 END) as pending_loans,
-        SUM(CASE WHEN status = 'denied' THEN 1 ELSE 0 END) as rejected_loans,
-        SUM(CASE WHEN status = 'under_review' THEN 1 ELSE 0 END) as in_review_loans,
+        SUM(CASE WHEN status IN ('approved_with_conditions','clear_to_close','docs_out','loan_funded') THEN 1 ELSE 0 END) as approved_loans,
+        SUM(CASE WHEN status IN ('app_sent','application_received','prequalified','preapproved','under_contract_loan_setup') THEN 1 ELSE 0 END) as pending_loans,
+        0 as rejected_loans,
+        SUM(CASE WHEN status = 'submitted_to_underwriting' THEN 1 ELSE 0 END) as in_review_loans,
         AVG(CAST(loan_amount AS DECIMAL(15,2))) as avg_loan_amount,
         SUM(CAST(loan_amount AS DECIMAL(15,2))) as total_loan_volume
       FROM loan_applications 
@@ -24257,8 +34635,7 @@ const handleUpdateAdminSectionControls: RequestHandler = async (req, res) => {
           tenantId,
           section_id,
           is_disabled ? 1 : 0,
-          tooltip_message ?? "Coming Soon",
-        ],
+          tooltip_message ?? "Coming Soon"],
       );
     }
 
@@ -24291,6 +34668,106 @@ const handleUpdateAdminSectionControls: RequestHandler = async (req, res) => {
  * Single bootstrap endpoint — returns broker profile + section controls in one
  * round-trip. Replaces separate calls to /validate, /profile, /section-controls.
  */
+const ROLE_PERMISSION_ROLES = [
+  "broker",
+  "loan_officer",
+  "loan_processor",
+  "realtor",
+  "buyers_agent",
+  "listing_agent",
+];
+
+async function fetchRoleSectionPermissionRows() {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT * FROM broker_role_section_permissions
+     WHERE tenant_id = ? ORDER BY broker_role, section_id`,
+    [MORTGAGE_TENANT_ID],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    tenant_id: r.tenant_id,
+    broker_role: r.broker_role,
+    section_id: r.section_id,
+    is_visible: r.is_visible === 1 || r.is_visible === true,
+    updated_by: r.updated_by ?? null,
+    updated_at: r.updated_at,
+  }));
+}
+
+const handleGetRoleSectionPermissions: RequestHandler = async (_req, res) => {
+  try {
+    return res.json({
+      success: true,
+      permissions: await fetchRoleSectionPermissionRows(),
+    });
+  } catch (error) {
+    console.error("Error fetching role section permissions:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to fetch role section permissions",
+    });
+  }
+};
+
+const handleUpdateRoleSectionPermissions: RequestHandler = async (req, res) => {
+  try {
+    if ((req as any).brokerRole !== "admin") {
+      return res
+        .status(403)
+        .json({ success: false, error: "Admin access required" });
+    }
+    const { permissions } = req.body as {
+      permissions: {
+        broker_role: string;
+        section_id: string;
+        is_visible: boolean;
+      }[];
+    };
+    if (!Array.isArray(permissions) || permissions.length === 0) {
+      return res
+        .status(400)
+        .json({ success: false, error: "permissions array is required" });
+    }
+    const invalid = permissions.some(
+      (p) =>
+        !ROLE_PERMISSION_ROLES.includes(p.broker_role) ||
+        !/^[a-z0-9-]{1,100}$/.test(String(p.section_id)),
+    );
+    if (invalid) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Invalid role or section" });
+    }
+    for (const perm of permissions) {
+      await pool.query(
+        `INSERT INTO broker_role_section_permissions
+           (tenant_id, broker_role, section_id, is_visible, updated_by)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           is_visible = VALUES(is_visible),
+           updated_by = VALUES(updated_by)`,
+        [
+          MORTGAGE_TENANT_ID,
+          perm.broker_role,
+          perm.section_id,
+          perm.is_visible ? 1 : 0,
+          (req as any).brokerId,
+        ],
+      );
+    }
+    return res.json({
+      success: true,
+      message: "Role section permissions updated",
+    });
+  } catch (error) {
+    console.error("Error updating role section permissions:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to update role section permissions",
+    });
+  }
+};
+
 const handleAdminInit: RequestHandler = async (req, res) => {
   try {
     const brokerId = (req as any).brokerId;
@@ -24341,7 +34818,12 @@ const handleAdminInit: RequestHandler = async (req, res) => {
       updated_at: r.updated_at,
     }));
 
-    return res.json({ success: true, profile, controls });
+    return res.json({
+      success: true,
+      profile,
+      controls,
+      rolePermissions: await fetchRoleSectionPermissionRows(),
+    });
   } catch (error) {
     console.error("Error in admin init:", error);
     return res
@@ -24754,16 +35236,14 @@ const handleCreatePreApprovalLetter: RequestHandler = async (req, res) => {
       letter_date,
       expires_at,
       loan_type,
-      fico_score,
-    ] = [
+      fico_score] = [
       req.body.max_approved_amount,
       req.body.approved_amount,
       req.body.html_content,
       req.body.letter_date,
       req.body.expires_at,
       req.body.loan_type,
-      req.body.fico_score,
-    ];
+      req.body.fico_score];
 
     const purchase_property_address =
       req.body.purchase_property_address || null;
@@ -24842,8 +35322,7 @@ const handleCreatePreApprovalLetter: RequestHandler = async (req, res) => {
         purchase_property_city,
         purchase_property_state,
         purchase_property_zip,
-        brokerId,
-      ],
+        brokerId],
     );
     const newId = result.insertId;
 
@@ -24857,8 +35336,7 @@ const handleCreatePreApprovalLetter: RequestHandler = async (req, res) => {
         loanId,
         brokerId,
         `Pre-Approval Letter - ${new Date(finalDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`,
-        `/pre-approval-letters/${newId}`,
-      ],
+        `/pre-approval-letters/${newId}`],
     );
 
     // Audit log
@@ -24909,8 +35387,7 @@ const handleCreatePreApprovalLetter: RequestHandler = async (req, res) => {
         loan.tenant_id,
         loan.tenant_id,
         loan.tenant_id,
-        newId,
-      ],
+        newId],
     );
 
     const letter = {
@@ -25050,8 +35527,7 @@ const handleUpdatePreApprovalLetter: RequestHandler = async (req, res) => {
           `Pre-Approval Letter - ${new Date(letter_date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}`,
           loanId,
           `/pre-approval-letters/${existing.id}`,
-          tenantId,
-        ],
+          tenantId],
       );
     }
 
@@ -25204,8 +35680,7 @@ const handleSendPreApprovalLetterEmail: RequestHandler = async (req, res) => {
       letter.property_address,
       letter.property_city,
       letter.property_state,
-      letter.property_zip,
-    ]
+      letter.property_zip]
       .filter(Boolean)
       .join(", ");
 
@@ -25464,8 +35939,7 @@ const handleDeletePreApprovalLetter: RequestHandler = async (req, res) => {
 
     // Delete letter
     await pool.query("DELETE FROM pre_approval_letters WHERE id = ?", [
-      letterId,
-    ]);
+      letterId]);
 
     await createAuditLog({
       actorType: "broker",
@@ -25596,8 +36070,7 @@ const handleCreateReminderFlow: RequestHandler = async (req, res) => {
         Number.isFinite(Number(restricted_to_broker_id))
           ? Number(restricted_to_broker_id)
           : null,
-        enable_trace_logging ? 1 : 0,
-      ],
+        enable_trace_logging ? 1 : 0],
     );
 
     return res.status(201).json({
@@ -25723,21 +36196,18 @@ const handleSaveReminderFlow: RequestHandler = async (req, res) => {
       "prospect_waiting_for_1st_deal",
       "prospect_first_deal_funded",
       "prospect_second_deal_funded",
-      "prospect_top_agent_whale",
-    ]);
+      "prospect_top_agent_whale"]);
     const VALID_STEP_TYPES = new Set([
       "trigger",
       "wait",
       "send_notification",
       "send_email",
       "send_sms",
-      "send_whatsapp",
       "condition",
       "branch",
       "wait_for_response",
       "wait_until_date",
-      "end",
-    ]);
+      "end"]);
     const VALID_EDGE_TYPES = new Set([
       "default",
       "condition_yes",
@@ -25745,8 +36215,7 @@ const handleSaveReminderFlow: RequestHandler = async (req, res) => {
       "loan_type_purchase",
       "loan_type_refinance",
       "no_response",
-      "responded",
-    ]);
+      "responded"]);
 
     if (
       trigger_event !== undefined &&
@@ -25916,8 +36385,7 @@ const handleSaveReminderFlow: RequestHandler = async (req, res) => {
 
       // Replace all steps
       await conn.query("DELETE FROM reminder_flow_steps WHERE flow_id = ?", [
-        flowId,
-      ]);
+        flowId]);
       if (steps.length > 0) {
         const stepValues = steps.map((s: any) => [
           flowId,
@@ -25927,8 +36395,7 @@ const handleSaveReminderFlow: RequestHandler = async (req, res) => {
           s.description || null,
           s.config ? JSON.stringify(s.config) : null,
           Number.isFinite(Number(s.position_x)) ? Number(s.position_x) : 0,
-          Number.isFinite(Number(s.position_y)) ? Number(s.position_y) : 0,
-        ]);
+          Number.isFinite(Number(s.position_y)) ? Number(s.position_y) : 0]);
         await conn.query(
           `INSERT INTO reminder_flow_steps (flow_id, step_key, step_type, label, description, config, position_x, position_y)
            VALUES ?`,
@@ -25948,8 +36415,7 @@ const handleSaveReminderFlow: RequestHandler = async (req, res) => {
           e.source_step_key,
           e.target_step_key,
           e.label || null,
-          e.edge_type || "default",
-        ]);
+          e.edge_type || "default"]);
         await conn.query(
           `INSERT INTO reminder_flow_connections (flow_id, edge_key, source_step_key, target_step_key, label, edge_type)
            VALUES ?`,
@@ -26114,8 +36580,7 @@ const handleToggleReminderFlow: RequestHandler = async (req, res) => {
     const newActive = !flowRows[0].is_active;
     await pool.query("UPDATE reminder_flows SET is_active = ? WHERE id = ?", [
       newActive ? 1 : 0,
-      flowId,
-    ]);
+      flowId]);
 
     return res.json({
       success: true,
@@ -26263,6 +36728,7 @@ const handleGetReminderFlowExecutions: RequestHandler = async (req, res) => {
 // Create the Express app once (reused across invocations)
 let app: express.Application | null = null;
 
+
 function createServer() {
   console.log("Creating Express server for Vercel...");
 
@@ -26283,6 +36749,88 @@ function createServer() {
   // CORS — temporarily permissive (revert of P0-4 allowlist).
   // TODO: Re-enable origin allowlist once prod env vars / domains are confirmed.
   expressApp.use(cors());
+
+  const quotaService = createQuotaService(pool);
+  const handleStripeTopUpGranted: TopUpGrantedHandler = async ({
+    tenantId,
+    paymentIntentId,
+    packId,
+    recipientEmail,
+    amountCents,
+  }) => {
+    const pack = TOP_UP_PACKS[packId];
+    if (!pack) return;
+
+    let recipients = await resolveBillingEmailRecipients(
+      pool,
+      tenantId,
+      recipientEmail,
+    );
+    if (!recipients.length) {
+      console.warn(
+        "[billing] Top-up receipt skipped — no platform owner email:",
+        paymentIntentId,
+      );
+      return;
+    }
+
+    const companyName = await fetchTenantCompanyName(pool, tenantId);
+
+    for (const recipient of recipients) {
+      const html = buildBillingTopUpReceiptEmailHtml({
+        recipientName: recipient.name,
+        companyName,
+        packLabel: pack.label,
+        units: pack.units,
+        dimension: pack.dimension,
+        amountUsd: amountCents / 100,
+        paymentIntentId,
+        billingUrl: `${getBaseUrl()}/admin/billing`,
+        paidAt: new Date(),
+      });
+
+      const sendResult = await sendEmailMessage(
+        recipient.email,
+        `Receipt: ${pack.label} — ${companyName}`,
+        html,
+        true,
+        undefined,
+      );
+      if (!sendResult.success) {
+        console.error(
+          "[billing] Top-up receipt email failed:",
+          sendResult.error,
+          paymentIntentId,
+        );
+      }
+    }
+  };
+
+  const fulfillStripeTopUp: StripeFulfillFn = (
+    tid,
+    paymentIntentId,
+    dimension,
+    units,
+    packId,
+    source,
+  ) =>
+    quotaService.fulfillStripeTopUp(
+      tid,
+      paymentIntentId,
+      dimension,
+      units,
+      packId,
+      source,
+    );
+
+  registerStripeWebhookEarly(
+    expressApp,
+    pool,
+    MORTGAGE_TENANT_ID,
+    fulfillStripeTopUp,
+    handleStripeTopUpGranted,
+  );
+
 
   expressApp.use(express.json({ limit: "10mb" }));
   expressApp.use(express.urlencoded({ extended: true, limit: "10mb" }));
@@ -26435,6 +36983,483 @@ function createServer() {
     verifyBrokerSession,
     handleUpdateBrokerProfile,
   );
+  
+  
+  
+  expressApp.get("/api/crm/config", verifyBrokerSession, handleGetCrmConfig);
+  expressApp.get("/api/crm/people", verifyBrokerSession, handleGetCrmPeople);
+  expressApp.post("/api/crm/person-groups", verifyBrokerSession, handleCreatePersonGroup);
+  expressApp.post("/api/crm/person-groups/:groupId/approve", verifyBrokerSession, handleApprovePersonGroup);
+  expressApp.post("/api/crm/person-groups/:groupId/merge", verifyBrokerSession, handleMergePersonGroup);
+  expressApp.post("/api/crm/transfers", verifyBrokerSession, handleStartCrmTransfer);
+  expressApp.get("/api/crm/transfers/:jobId", verifyBrokerSession, handleGetCrmTransfer);
+  expressApp.post("/api/crm/transfers/:jobId/resolve", verifyBrokerSession, handleResolveCrmTransfer);
+  expressApp.post("/api/crm/clients/:clientId/restore", verifyBrokerSession, handleRestoreCrmClient);
+
+
+  expressApp.get("/api/broadcasts", verifyBrokerSession, handleGetBroadcasts);
+  // GET /api/billing/config — quota flags + plan (platform_owner only)
+  expressApp.get(
+    "/api/billing/config",
+    verifyBrokerSession,
+    async (req, res) => {
+      try {
+        const brokerRole = (req as any).brokerRole;
+        if (brokerRole !== "admin") {
+          return res.status(403).json({
+            success: false,
+            message: "Only admins can view billing configuration",
+          });
+        }
+
+        const config = await quotaService.getBillingConfig(MORTGAGE_TENANT_ID);
+        const stripePublic = getStripePublicConfig();
+        const stripeBilling = await loadTenantStripeBilling(
+          pool,
+          MORTGAGE_TENANT_ID,
+        );
+        const stripeSubscriptionLinked = Boolean(
+          stripeBilling.stripeSubscriptionId,
+        );
+
+        let stripeSubscriptionStatus: string | null = null;
+        let hasPaymentMethod = false;
+        const stripeClient = await loadStripe();
+
+        if (stripeClient && stripeBilling.stripeCustomerId) {
+          try {
+            const pm = await fetchSavedPaymentMethodSummary(
+              stripeClient,
+              stripeBilling.stripeCustomerId,
+              stripeBilling.stripeSubscriptionId,
+            );
+            hasPaymentMethod = Boolean(pm);
+          } catch (pmErr) {
+            console.warn("Billing config: payment method lookup failed", pmErr);
+          }
+        }
+
+        if (stripeClient && stripeBilling.stripeSubscriptionId) {
+          try {
+            const sub = await stripeClient.subscriptions.retrieve(
+              stripeBilling.stripeSubscriptionId,
+            );
+            stripeSubscriptionStatus = String(sub.status ?? "");
+            const stripePeriodStart = stripePeriodToSqlDate(
+              sub.current_period_start,
+            );
+            if (
+              shouldSyncStripeSubscriptionPeriod({
+                dbPeriodStart: toSqlDate(config.subscription?.periodStart),
+                dbStatus: stripeBilling.status,
+                stripePeriodStart,
+                stripeStatus: stripeSubscriptionStatus,
+              })
+            ) {
+              await syncStripeSubscriptionToDb(
+                pool,
+                MORTGAGE_TENANT_ID,
+                sub as unknown as Record<string, unknown>,
+              );
+            }
+          } catch (subErr) {
+            console.warn(
+              "Billing config: Stripe subscription lookup failed",
+              subErr,
+            );
+            stripeSubscriptionStatus = stripeBilling.status;
+          }
+        }
+
+        const refreshedConfig =
+          await quotaService.getBillingConfig(MORTGAGE_TENANT_ID);
+        const billingPeriodAnchor = resolveBillingPeriodAnchor({
+          stripeSubscriptionId: stripeBilling.stripeSubscriptionId,
+          subscriptionStatus: refreshedConfig.subscription?.status,
+        });
+        const quotaRenewsOn =
+          billingPeriodAnchor === "stripe"
+            ? (refreshedConfig.subscription?.periodEnd ?? null)
+            : null;
+
+        const stripeSubscriptionActive =
+          stripeSubscriptionStatus === "active" ||
+          stripeSubscriptionStatus === "trialing";
+
+        return res.json({
+          success: true,
+          config: {
+            ...refreshedConfig,
+            stripeEnabled: stripePublic.enabled,
+            stripePublishableKey: stripePublic.publishableKey,
+            stripeTestMode: stripePublic.testMode,
+            stripeWebhookConfigured: stripePublic.webhookConfigured,
+            stripePlatformSubscriptionConfigured:
+              stripePublic.platformSubscriptionConfigured,
+            stripeSubscriptionLinked,
+            stripeSubscriptionActive,
+            stripeSubscriptionStatus,
+            hasPaymentMethod,
+            stripeCustomerId: stripeBilling.stripeCustomerId,
+            billingPeriodAnchor,
+            quotaRenewsOn,
+            billingInternalEconomicsEnabled:
+              isBillingInternalEconomicsEnabled(),
+          },
+        });
+      } catch (error: any) {
+        console.error("Billing config fetch error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to load billing configuration",
+        });
+      }
+    },
+  );
+
+  // GET /api/billing/usage — live 30-day usage + expenditure (platform_owner only)
+  expressApp.get(
+    "/api/billing/usage",
+    verifyBrokerSession,
+    async (req, res) => {
+      try {
+        const brokerRole = (req as any).brokerRole;
+        if (brokerRole !== "admin") {
+          return res.status(403).json({
+            success: false,
+            message: "Only admins can view billing usage",
+          });
+        }
+
+        const usage = await quotaService.fetchUsageSnapshot(MORTGAGE_TENANT_ID);
+        const expenditureRaw = computeActualExpenditure(usage, {
+          preferEstimatedVoiceMinutes: true,
+          zoomBrokerLicenses: 0,
+        });
+        const internalEconomics = isBillingInternalEconomicsEnabled();
+        const expenditure = internalEconomics
+          ? expenditureRaw
+          : stripInternalBillingExpenditure(expenditureRaw);
+
+        return res.json({
+          success: true,
+          usage,
+          expenditure,
+          refreshedAt: new Date().toISOString(),
+        });
+      } catch (error: any) {
+        console.error("Billing usage fetch error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to load billing usage",
+        });
+      }
+    },
+  );
+
+  // POST /api/billing/estimate — budget forecast (same logic as canvas calculator)
+  expressApp.post(
+    "/api/billing/estimate",
+    verifyBrokerSession,
+    async (req, res) => {
+      try {
+        const brokerRole = (req as any).brokerRole;
+        if (brokerRole !== "admin") {
+          return res.status(403).json({
+            success: false,
+            message: "Only admins can run billing estimates",
+          });
+        }
+
+        const body = (req.body ?? {}) as Partial<BudgetForecastInputs>;
+        const config = await quotaService.getBillingConfig(MORTGAGE_TENANT_ID);
+        const plan: BillingPlanConfig = config.plan;
+        const inputs: BudgetForecastInputs = {
+          convoSmsPerMonth: Number(body.convoSmsPerMonth ?? 0),
+          convoEmailPerMonth: Number(body.convoEmailPerMonth ?? 0),
+          voiceMinutesPerMonth: Number(body.voiceMinutesPerMonth ?? 0),
+          schedulerBookingsPerMonth: Number(
+            body.schedulerBookingsPerMonth ?? 0,
+          ),
+          blastsPerMonth: Number(body.blastsPerMonth ?? 0),
+          recipientsPerBlast: Number(body.recipientsPerBlast ?? 0),
+          smsSegmentsPerRecipient: Number(body.smsSegmentsPerRecipient ?? 2),
+          emailPerBlast: Boolean(body.emailPerBlast),
+          extraTwilioNumbers: Number(body.extraTwilioNumbers ?? 0),
+          zoomBrokerLicenses: Number(body.zoomBrokerLicenses ?? 0),
+          mortgiAiTokensPerMonth: Number(body.mortgiAiTokensPerMonth ?? 0),
+        };
+
+        const forecastRaw = computeBudgetForecast(inputs, plan);
+        const forecast = isBillingInternalEconomicsEnabled()
+          ? forecastRaw
+          : stripInternalBudgetForecast(forecastRaw);
+        return res.json({ success: true, forecast });
+      } catch (error: unknown) {
+        console.error("Billing estimate error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to compute billing estimate",
+        });
+      }
+    },
+  );
+
+  // GET /api/billing/team-notice — grace/restricted notice for brokers & admins (no billing UI)
+  expressApp.get(
+    "/api/billing/team-notice",
+    verifyBrokerSession,
+    async (req, res) => {
+      try {
+        const brokerRole = (req as any).brokerRole;
+        if (brokerRole === "admin") {
+          return res.json({
+            success: true,
+            notice: {
+              show: false,
+              level: null,
+              headline: "",
+              detail: "",
+              blocksOutbound: false,
+              secondsUntilGraceEnd: null,
+            },
+          });
+        }
+
+        const config = await quotaService.getBillingConfig(MORTGAGE_TENANT_ID);
+        const quota = await getUnifiedQuotaSummary(pool, MORTGAGE_TENANT_ID);
+        const notice = await getBillingTeamNotice(
+          pool,
+          MORTGAGE_TENANT_ID,
+          config,
+          {
+            quota,
+          },
+        );
+        return res.json({ success: true, notice });
+      } catch (error: any) {
+        console.error("Billing team notice fetch error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to load billing team notice",
+        });
+      }
+    },
+  );
+
+  // GET /api/billing/access — grace / restricted / suspended ladder (platform_owner only)
+  expressApp.get(
+    "/api/billing/access",
+    verifyBrokerSession,
+    async (req, res) => {
+      try {
+        const brokerRole = (req as any).brokerRole;
+        if (brokerRole !== "admin") {
+          return res.status(403).json({
+            success: false,
+            message: "Only admins can view billing access",
+          });
+        }
+
+        const config = await quotaService.getBillingConfig(MORTGAGE_TENANT_ID);
+        const quota = await getUnifiedQuotaSummary(pool, MORTGAGE_TENANT_ID);
+        const access = await getBillingAccessState(
+          pool,
+          MORTGAGE_TENANT_ID,
+          config,
+          {
+            quota,
+          },
+        );
+        return res.json({ success: true, access });
+      } catch (error: any) {
+        console.error("Billing access fetch error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to load billing access state",
+        });
+      }
+    },
+  );
+
+  // POST /api/billing/access/simulate — dev/test only (platform_owner)
+  expressApp.post(
+    "/api/billing/access/simulate",
+    verifyBrokerSession,
+    async (req, res) => {
+      try {
+        const brokerRole = (req as any).brokerRole;
+        if (brokerRole !== "admin") {
+          return res.status(403).json({
+            success: false,
+            message: "Only admins can simulate billing access",
+          });
+        }
+        const stripe = getStripePublicConfig();
+        if (!stripe.testMode && process.env.NODE_ENV === "production") {
+          return res.status(403).json({
+            success: false,
+            message: "Simulation is only available in Stripe test mode",
+          });
+        }
+
+        const scenario = String(
+          (req.body as { scenario?: string }).scenario ?? "",
+        );
+        if (scenario === "past_due") {
+          const graceDays = await getGraceDaysForTenant(
+            pool,
+            MORTGAGE_TENANT_ID,
+          );
+          await markSubscriptionPastDue(pool, MORTGAGE_TENANT_ID, graceDays);
+        } else if (scenario === "active") {
+          await markSubscriptionActive(pool, MORTGAGE_TENANT_ID);
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: 'scenario must be "past_due" or "active"',
+          });
+        }
+
+        const config = await quotaService.getBillingConfig(MORTGAGE_TENANT_ID);
+        const quota = await getUnifiedQuotaSummary(pool, MORTGAGE_TENANT_ID);
+        const access = await getBillingAccessState(
+          pool,
+          MORTGAGE_TENANT_ID,
+          config,
+          {
+            quota,
+          },
+        );
+        return res.json({ success: true, access });
+      } catch (error: any) {
+        console.error("Billing access simulate error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to simulate billing access",
+        });
+      }
+    },
+  );
+
+  // GET /api/billing/quota — unified quota summary (platform_owner; also for broadcast UI)
+  expressApp.get(
+    "/api/billing/quota",
+    verifyBrokerSession,
+    async (req, res) => {
+      try {
+        const brokerRole = (req as any).brokerRole;
+        if (brokerRole !== "admin") {
+          return res.status(403).json({
+            success: false,
+            message: "Only admins can view billing quota",
+          });
+        }
+        const quota = await getUnifiedQuotaSummary(pool, MORTGAGE_TENANT_ID);
+        return res.json({ success: true, quota });
+      } catch (error: any) {
+        console.error("Billing quota fetch error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to load billing quota",
+        });
+      }
+    },
+  );
+
+  // GET /api/billing/purchases — active period capacity + top-up history (platform_owner)
+  expressApp.get(
+    "/api/billing/purchases",
+    verifyBrokerSession,
+    async (req, res) => {
+      try {
+        const brokerRole = (req as any).brokerRole;
+        if (brokerRole !== "admin") {
+          return res.status(403).json({
+            success: false,
+            message: "Only admins can view billing purchases",
+          });
+        }
+        const payload = await buildBillingPurchasesResponse(
+          pool,
+          MORTGAGE_TENANT_ID,
+        );
+        return res.json({ success: true, ...payload });
+      } catch (error: any) {
+        console.error("Billing purchases fetch error:", error);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to load billing purchases",
+        });
+      }
+    },
+  );
+
+
+  registerStripeBillingRoutes(
+    expressApp,
+    pool,
+    MORTGAGE_TENANT_ID,
+    fulfillStripeTopUp,
+    verifyBrokerSession,
+    (tid) => getUnifiedQuotaSummary(pool, tid),
+    handleStripeTopUpGranted,
+  );
+
+  expressApp.get("/api/realtor-broadcasts/unsubscribe", handleBroadcastUnsubscribe);
+  expressApp.get("/api/admin/role-section-permissions", verifyBrokerSession, handleGetRoleSectionPermissions);
+  expressApp.put("/api/admin/role-section-permissions", verifyBrokerSession, handleUpdateRoleSectionPermissions);
+  expressApp.get("/api/documents/:documentId/download", verifyBrokerSession, handleDownloadTaskDocument);
+  expressApp.post("/api/documents/bulk-download", verifyBrokerSession, handleBulkDownloadTaskDocuments);
+  expressApp.get("/api/clients/:clientId/open-loans", verifyBrokerSession, handleGetClientOpenLoans);
+  expressApp.put("/api/clients/:clientId/reassign", verifyBrokerSession, handleReassignClient);
+  expressApp.post("/api/broadcasts/preview-audience", verifyBrokerSession, handlePreviewBroadcastAudience);
+  expressApp.post("/api/broadcasts", verifyBrokerSession, handleCreateBroadcast);
+  expressApp.get("/api/broadcasts/:id", verifyBrokerSession, handleGetBroadcast);
+  expressApp.get(
+    "/api/broadcasts/:id/recipients",
+    verifyBrokerSession,
+    handleGetBroadcastRecipients,
+  );
+  expressApp.post("/api/broadcasts/:id/cancel", verifyBrokerSession, handleCancelBroadcast);
+  expressApp.get(
+    "/api/cron/process-scheduled-broadcasts",
+    handleProcessScheduledBroadcasts,
+  );
+
+
+  expressApp.get(
+    "/api/compliance/checklists",
+    verifyBrokerSession,
+    handleGetComplianceChecklists,
+  );
+  expressApp.get(
+    "/api/compliance/checklists/:checklistId",
+    verifyBrokerSession,
+    handleGetComplianceChecklist,
+  );
+  expressApp.post(
+    "/api/compliance/checklists",
+    verifyBrokerSession,
+    handleCreateComplianceChecklist,
+  );
+  expressApp.put(
+    "/api/compliance/checklists/:checklistId/items/:itemId",
+    verifyBrokerSession,
+    handleUpdateComplianceItem,
+  );
+
+  expressApp.get(
+    "/api/broker/notification-preferences",
+    verifyBrokerSession,
+    handleGetBrokerNotificationPreferences,
+  );
+  expressApp.put(
+    "/api/broker/notification-preferences",
+    verifyBrokerSession,
+    handlePutBrokerNotificationPreferences,
+  );
+
   expressApp.put(
     "/api/admin/profile/avatar",
     verifyBrokerSession,
@@ -26825,28 +37850,6 @@ function createServer() {
     handleDeleteSmsTemplate,
   );
 
-  // WhatsApp Template routes
-  expressApp.get(
-    "/api/whatsapp-templates",
-    verifyBrokerSession,
-    handleGetWhatsappTemplates,
-  );
-  expressApp.post(
-    "/api/whatsapp-templates",
-    verifyBrokerSession,
-    handleCreateWhatsappTemplate,
-  );
-  expressApp.put(
-    "/api/whatsapp-templates/:templateId",
-    verifyBrokerSession,
-    handleUpdateWhatsappTemplate,
-  );
-  expressApp.delete(
-    "/api/whatsapp-templates/:templateId",
-    verifyBrokerSession,
-    handleDeleteWhatsappTemplate,
-  );
-
   // Pipeline Step Templates routes
   expressApp.get(
     "/api/pipeline-step-templates",
@@ -26980,7 +37983,7 @@ function createServer() {
 
   // Twilio delivery-status backfill cron — run every 10 min:
   //   curl -s "https://yourdomain.com/api/cron/backfill-message-status?secret=CRON_SECRET"
-  // Catches SMS/MMS/WhatsApp rows whose statusCallback never arrived and
+  // Catches SMS/MMS rows whose statusCallback never arrived and
   // refreshes their delivery_status from Twilio's authoritative state.
   expressApp.get(
     "/api/cron/backfill-message-status",
@@ -27106,6 +38109,11 @@ function createServer() {
     handleSendMessage,
   );
   expressApp.post(
+    "/api/conversations/:conversationId/claim",
+    verifyBrokerSession,
+    handleClaimSharedConversation,
+  );
+  expressApp.post(
     "/api/conversations/:conversationId/save-contact",
     verifyBrokerSession,
     handleSaveContactFromConversation,
@@ -27129,11 +38137,6 @@ function createServer() {
     "/api/conversations/stats",
     verifyBrokerSession,
     handleGetConversationStats,
-  );
-  expressApp.get(
-    "/api/conversations/check-whatsapp",
-    verifyBrokerSession,
-    handleCheckWhatsApp,
   );
   expressApp.get(
     "/api/conversations/lookup-contact",
@@ -27474,8 +38477,7 @@ function createServer() {
       "DESCRIPTION:Reminder",
       "END:VALARM",
       "END:VEVENT",
-      "END:VCALENDAR",
-    ]
+      "END:VCALENDAR"]
       .filter(Boolean)
       .join("\r\n");
 
@@ -27593,8 +38595,7 @@ function createServer() {
           filename: "meeting-invite.ics",
           content: icsAttachment,
           contentType: "text/calendar; method=REQUEST",
-        },
-      ],
+        }],
       html: `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head>
       <body style="margin:0;padding:0;background-color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f8fafc;padding:40px 16px;">
@@ -28313,8 +39314,7 @@ function createServer() {
         [
           MORTGAGE_TENANT_ID,
           brokerRow.id,
-          (brokerRow as any).timezone || "America/Chicago",
-        ],
+          (brokerRow as any).timezone || "America/Chicago"],
       );
 
       const [[settings]] = await pool.query<RowDataPacket[]>(
@@ -28652,8 +39652,7 @@ function createServer() {
           teamsJoinUrl,
           notes || null,
           bookingToken,
-          brokerData.public_token,
-        ],
+          brokerData.public_token],
       );
 
       const brokerName = `${brokerData.first_name} ${brokerData.last_name}`;
@@ -28713,8 +39712,7 @@ function createServer() {
             firstName,
             lastName,
             client_phone || null,
-            brokerId,
-          ],
+            brokerId],
         );
       } catch (clientErr) {
         // Non-fatal — booking already confirmed, just log
@@ -28981,8 +39979,7 @@ function createServer() {
           old.meeting_type === "teams" ? zoomJoinUrl : null,
           old.notes,
           newBookingToken,
-          old.broker_public_token,
-        ],
+          old.broker_public_token],
       );
 
       const brokerName = `${old.first_name} ${old.last_name}`;
@@ -29272,8 +40269,7 @@ function createServer() {
           allow_video !== undefined ? (allow_video ? 1 : 0) : null,
           allow_teams !== undefined ? (allow_teams ? 1 : 0) : null,
           reqBrokerId,
-          MORTGAGE_TENANT_ID,
-        ],
+          MORTGAGE_TENANT_ID],
       );
 
       if (_updateResult.affectedRows === 0) {
@@ -29296,8 +40292,7 @@ function createServer() {
             timezone || "America/Chicago",
             allow_phone !== undefined ? (allow_phone ? 1 : 0) : 1,
             allow_video !== undefined ? (allow_video ? 1 : 0) : 0,
-            allow_teams !== undefined ? (allow_teams ? 1 : 0) : 0,
-          ],
+            allow_teams !== undefined ? (allow_teams ? 1 : 0) : 0],
         );
       }
 
@@ -29323,8 +40318,7 @@ function createServer() {
                 av.day_of_week,
                 av.start_time,
                 av.end_time,
-                av.is_active ? 1 : 0,
-              ],
+                av.is_active ? 1 : 0],
             );
           }
         }
@@ -29789,8 +40783,7 @@ function createServer() {
           teamsMeetingId,
           teamsJoinUrl,
           notes || null,
-          bookingToken,
-        ],
+          bookingToken],
       );
 
       const brokerName = brokerData
@@ -29861,9 +40854,14 @@ function createServer() {
   expressApp.get("/api/public/scheduler", handleGetPublicScheduler);
   expressApp.get("/api/public/scheduler/:token", handleGetPublicScheduler);
   expressApp.get("/api/public/scheduler/:token/slots", handleGetPublicSlots);
-  expressApp.post("/api/public/scheduler/book", handleBookMeeting);
+  expressApp.post(
+    "/api/public/scheduler/book",
+    (expressApp as any).locals.limiters.publicForm,
+    handleBookMeeting,
+  );
   expressApp.post(
     "/api/public/scheduler/cancel/:bookingToken",
+    (expressApp as any).locals.limiters.publicForm,
     handleCancelMeetingByToken,
   );
   expressApp.get(
@@ -29872,6 +40870,7 @@ function createServer() {
   );
   expressApp.post(
     "/api/public/scheduler/reschedule/:bookingToken",
+    (expressApp as any).locals.limiters.publicForm,
     handleRescheduleMeeting,
   );
 
@@ -30038,8 +41037,7 @@ function createServer() {
           broker.id,
           toMySQLUtc(start_datetime),
           toMySQLUtc(end_datetime),
-          label || null,
-        ],
+          label || null],
       );
 
       const [[newRow]] = await pool.query<RowDataPacket[]>(
@@ -30423,8 +41421,7 @@ function createServer() {
         "realtor_anniversary",
         "important_date",
         "reminder",
-        "other",
-      ];
+        "other"];
       if (!validTypes.includes(event_type)) {
         return res
           .status(400)
@@ -30449,8 +41446,7 @@ function createServer() {
           recurrence || "none",
           color || null,
           linked_client_id || null,
-          linked_person_name?.trim() || null,
-        ],
+          linked_person_name?.trim() || null],
       );
 
       const insertId = (result as any).insertId;
@@ -30653,8 +41649,7 @@ function createServer() {
               eventDate,
               1,
               "yearly",
-              Number(c.id),
-            ]);
+              Number(c.id)]);
           }
         }
 
@@ -30738,8 +41733,7 @@ function createServer() {
               broker.id,
               title,
               eventDate,
-              `${b.first_name} ${b.last_name}`,
-            ],
+              `${b.first_name} ${b.last_name}`],
           );
           created++;
         }
@@ -30818,8 +41812,7 @@ function createServer() {
           email.trim().toLowerCase().slice(0, 255),
           phone?.trim().slice(0, 30) || null,
           subject.trim().slice(0, 255),
-          message.trim(),
-        ],
+          message.trim()],
       );
 
       return res.status(201).json({
@@ -31046,8 +42039,7 @@ function createServer() {
         "waiting_for_1st_deal",
         "first_deal_funded",
         "second_deal_funded",
-        "top_agent_whale",
-      ];
+        "top_agent_whale"];
       if (!VALID_STAGES.includes(stage)) {
         return res
           .status(400)
@@ -31078,8 +42070,7 @@ function createServer() {
           followers ? JSON.stringify(followers) : null,
           progress_report || null,
           add_to_refi_rates_dropped ? 1 : 0,
-          brokerId,
-        ],
+          brokerId],
       );
 
       const [newRows] = await pool.query<RowDataPacket[]>(
@@ -31187,8 +42178,7 @@ function createServer() {
         "waiting_for_1st_deal",
         "first_deal_funded",
         "second_deal_funded",
-        "top_agent_whale",
-      ];
+        "top_agent_whale"];
       if (!stage || !VALID_STAGES.includes(stage)) {
         return res
           .status(400)
@@ -31734,7 +42724,7 @@ function createServer() {
       function: {
         name: "get_communication_activity",
         description:
-          "Get a count of SMS, email, and WhatsApp messages sent in the last 7 days.",
+          "Get a count of SMS, email, messages sent in the last 7 days.",
         parameters: { type: "object", properties: {}, required: [] },
       },
     },
@@ -31745,8 +42735,7 @@ function createServer() {
         description: "Get a summary of realtor prospecting pipeline by stage.",
         parameters: { type: "object", properties: {}, required: [] },
       },
-    },
-  ];
+    }];
 
   // Client tool definitions (strictly scoped to the authenticated client)
   const CLIENT_TOOL_DEFINITIONS: Groq.Chat.Completions.ChatCompletionTool[] = [
@@ -31794,8 +42783,7 @@ function createServer() {
           "Get the client's pre-approval letter details including approved amount.",
         parameters: { type: "object", properties: {}, required: [] },
       },
-    },
-  ];
+    }];
 
   // Execute a broker tool call safely (read-only, scoped to tenant)
   async function executeBrokerTool(
@@ -32188,8 +43176,7 @@ function createServer() {
       const messages: Groq.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: systemPrompt },
         ...history.map((h) => ({ role: h.role as any, content: h.content })),
-        { role: "user", content: message.trim() },
-      ];
+        { role: "user", content: message.trim() }];
 
       // First Groq call (may include tool calls)
       let completion = await groqClient.chat.completions.create({
@@ -32257,8 +43244,7 @@ function createServer() {
       const newHistory = [
         ...history,
         { role: "user", content: message.trim() },
-        { role: "assistant", content: finalReply },
-      ];
+        { role: "assistant", content: finalReply }];
 
       // Upsert session
       if (sessionId) {
@@ -32277,8 +43263,7 @@ function createServer() {
             userId,
             session_key,
             JSON.stringify(newHistory),
-            tokensUsed,
-          ],
+            tokensUsed],
         );
       }
 
@@ -32394,50 +43379,43 @@ function createServer() {
           "mortgi_enabled",
           String(body.mortgi_enabled),
           "boolean",
-          "Master switch for Mortgi AI assistant",
-        ]);
+          "Master switch for Mortgi AI assistant"]);
       if (body.mortgi_client_enabled !== undefined)
         updates.push([
           "mortgi_client_enabled",
           String(body.mortgi_client_enabled),
           "boolean",
-          "Enable Mortgi for client portal",
-        ]);
+          "Enable Mortgi for client portal"]);
       if (body.mortgi_broker_enabled !== undefined)
         updates.push([
           "mortgi_broker_enabled",
           String(body.mortgi_broker_enabled),
           "boolean",
-          "Enable Mortgi for admin/broker portal",
-        ]);
+          "Enable Mortgi for admin/broker portal"]);
       if (body.mortgi_system_prompt !== undefined)
         updates.push([
           "mortgi_system_prompt",
           body.mortgi_system_prompt.slice(0, 2000),
           "string",
-          "Custom system prompt override",
-        ]);
+          "Custom system prompt override"]);
       if (body.mortgi_daily_message_limit !== undefined)
         updates.push([
           "mortgi_daily_message_limit",
           String(Math.max(1, Math.min(500, body.mortgi_daily_message_limit))),
           "number",
-          "Max messages per user per day",
-        ]);
+          "Max messages per user per day"]);
       if (body.mortgi_broker_tools !== undefined)
         updates.push([
           "mortgi_broker_tools",
           JSON.stringify(body.mortgi_broker_tools),
           "json",
-          "Enabled broker tools",
-        ]);
+          "Enabled broker tools"]);
       if (body.mortgi_client_tools !== undefined)
         updates.push([
           "mortgi_client_tools",
           JSON.stringify(body.mortgi_client_tools),
           "json",
-          "Enabled client tools",
-        ]);
+          "Enabled client tools"]);
 
       for (const [key, value, type, desc] of updates) {
         await upsertSetting(key, value, type, desc);
@@ -32619,6 +43597,7 @@ function createServer() {
       });
     },
   );
+
 
   return expressApp;
 }

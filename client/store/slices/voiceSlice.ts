@@ -4,6 +4,34 @@ import type { RootState } from "../index";
 
 // ── Async thunks ──────────────────────────────────────────────────────────────
 
+export const lookupCallerContact = createAsyncThunk(
+  "voice/lookupCallerContact",
+  async (phone: string, { getState }) => {
+    const { sessionToken } = (getState() as RootState).brokerAuth;
+    const { data } = await axios.get<{
+      found: boolean;
+      client_name?: string | null;
+      client_id?: number | null;
+    }>("/api/conversations/lookup-contact", {
+      params: { phone },
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    });
+    return data;
+  },
+);
+
+export const notifyCallAnswered = createAsyncThunk(
+  "voice/notifyCallAnswered",
+  async (callSid: string, { getState }) => {
+    const { sessionToken } = (getState() as RootState).brokerAuth;
+    await axios.post(
+      "/api/voice/call-answered",
+      { callSid },
+      { headers: { Authorization: `Bearer ${sessionToken}` } },
+    );
+  },
+);
+
 export const fetchVoiceToken = createAsyncThunk(
   "voice/fetchToken",
   async (_, { getState, rejectWithValue }) => {
@@ -46,23 +74,6 @@ export const logVoiceCall = createAsyncThunk(
     } catch (error: any) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to log call",
-      );
-    }
-  },
-);
-
-export const fetchAblyToken = createAsyncThunk(
-  "voice/fetchAblyToken",
-  async (_, { getState, rejectWithValue }) => {
-    try {
-      const { sessionToken } = (getState() as RootState).brokerAuth;
-      const { data } = await axios.get("/api/conversations/ably-token", {
-        headers: { Authorization: `Bearer ${sessionToken}` },
-      });
-      return data;
-    } catch (error: any) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch Ably token",
       );
     }
   },

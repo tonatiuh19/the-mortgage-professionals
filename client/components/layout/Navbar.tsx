@@ -86,7 +86,7 @@ const Navbar = () => {
                 className="h-10 w-auto"
               />
             </Link>
-            <div className="hidden md:flex md:ml-10 md:gap-8">
+            <div className="hidden lg:flex lg:ml-10 lg:gap-8">
               {navLinks.map((link) => {
                 const [linkPath, linkQuery] = link.href.split("?");
                 const isActive =
@@ -97,7 +97,7 @@ const Navbar = () => {
                     key={link.href}
                     to={link.href}
                     className={cn(
-                      "relative text-sm font-semibold transition-all hover:text-primary py-2",
+                      "relative whitespace-nowrap text-sm font-semibold transition-all hover:text-primary py-2",
                       isActive
                         ? "text-primary after:absolute after:bottom-0 after:left-0 after:h-[2px] after:w-full after:bg-primary after:rounded-full"
                         : "text-muted-foreground",
@@ -111,7 +111,7 @@ const Navbar = () => {
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="hidden md:flex items-center gap-3">
+            <div className="hidden lg:flex items-center gap-3">
               <a href="tel:(562)337-0000">
                 <Button
                   variant="ghost"
@@ -188,7 +188,7 @@ const Navbar = () => {
               )}
             </div>
             <button
-              className="inline-flex items-center justify-center rounded-xl p-2 text-muted-foreground hover:bg-white/10 transition-colors md:hidden"
+              className="inline-flex items-center justify-center rounded-xl p-2 text-muted-foreground hover:bg-white/10 transition-colors lg:hidden"
               onClick={() => setIsOpen(!isOpen)}
             >
               {isOpen ? (
@@ -205,7 +205,7 @@ const Navbar = () => {
       {isOpen && (
         <div
           className={cn(
-            "mt-2 rounded-2xl bg-background/60 p-2 shadow-2xl backdrop-blur-2xl md:hidden animate-in slide-in-from-top-2 duration-300",
+            "mt-2 rounded-2xl bg-background/60 p-2 shadow-2xl backdrop-blur-2xl lg:hidden animate-in slide-in-from-top-2 duration-300",
             isHome ? "border border-white/20" : "border-transparent",
           )}
         >

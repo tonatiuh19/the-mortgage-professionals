@@ -36,7 +36,6 @@ import {
   ArrowLeft,
   Smartphone,
   AtSign,
-  MessageCircle,
   CheckCheck,
   Clock3,
   Lock,
@@ -102,10 +101,7 @@ import { convertClientToBroker } from "@/store/slices/clientsSlice";
 import { useToast } from "@/hooks/use-toast";
 import { logger } from "@/lib/logger";
 import { stripHtml } from "@/lib/utils";
-import {
-  SMS_CHANNEL_ENABLED,
-  WHATSAPP_CHANNEL_ENABLED,
-} from "@/lib/channelAvailability";
+import { SMS_CHANNEL_ENABLED } from "@/lib/channelAvailability";
 import {
   Dialog,
   DialogContent,
@@ -234,7 +230,6 @@ const CITIZENSHIP_LABELS: Record<string, string> = {
 const COMM_ICONS: Record<string, React.ReactNode> = {
   sms: <MessageSquare className="w-3.5 h-3.5" />,
   email: <Mail className="w-3.5 h-3.5" />,
-  whatsapp: <MessageSquare className="w-3.5 h-3.5 text-green-500" />,
   call: <PhoneCall className="w-3.5 h-3.5" />,
   internal_note: <Edit3 className="w-3.5 h-3.5" />,
 };
@@ -356,13 +351,13 @@ function StatChip({
 /* ─── compose box sub-component ──────────────────────────────────────────── */
 
 interface ComposeBoxProps {
-  composeType: "sms" | "email" | "whatsapp";
+  composeType: "sms" | "email";
   composeSubject: string;
   composeBody: string;
   sendingMsg: boolean;
   hasPhone: boolean;
   hasEmail: boolean;
-  onTypeChange: (t: "sms" | "email" | "whatsapp") => void;
+  onTypeChange: (t: "sms" | "email") => void;
   onSubjectChange: (v: string) => void;
   onBodyChange: (v: string) => void;
   onSend: () => void;
@@ -418,13 +413,10 @@ function ComposeBox({
 
       {/* type selector + templates */}
       <div className="flex items-center gap-2 flex-wrap">
-        {(["sms", "email", "whatsapp"] as const).map((t) => {
+        {(["sms", "email"] as const).map((t) => {
           const unavailable =
             (t !== "email" && !hasPhone) || (t === "email" && !hasEmail);
-          const locked =
-            t === "whatsapp" ||
-            (t === "sms" && !SMS_CHANNEL_ENABLED) ||
-            (t === "whatsapp" && !WHATSAPP_CHANNEL_ENABLED);
+          const locked = t === "sms" && !SMS_CHANNEL_ENABLED;
           const disabled = unavailable || locked;
           return (
             <button
@@ -432,13 +424,9 @@ function ComposeBox({
               disabled={disabled}
               onClick={() => !disabled && onTypeChange(t)}
               title={
-                locked && t === "whatsapp" && SMS_CHANNEL_ENABLED
-                  ? "WhatsApp coming soon"
-                  : locked && t === "sms"
-                    ? "SMS temporarily unavailable"
-                    : locked
-                      ? "Temporarily unavailable"
-                      : undefined
+                locked && t === "sms"
+                  ? "SMS temporarily unavailable"
+                  : undefined
               }
               className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border transition-colors font-medium ${
                 composeType === t && !locked
@@ -452,8 +440,7 @@ function ComposeBox({
             >
               {t === "sms" && <Smartphone className="w-3 h-3" />}
               {t === "email" && <Mail className="w-3 h-3" />}
-              {t === "whatsapp" && <MessageCircle className="w-3 h-3" />}
-              {t === "sms" ? "SMS" : t === "email" ? "Email" : "WhatsApp"}
+              {t === "sms" ? "SMS" : "Email"}
               {locked && (
                 <Lock className="w-2.5 h-2.5 ml-0.5 text-muted-foreground/60" />
               )}
@@ -682,7 +669,7 @@ export default function ClientDetailPanel({
   const [threadMessages, setThreadMessages] = useState<any[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
-  const [composeType, setComposeType] = useState<"sms" | "email" | "whatsapp">(
+  const [composeType, setComposeType] = useState<"sms" | "email">(
     SMS_CHANNEL_ENABLED ? "sms" : "email",
   );
   const [composeSubject, setComposeSubject] = useState("");
@@ -721,14 +708,6 @@ export default function ClientDetailPanel({
       toast({
         title: "SMS unavailable",
         description: "SMS messaging is temporarily disabled.",
-        variant: "destructive",
-      });
-      return;
-    }
-    if (composeType === "whatsapp" && !WHATSAPP_CHANNEL_ENABLED) {
-      toast({
-        title: "WhatsApp unavailable",
-        description: "WhatsApp messaging is temporarily disabled.",
         variant: "destructive",
       });
       return;
@@ -1848,8 +1827,6 @@ export default function ClientDetailPanel({
                           const typeIcon =
                             conv.last_message_type === "email" ? (
                               <Mail className="w-4 h-4" />
-                            ) : conv.last_message_type === "whatsapp" ? (
-                              <MessageCircle className="w-4 h-4 text-green-500" />
                             ) : conv.last_message_type === "call" ? (
                               <PhoneCall className="w-4 h-4" />
                             ) : (
@@ -1984,9 +1961,7 @@ export default function ClientDetailPanel({
                       ) : (
                         threadMessages.map((msg) => {
                           const isOutbound = msg.direction === "outbound";
-                          const isSms =
-                            msg.communication_type === "sms" ||
-                            msg.communication_type === "whatsapp";
+                          const isSms = msg.communication_type === "sms";
                           const isEmail = msg.communication_type === "email";
                           const isCall = msg.communication_type === "call";
                           return (
@@ -2006,8 +1981,6 @@ export default function ClientDetailPanel({
                                   <Mail className="w-3 h-3" />
                                 ) : isCall ? (
                                   <PhoneCall className="w-3 h-3" />
-                                ) : msg.communication_type === "whatsapp" ? (
-                                  <MessageCircle className="w-3 h-3" />
                                 ) : (
                                   <Smartphone className="w-3 h-3" />
                                 )}

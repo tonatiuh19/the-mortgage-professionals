@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { RolePermissionsPanel } from "@/components/RolePermissionsPanel";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -412,7 +413,7 @@ const Settings = () => {
                   />
                   {!PHONE_DELIVERY_ENABLED && (
                     <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                      SMS and WhatsApp delivery is temporarily paused, so SMS
+                      SMS delivery is temporarily paused, so SMS
                       notification settings are locked.
                     </p>
                   )}
@@ -485,6 +486,18 @@ const Settings = () => {
                   />
                 </div>
               </SettingsSection>
+
+              {isAdmin && (
+                <SettingsSection
+                  index={3}
+                  icon={FileCheck2}
+                  title="Role Visibility"
+                  description="Choose which sidebar sections each role can see. Admins always see everything."
+                  accent="bg-primary/5"
+                >
+                  <RolePermissionsPanel />
+                </SettingsSection>
+              )}
             </>
           )}
         </div>

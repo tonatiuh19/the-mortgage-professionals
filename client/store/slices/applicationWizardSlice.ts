@@ -14,7 +14,7 @@ import type {
 } from "@shared/api";
 import type { RootState } from "../index";
 
-const DRAFT_KEY = "encore_wizard_draft";
+const DRAFT_KEY = "tmp_wizard_draft";
 
 export interface WizardDraft {
   values: Omit<PublicApplicationPayload, "broker_token">;

@@ -27,6 +27,7 @@ import {
   Volume2,
   Link2,
   XCircle,
+  Bell,
 } from "lucide-react";
 import { MetaHelmet } from "@/components/MetaHelmet";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -54,10 +55,23 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import type { ConversationMailbox, BrokerRole } from "@shared/api";
-import { ROLE_LABELS } from "@shared/api";
+import type {
+  ConversationMailbox,
+  BrokerRole,
+  BrokerEmailAlertEvent,
+} from "@shared/api";
+import {
+  ROLE_LABELS,
+  BROKER_EMAIL_ALERT_EVENTS,
+  BROKER_EMAIL_ALERT_COLUMNS,
+  BROKER_EMAIL_ALERT_LABELS,
+} from "@shared/api";
 
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import {
+  fetchBrokerNotificationPreferences,
+  updateBrokerNotificationPreferences,
+} from "@/store/slices/brokerNotificationPrefsSlice";
 import {
   fetchBrokerProfile,
   updateBrokerProfile,
@@ -206,6 +220,13 @@ const BrokerProfile = () => {
   const { user, profileLoading, profileSaving, avatarUploading, profileError } =
     useAppSelector((state) => state.brokerAuth);
   const { sessionToken } = useAppSelector((s) => s.brokerAuth);
+  const {
+    preferences: notifPrefs,
+    loading: notifPrefsLoading,
+    saving: notifPrefsSaving,
+    error: notifPrefsError,
+  } = useAppSelector((s) => s.brokerNotificationPrefs);
+  const [secondaryEmailDraft, setSecondaryEmailDraft] = useState("");
 
   // ── Call forwarding state ────────────────────────────────────────────────
   const [fwdEnabled, setFwdEnabled] = useState(false);
@@ -452,7 +473,12 @@ const BrokerProfile = () => {
 
   useEffect(() => {
     dispatch(fetchBrokerProfile());
+    dispatch(fetchBrokerNotificationPreferences());
   }, [dispatch]);
+
+  useEffect(() => {
+    setSecondaryEmailDraft(notifPrefs?.secondary_email ?? "");
+  }, [notifPrefs?.secondary_email]);
 
   useEffect(() => {
     return () => {
@@ -551,6 +577,51 @@ const BrokerProfile = () => {
       });
     } finally {
       setSlugSaving(false);
+    }
+  };
+
+  const handleToggleEmailAlert = async (
+    event: BrokerEmailAlertEvent,
+    enabled: boolean,
+  ) => {
+    const col = BROKER_EMAIL_ALERT_COLUMNS[event];
+    try {
+      await dispatch(
+        updateBrokerNotificationPreferences({ [col]: enabled }),
+      ).unwrap();
+      toast({
+        title: "Notification preference saved",
+        description: `${BROKER_EMAIL_ALERT_LABELS[event].title}: email ${enabled ? "on" : "off"}`,
+      });
+    } catch (err: unknown) {
+      toast({
+        title: "Could not save preference",
+        description: String(err || "Please try again."),
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleSaveSecondaryEmail = async () => {
+    const trimmed = secondaryEmailDraft.trim();
+    try {
+      await dispatch(
+        updateBrokerNotificationPreferences({
+          secondary_email: trimmed || null,
+        }),
+      ).unwrap();
+      toast({
+        title: "Secondary email saved",
+        description: trimmed
+          ? `Also notifying ${trimmed}`
+          : "Secondary email cleared",
+      });
+    } catch (err: unknown) {
+      toast({
+        title: "Could not save secondary email",
+        description: String(err || "Please try again."),
+        variant: "destructive",
+      });
     }
   };
 
@@ -1291,6 +1362,127 @@ const BrokerProfile = () => {
             ) : null}
 
             {/* Email Mailbox — hidden until O365 is configured */}
+
+            {/* Notification Preferences */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Bell className="h-4 w-4 text-primary" />
+                  Notification Preferences
+                </CardTitle>
+                <CardDescription>
+                  Choose which events email you. In-app bell alerts always stay
+                  on.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {notifPrefsLoading && !notifPrefs ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading preferences…
+                  </div>
+                ) : (
+                  <>
+                    {notifPrefs && !notifPrefs.account_email_sendable && (
+                      <Alert>
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>
+                          Your account email is missing or not sendable
+                          {notifPrefs.account_email
+                            ? ` (${notifPrefs.account_email})`
+                            : ""}
+                          . Email toggles stay available, but alerts will not
+                          send until a valid account email is set
+                          {notifPrefs.secondary_email
+                            ? " (secondary email can still receive alerts)"
+                            : ""}
+                          .
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground uppercase tracking-wide">
+                        Primary account email
+                      </Label>
+                      <p className="text-sm font-medium truncate">
+                        {notifPrefs?.account_email || user?.email || "—"}
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="secondary_notify_email">
+                        Also notify (optional)
+                      </Label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          id="secondary_notify_email"
+                          type="email"
+                          placeholder="ops@example.com"
+                          value={secondaryEmailDraft}
+                          onChange={(e) =>
+                            setSecondaryEmailDraft(e.target.value)
+                          }
+                          className="flex-1"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={notifPrefsSaving}
+                          onClick={handleSaveSecondaryEmail}
+                          className="shrink-0 gap-1.5"
+                        >
+                          {notifPrefsSaving ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Save className="h-3.5 w-3.5" />
+                          )}
+                          Save
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Optional second inbox for the same alerts. Leave blank
+                        to use only your account email.
+                      </p>
+                    </div>
+
+                    <div className="divide-y divide-border rounded-lg border border-border">
+                      {BROKER_EMAIL_ALERT_EVENTS.map((event) => {
+                        const col = BROKER_EMAIL_ALERT_COLUMNS[event];
+                        const enabled = Boolean(notifPrefs?.[col] ?? true);
+                        const meta = BROKER_EMAIL_ALERT_LABELS[event];
+                        return (
+                          <div
+                            key={event}
+                            className="flex items-start justify-between gap-4 px-4 py-3"
+                          >
+                            <div className="min-w-0 space-y-0.5">
+                              <p className="text-sm font-medium">{meta.title}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {meta.description}
+                              </p>
+                            </div>
+                            <Switch
+                              checked={enabled}
+                              disabled={notifPrefsSaving}
+                              onCheckedChange={(checked) =>
+                                handleToggleEmailAlert(event, checked)
+                              }
+                              aria-label={`Email for ${meta.title}`}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {notifPrefsError ? (
+                      <p className="text-xs text-destructive">{notifPrefsError}</p>
+                    ) : null}
+                  </>
+                )}
+              </CardContent>
+            </Card>
 
             {/* Office Address */}
             <Card>

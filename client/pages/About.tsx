@@ -22,6 +22,10 @@ import { MetaHelmet } from "@/components/MetaHelmet";
 
 // ─── Team data (sourced from broker_profiles + brokers) ─────────────────────
 
+// Team and stats are hidden until the company confirms them (they came from the
+// real-state template). Set to true once this content has been verified.
+const SHOW_UNVERIFIED_COMPANY_CONTENT = false;
+
 const TEAM = [
   {
     name: "Daniel Carrillo",
@@ -63,7 +67,7 @@ const VALUES = [
     icon: Heart,
     title: "Community First",
     description:
-      "We started in Montebello, CA, deeply committed to serving the communities around us. Every family we help is a neighbor.",
+      "We are deeply committed to serving the communities around us. Every family we help is a neighbor.",
   },
   {
     icon: Shield,
@@ -100,7 +104,7 @@ const About: React.FC = () => {
       <MetaHelmet
         title="About Us | The Mortgage Professionals"
         description="Learn about The Mortgage Professionals's story, our team of experienced mortgage bankers, and our mission to make homeownership accessible to every family."
-        keywords="The Mortgage Professionals, about us, mortgage banker, Daniel Carrillo, Alex Gomez, Whittier CA, home loans team"
+        keywords="The Mortgage Professionals, about us, mortgage banker, Whittier CA, home loans team"
       />
 
       {/* Hero */}
@@ -127,8 +131,8 @@ const About: React.FC = () => {
                 </span>
               </h1>
               <p className="text-lg text-muted-foreground leading-relaxed mb-6">
-                The story of The Mortgage Professionals begins in Montebello, CA, where our
-                founders sought to represent and serve the communities they call
+                The story of The Mortgage Professionals begins with a
+                simple idea: represent and serve the communities our clients call
                 home. Our goal has always been to build on the dream of
                 homeownership — making it accessible, understandable, and
                 achievable for every family.
@@ -160,7 +164,7 @@ const About: React.FC = () => {
               transition={{ duration: 0.5, delay: 0.2 }}
               className="grid grid-cols-2 gap-4"
             >
-              {STATS.map((s) => (
+              {(SHOW_UNVERIFIED_COMPANY_CONTENT ? STATS : []).map((s) => (
                 <div
                   key={s.label}
                   className="rounded-2xl border border-border/60 bg-card p-6 text-center shadow-sm"
@@ -232,6 +236,7 @@ const About: React.FC = () => {
       </section>
 
       {/* Team */}
+      {SHOW_UNVERIFIED_COMPANY_CONTENT && (
       <section className="py-16 md:py-24 bg-muted/30">
         <div className="container">
           <div className="text-center mb-12">
@@ -327,6 +332,7 @@ const About: React.FC = () => {
           </div>
         </div>
       </section>
+      )}
 
       {/* CTA */}
       <section className="py-16 md:py-24">

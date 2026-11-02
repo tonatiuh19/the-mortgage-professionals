@@ -3,14 +3,12 @@ import {
   Send,
   Mail,
   MessageSquare,
-  MessageCircle,
   X,
   Loader2,
   FileText,
   Hash,
   User,
   ChevronDown,
-  Lock,
 } from "lucide-react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { fetchClients } from "@/store/slices/clientsSlice";
@@ -34,15 +32,12 @@ import {
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 import { logger } from "@/lib/logger";
-import {
-  SMS_CHANNEL_ENABLED,
-  WHATSAPP_CHANNEL_ENABLED,
-} from "@/lib/channelAvailability";
+import { SMS_CHANNEL_ENABLED } from "@/lib/channelAvailability";
 
 interface Template {
   id: number;
   name: string;
-  template_type: "email" | "sms" | "whatsapp";
+  template_type: "email" | "sms";
   category: string;
   subject?: string | null;
   body: string;
@@ -54,7 +49,7 @@ interface NewConversationWizardProps {
   onClose: () => void;
   templates: Template[];
   onSendMessage: (data: {
-    communication_type: "email" | "sms" | "whatsapp";
+    communication_type: "email" | "sms";
     recipient_phone?: string;
     recipient_email?: string;
     subject?: string;
@@ -66,7 +61,7 @@ interface NewConversationWizardProps {
   isSending: boolean;
 }
 
-type ChannelType = "sms" | "whatsapp" | "email";
+type ChannelType = "sms" | "email";
 
 type SelectedRecipient =
   | {
@@ -87,10 +82,6 @@ const channelMeta: Record<
   { label: string; icon: React.ReactNode }
 > = {
   sms: { label: "SMS", icon: <MessageSquare className="h-3.5 w-3.5" /> },
-  whatsapp: {
-    label: "WhatsApp",
-    icon: <MessageCircle className="h-3.5 w-3.5" />,
-  },
   email: { label: "Email", icon: <Mail className="h-3.5 w-3.5" /> },
 };
 
@@ -160,14 +151,12 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
     if (r.kind === "client") {
       const ch: ChannelType[] = [];
       if (r.phone && SMS_CHANNEL_ENABLED) ch.push("sms");
-      if (r.phone && WHATSAPP_CHANNEL_ENABLED) ch.push("whatsapp");
       if (r.email) ch.push("email");
       return ch;
     }
     if (r.kind === "raw_phone") {
       const ch: ChannelType[] = [];
       if (SMS_CHANNEL_ENABLED) ch.push("sms");
-      if (WHATSAPP_CHANNEL_ENABLED) ch.push("whatsapp");
       return ch;
     }
     if (r.kind === "raw_email") return ["email"];
@@ -257,7 +246,7 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
     const emailForChannel =
       channel === "email" ? (rv.email ?? undefined) : undefined;
 
-    if ((channel === "sms" || channel === "whatsapp") && !phoneForChannel) {
+    if (channel === "sms" && !phoneForChannel) {
       logger.warn("No phone number available for selected channel");
       return;
     }
@@ -414,7 +403,7 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
                               Send to "{search.trim()}"
                             </p>
                             <p className="text-[11px] text-muted-foreground">
-                              {isRawPhone ? "SMS / WhatsApp" : "Email"} · Not in
+                              {isRawPhone ? "SMS" : "Email"} · Not in
                               your contacts
                             </p>
                           </div>
@@ -441,32 +430,24 @@ const NewConversationWizard: React.FC<NewConversationWizardProps> = ({
 
         {/* ── Channel selector ─────────────────────────────────────────────── */}
         <div className="flex items-center gap-2 px-5 py-2.5 border-b border-border/60 bg-muted/20">
-          {(["sms", "whatsapp", "email"] as ChannelType[])
+          {(["sms", "email"] as ChannelType[])
             .filter((ch) => availableChannels.includes(ch))
             .map((ch) => {
               const meta = channelMeta[ch];
               const active = channel === ch;
-              const locked = ch === "whatsapp";
               return (
                 <button
                   key={ch}
-                  onClick={() => !locked && setChannel(ch)}
-                  disabled={locked}
-                  title={locked ? "WhatsApp coming soon" : undefined}
+                  onClick={() => setChannel(ch)}
                   className={cn(
                     "flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-medium transition-all duration-150",
-                    locked
-                      ? "opacity-50 cursor-not-allowed bg-background text-muted-foreground border border-dashed border-border"
-                      : active
-                        ? "bg-primary text-primary-foreground shadow-sm"
-                        : "bg-background text-muted-foreground hover:bg-muted border border-border/60",
+                    active
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "bg-background text-muted-foreground hover:bg-muted border border-border/60",
                   )}
                 >
                   {meta.icon}
                   {meta.label}
-                  {locked && (
-                    <Lock className="h-2.5 w-2.5 ml-0.5 text-muted-foreground/60" />
-                  )}
                 </button>
               );
             })}

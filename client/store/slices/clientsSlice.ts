@@ -95,6 +95,28 @@ export const createClient = createAsyncThunk(
   },
 );
 
+export const reassignClient = createAsyncThunk(
+  "clients/reassignClient",
+  async (
+    { clientId, brokerId }: { clientId: number; brokerId: number },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const { sessionToken } = (getState() as RootState).brokerAuth;
+      const { data } = await axios.put<{ success: boolean; message: string }>(
+        `/api/clients/${clientId}/reassign`,
+        { broker_id: brokerId },
+        { headers: { Authorization: `Bearer ${sessionToken}` } },
+      );
+      return { clientId, brokerId, message: data.message };
+    } catch (error: any) {
+      return rejectWithValue(
+        error.response?.data?.error || "Failed to reassign client",
+      );
+    }
+  },
+);
+
 export const updateClient = createAsyncThunk(
   "clients/updateClient",
   async (

@@ -33,7 +33,7 @@ import {
   Hourglass,
   Split,
 } from "lucide-react";
-import { FaSms, FaWhatsapp } from "react-icons/fa";
+import { FaSms } from "react-icons/fa";
 import {
   ReactFlow,
   Background,
@@ -115,10 +115,7 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import {
-  SMS_CHANNEL_ENABLED,
-  WHATSAPP_CHANNEL_ENABLED,
-} from "@/lib/channelAvailability";
+import { SMS_CHANNEL_ENABLED } from "@/lib/channelAvailability";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   fetchReminderFlows,
@@ -250,15 +247,6 @@ const STEP_TYPES: StepMeta[] = [
     description: "SMS to client",
   },
   {
-    type: "send_whatsapp",
-    label: "Send WhatsApp",
-    icon: <FaWhatsapp className="h-4 w-4" />,
-    color: "text-green-600",
-    borderColor: "border-green-400",
-    bgColor: "bg-green-50",
-    description: "WhatsApp message",
-  },
-  {
     type: "condition",
     label: "Condition",
     icon: <GitBranch className="h-4 w-4" />,
@@ -307,7 +295,6 @@ const STEP_TYPES: StepMeta[] = [
 
 const AVAILABLE_STEP_TYPES = STEP_TYPES.filter((step) => {
   if (step.type === "send_sms") return SMS_CHANNEL_ENABLED;
-  if (step.type === "send_whatsapp") return WHATSAPP_CHANNEL_ENABLED;
   return true;
 });
 
@@ -668,8 +655,7 @@ function StepConfigPanel({
         {/* Message steps */}
         {(stepType === "send_notification" ||
           stepType === "send_email" ||
-          stepType === "send_sms" ||
-          stepType === "send_whatsapp") && (
+          stepType === "send_sms") && (
           <div className="space-y-3">
             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
               Message

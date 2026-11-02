@@ -958,7 +958,7 @@ const CalculatorPage = () => {
             <div className="h-1 bg-gradient-to-r from-primary via-primary/80 to-primary/40" />
 
             {/* Tabs */}
-            <div className="flex border-b">
+            <div className="flex border-b overflow-x-auto">
               {(
                 [
                   {
@@ -978,7 +978,7 @@ const CalculatorPage = () => {
                   type="button"
                   onClick={() => setActiveTab(v)}
                   className={cn(
-                    "flex-1 flex items-center justify-center gap-1.5 py-3 text-sm font-semibold transition-all",
+                    "flex-1 shrink-0 whitespace-nowrap px-3 flex items-center justify-center gap-1.5 py-3 text-sm font-semibold transition-all",
                     activeTab === v
                       ? "text-primary border-b-2 border-primary bg-primary/5"
                       : "text-muted-foreground hover:text-foreground",

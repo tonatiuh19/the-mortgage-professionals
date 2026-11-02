@@ -9,10 +9,9 @@ lerna-debug.log*
 
 # Environment variables
 .env
-.env.local
-.env.*.local
-.env.development
-.env.production
+.env.*
+!.env.example
+!.env.conversations.example
 
 node_modules
 dist
@@ -40,4 +39,11 @@ dist-ssr
 !CLIENT_SETUP_GUIDE.md
 !TENANT_ISOLATION_AUDIT.md
 !scripts/README.md
+!AGENTS.md
+!PARITY.md
 .vercel
+
+# Local tooling and sync state
+.claude/
+.sync/
+.sync-backups/

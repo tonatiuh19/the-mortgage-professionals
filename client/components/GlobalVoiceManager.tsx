@@ -12,9 +12,12 @@ import {
   fetchVoiceToken,
   updateVoiceAvailability,
   lookupContact,
+  lookupCallerContact,
+  notifyCallAnswered,
 } from "@/store/slices/voiceSlice";
 import VoiceCallPanel from "@/components/VoiceCallPanel";
 import { logger } from "@/lib/logger";
+import { useToast } from "@/hooks/use-toast";
 
 /**
  * GlobalVoiceManager — mounted once inside AdminLayout so the Twilio Device
@@ -23,6 +26,7 @@ import { logger } from "@/lib/logger";
  */
 const GlobalVoiceManager: React.FC = () => {
   const dispatch = useAppDispatch();
+  const { toast } = useToast();
   const { sessionToken } = useAppSelector((s) => s.brokerAuth);
   const isAvailable = useAppSelector((s) => s.voice.isAvailable);
   const outboundCall = useAppSelector((s) => s.voice.outboundCall);
@@ -212,11 +216,8 @@ const GlobalVoiceManager: React.FC = () => {
 
         // Look up the caller's client record by phone number
         if (from && sessionToken) {
-          fetch(
-            `/api/conversations/lookup-contact?phone=${encodeURIComponent(from)}`,
-            { headers: { Authorization: `Bearer ${sessionToken}` } },
-          )
-            .then((r) => r.json())
+          dispatch(lookupCallerContact(from))
+            .unwrap()
             .then((data) => {
               if (data.found) {
                 setRingingClientName(data.client_name ?? null);
@@ -298,17 +299,19 @@ const GlobalVoiceManager: React.FC = () => {
   // Subscribe to Ably voice:incoming so we hear when another broker accepts.
   // When that happens, immediately dismiss this broker's ringing notification
   // without waiting for the Twilio SDK cancel event (which may lag under load).
+  // Also subscribe to voice:voicemail for toast alerts when a new VM lands.
   useEffect(() => {
     if (!sessionToken) return;
-    let channel: AblyLib.RealtimeChannel | null = null;
+    let incomingChannel: AblyLib.RealtimeChannel | null = null;
+    let voicemailChannel: AblyLib.RealtimeChannel | null = null;
 
     const connect = async () => {
       try {
         const ablyClient = await getSharedAblyClient(sessionToken);
         if (!ablyClient) return;
 
-        channel = ablyClient.channels.get("voice:incoming");
-        await channel.subscribe("call-answered", (msg) => {
+        incomingChannel = ablyClient.channels.get("voice:incoming");
+        await incomingChannel.subscribe("call-answered", (msg) => {
           const { callSid } = (msg.data ?? {}) as { callSid?: string };
           // Only act if we're currently showing a ringing notification AND
           // the announced SID matches our ringing call (or no SID to match against).
@@ -329,6 +332,31 @@ const GlobalVoiceManager: React.FC = () => {
             setRingingClientId(null);
           }
         });
+
+        voicemailChannel = ablyClient.channels.get("voice:voicemail");
+        await voicemailChannel.subscribe("new", (msg) => {
+          const data = (msg.data ?? {}) as {
+            from?: string;
+            conversationId?: string;
+            durationSec?: number;
+          };
+          logger.log("[GlobalVoiceManager] Ably: new voicemail", data);
+          toast({
+            title: "New voicemail",
+            description: data.from
+              ? `From ${data.from}${data.durationSec ? ` · ${data.durationSec}s` : ""}`
+              : "A new voicemail was just recorded.",
+          });
+        });
+        await voicemailChannel.subscribe("transcribed", (msg) => {
+          const data = (msg.data ?? {}) as { from?: string };
+          toast({
+            title: "Voicemail transcribed",
+            description: data.from
+              ? `Transcript ready for ${data.from}`
+              : "A voicemail transcript is ready.",
+          });
+        });
       } catch {
         // Graceful degradation — the Twilio SDK cancel event is the fallback
       }
@@ -338,9 +366,10 @@ const GlobalVoiceManager: React.FC = () => {
 
     return () => {
       // Detach only our subscription — do NOT close the shared singleton
-      channel?.unsubscribe("call-answered");
+      incomingChannel?.unsubscribe("call-answered");
+      voicemailChannel?.unsubscribe();
     };
-  }, [sessionToken]);
+  }, [sessionToken, toast]);
 
   const handleAccept = () => {
     if (!ringingCall) return;
@@ -363,14 +392,7 @@ const GlobalVoiceManager: React.FC = () => {
     setRingingCall(null);
     // Immediately notify all other online brokers via Ably to dismiss their ringing UI
     if (sid && sessionToken) {
-      fetch("/api/voice/call-answered", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${sessionToken}`,
-        },
-        body: JSON.stringify({ callSid: sid }),
-      }).catch(() => {});
+      dispatch(notifyCallAnswered(sid)).catch(() => {});
     }
   };
 

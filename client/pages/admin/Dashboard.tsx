@@ -133,17 +133,16 @@ const AdminDashboard = () => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "underwriting":
-      case "under_review":
+      case "submitted_to_underwriting":
         return "bg-primary";
-      case "documents_pending":
+      case "app_sent":
+      case "draft":
         return "bg-amber-500";
-      case "conditional_approval":
-      case "approved":
+      case "approved_with_conditions":
+      case "clear_to_close":
+      case "docs_out":
+      case "loan_funded":
         return "bg-primary/60";
-      case "denied":
-      case "cancelled":
-        return "bg-destructive";
       default:
         return "bg-primary";
     }
@@ -182,16 +181,6 @@ const AdminDashboard = () => {
       notation: value >= 1000000 ? "compact" : "standard",
     }).format(value);
   };
-
-  // Calculate changes (mock for now - would need historical data)
-  const pipelineChange = "+12.5%";
-  const appsChange = stats
-    ? `+${Math.max(0, stats.activeApplications - Math.floor(stats.activeApplications * 0.9))}`
-    : "+4";
-  const timeChange = stats?.avgClosingDays
-    ? `-${Math.max(1, Math.floor(stats.avgClosingDays * 0.1))} Days`
-    : "-2 Days";
-  const rateChange = "+2.1%";
 
   const filteredLoans = React.useMemo(() => {
     const all = loans || [];
@@ -304,7 +293,6 @@ const AdminDashboard = () => {
                   statsLoading || !stats
                     ? "Loading..."
                     : formatCurrency(stats.totalPipelineValue),
-                change: pipelineChange,
                 trend: "up",
                 icon: <TrendingUp className="text-primary" />,
               },
@@ -314,7 +302,6 @@ const AdminDashboard = () => {
                   statsLoading || !stats
                     ? "..."
                     : stats.activeApplications.toString(),
-                change: appsChange,
                 trend: "up",
                 icon: <Users className="text-primary" />,
               },
@@ -324,14 +311,12 @@ const AdminDashboard = () => {
                   statsLoading || !stats
                     ? "..."
                     : `${stats.avgClosingDays} Days`,
-                change: timeChange,
                 trend: "up",
                 icon: <Clock className="text-amber-500" />,
               },
               {
                 title: "Closure Rate",
                 value: statsLoading || !stats ? "..." : `${stats.closureRate}%`,
-                change: rateChange,
                 trend: "up",
                 icon: <CheckCircle2 className="text-primary" />,
               },
@@ -347,18 +332,6 @@ const AdminDashboard = () => {
                   <div className="text-xl sm:text-2xl font-bold">
                     {stat.value}
                   </div>
-                  <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1 flex-wrap">
-                    <span
-                      className={
-                        stat.trend === "up"
-                          ? "text-primary"
-                          : "text-destructive"
-                      }
-                    >
-                      {stat.change}
-                    </span>
-                    from last month
-                  </p>
                 </CardContent>
               </Card>
             ))}

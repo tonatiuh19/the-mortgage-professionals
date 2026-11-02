@@ -93,7 +93,7 @@ export function PageHeader({
           className,
         )}
       >
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             {mobileBack && (
               <Button
@@ -119,7 +119,7 @@ export function PageHeader({
           </div>
 
           {actions && (
-            <div className="flex items-center gap-1.5">{actions}</div>
+            <div className="flex flex-wrap items-center justify-end gap-1.5">{actions}</div>
           )}
         </div>
       </div>

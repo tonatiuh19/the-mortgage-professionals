@@ -1458,7 +1458,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                               logger.log(
                                 "📄 PDF upload: sending to uploadPDFs.php",
                                 {
-                                  main_folder: "encore-sign-templates",
+                                  main_folder: "tmp-sign-templates",
                                   id: uploadId,
                                   file: file.name,
                                 },

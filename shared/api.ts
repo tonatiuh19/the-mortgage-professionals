@@ -1,3 +1,4 @@
+export type { BillingDenialPayload } from "./billing-denial";
 /**
  * Shared code between client and server
  * Useful to share types between client and server
@@ -477,49 +478,6 @@ export interface SmsTemplateResponse {
 }
 
 /**
- * WhatsApp Template Types
- */
-export interface WhatsappTemplate {
-  id: number;
-  name: string;
-  body: string;
-  template_type:
-    | "reminder"
-    | "status_update"
-    | "update"
-    | "follow_up"
-    | "custom";
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface GetWhatsappTemplatesResponse {
-  success: boolean;
-  templates: WhatsappTemplate[];
-}
-
-export interface CreateWhatsappTemplateRequest {
-  name: string;
-  body: string;
-  template_type: string;
-  is_active?: boolean;
-}
-
-export interface UpdateWhatsappTemplateRequest {
-  name?: string;
-  body?: string;
-  template_type?: string;
-  is_active?: boolean;
-}
-
-export interface WhatsappTemplateResponse {
-  success: boolean;
-  template: WhatsappTemplate;
-  message?: string;
-}
-
-/**
  * Pipeline Step Templates Types
  * Maps a communication template to a specific loan pipeline step + channel.
  */
@@ -537,7 +495,7 @@ export type LoanPipelineStep =
 
 export type LoanType = "purchase" | "refinance";
 
-export type CommunicationType = "email" | "sms" | "whatsapp";
+export type CommunicationType = "email" | "sms";
 
 export interface PipelineStepTemplate {
   id: number;
@@ -1285,7 +1243,7 @@ export interface ConversationThread {
   can_view_client?: boolean;
   last_message_at: string;
   last_message_preview?: string | null;
-  last_message_type: "email" | "sms" | "whatsapp" | "call" | "internal_note";
+  last_message_type: "email" | "sms" | "call" | "internal_note";
   message_count: number;
   unread_count: number;
   priority: "low" | "normal" | "high" | "urgent";
@@ -1303,7 +1261,7 @@ export interface Communication {
   from_broker_id?: number | null;
   to_user_id?: number | null;
   to_broker_id?: number | null;
-  communication_type: "email" | "sms" | "whatsapp" | "call" | "internal_note";
+  communication_type: "email" | "sms" | "call" | "internal_note";
   direction: "inbound" | "outbound";
   subject?: string | null;
   body: string;
@@ -1407,7 +1365,7 @@ export interface SendMessageRequest {
   lead_id?: number;
   client_id?: number;
   mailbox_id?: number;
-  communication_type: "email" | "sms" | "whatsapp";
+  communication_type: "email" | "sms";
   recipient_phone?: string;
   recipient_email?: string;
   subject?: string;
@@ -1621,7 +1579,7 @@ export interface ConversationTemplate {
   id: number;
   name: string;
   description?: string;
-  template_type: "email" | "sms" | "whatsapp";
+  template_type: "email" | "sms";
   subject?: string;
   body: string;
   body_html?: string;
@@ -1654,7 +1612,6 @@ export interface ConversationStats {
   channels: {
     email: number;
     sms: number;
-    whatsapp: number;
   };
   by_priority: {
     low: number;
@@ -2081,7 +2038,6 @@ export type ReminderStepType =
   | "send_notification"
   | "send_email"
   | "send_sms"
-  | "send_whatsapp"
   | "condition"
   | "branch"
   | "wait_for_response"
@@ -2284,7 +2240,7 @@ export interface ReminderFlowStepLog {
     | "skipped"
     | "timeout"
     | "cancelled";
-  channel: "sms" | "email" | "whatsapp" | "notification" | "none";
+  channel: "sms" | "email" | "notification" | "none";
   recipient: string | null;
   external_id: string | null;
   delivery_status: string | null;
@@ -2375,6 +2331,34 @@ export interface AdminInitResponse {
   success: boolean;
   profile: BrokerProfileDetails;
   controls: AdminSectionControl[];
+  rolePermissions?: RoleSectionPermission[];
+}
+
+export interface RoleSectionPermission {
+  id: number;
+  tenant_id: number;
+  broker_role: string;
+  section_id: string;
+  is_visible: boolean;
+  updated_by: number | null;
+  updated_at: string;
+}
+
+export interface GetRoleSectionPermissionsResponse {
+  success: boolean;
+  permissions: RoleSectionPermission[];
+}
+
+export interface UpdateRoleSectionPermissionsRequest {
+  permissions: Pick<
+    RoleSectionPermission,
+    "broker_role" | "section_id" | "is_visible"
+  >[];
+}
+
+export interface UpdateRoleSectionPermissionsResponse {
+  success: boolean;
+  message: string;
 }
 
 // ─── Contact Form ─────────────────────────────────────────────────────────────
@@ -2891,4 +2875,698 @@ export interface GetMortgiUsageResponse {
   usage: MortgiUsage;
   quota_exceeded: boolean;
   quota_exceeded_at: string;
+}
+
+// ─── Broker notification preferences ─────────────────────────────────────────
+
+export type {
+  BrokerEmailAlertEvent,
+  BrokerEmailAlertColumn,
+  BrokerNotificationPrefs,
+  BrokerNotificationPrefsResponse,
+} from "./broker-notification-prefs";
+
+export {
+  BROKER_EMAIL_ALERT_EVENTS,
+  BROKER_EMAIL_ALERT_COLUMNS,
+  BROKER_EMAIL_ALERT_LABELS,
+  defaultBrokerNotificationPrefs,
+} from "./broker-notification-prefs";
+
+
+
+// ─── Per-owner CRM ───────────────────────────────────────────────────────────
+
+export type {
+  ClientListVisibility,
+  CrmPersonGroup,
+  CrmPersonGroupMember,
+  CrmPersonGroupStatus,
+  CrmPeoplePhoneGroup,
+  CrmPeoplePhoneMember,
+  CreatePersonGroupLinkRequest,
+  CreatePersonGroupLinkResponse,
+  ApprovePersonGroupRequest,
+  StartCrmTransferRequest,
+  StartCrmTransferResponse,
+  ResolveCrmTransferRequest,
+  GetCrmPeopleResponse,
+  PerOwnerCrmFeatureFlags,
+  CrmTransferResolution,
+} from "./per-owner-crm";
+
+export interface GetCrmConfigResponse {
+  success: boolean;
+  per_owner_crm: {
+    enabled: boolean;
+    allowProduction: boolean;
+    pilotBrokerIds: number[];
+    activeForBroker: boolean;
+    inactive_reason?: "disabled" | null;
+  };
+}
+
+export interface ClaimSharedConversationResponse {
+  success: boolean;
+  client_id?: number;
+  client_name?: string;
+  conversation_id?: string;
+  error?: string;
+  existing_client_id?: number;
+}
+
+// ─── Realtor Broadcast Center ──────────────────────────────────────────────────
+
+export type RealtorBroadcastChannel = "email" | "sms" | "both";
+export type RealtorBroadcastSmsEngine = "messages" | "bulk";
+export type RealtorBroadcastStatus =
+  | "draft"
+  | "scheduled"
+  | "sending"
+  | "sent"
+  | "failed"
+  | "cancelled";
+
+export interface RealtorBroadcastBulkStats {
+  total?: number;
+  recipients?: number;
+  attempts?: number;
+  unaddressable?: number;
+  queued?: number;
+  sent?: number;
+  scheduled?: number;
+  delivered?: number;
+  read?: number;
+  undelivered?: number;
+  failed?: number;
+  canceled?: number;
+}
+
+export interface RealtorBroadcastAudienceFilter {
+  segments: string[];
+  excluded_ids?: number[];
+  selected_ids?: number[];
+  stage_filter?: string[];
+  tag_filter?: string[];
+  owner_broker_id?: number;
+}
+
+export interface RealtorBroadcast {
+  id: number;
+  tenant_id: number;
+  created_by: number;
+  title: string;
+  channel: RealtorBroadcastChannel;
+  sms_engine?: RealtorBroadcastSmsEngine;
+  twilio_operation_ids?: string[] | null;
+  bulk_stats?: RealtorBroadcastBulkStats | null;
+  progress_pct?: number | null;
+  subject: string | null;
+  body_email: string | null;
+  body_sms: string | null;
+  audience_filter: RealtorBroadcastAudienceFilter;
+  recipient_count: number;
+  sent_count: number;
+  failed_count: number;
+  status: RealtorBroadcastStatus;
+  is_cancelled: boolean;
+  scheduled_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  creator_name?: string;
+}
+
+export interface BroadcastAudienceSampleItem {
+  id: number;
+  source: "broker" | "prospect" | "client";
+  name: string;
+  email: string | null;
+  phone: string | null;
+  has_email: boolean;
+  has_phone: boolean;
+  skipped: boolean;
+  skip_reason: string | null;
+  role?: string | null;
+}
+
+export interface BroadcastAudiencePreview {
+  count: number;
+  email_count: number;
+  sms_count: number;
+  skipped_count: number;
+  estimated_sms_segments?: number;
+  estimated_email_sends?: number;
+  sample: BroadcastAudienceSampleItem[];
+}
+
+export interface CreateBroadcastRequest {
+  title: string;
+  channel: RealtorBroadcastChannel;
+  subject?: string;
+  body_email?: string;
+  body_sms?: string;
+  audience_filter: RealtorBroadcastAudienceFilter;
+  scheduled_at?: string;
+  send_now?: boolean;
+}
+
+export interface PreviewBroadcastAudienceRequest {
+  audience_filter: RealtorBroadcastAudienceFilter;
+  channel: RealtorBroadcastChannel;
+  body_sms?: string;
+}
+
+export interface GetBroadcastsResponse {
+  success: boolean;
+  broadcasts: RealtorBroadcast[];
+  total: number;
+}
+
+export interface GetBroadcastResponse {
+  success: boolean;
+  broadcast: RealtorBroadcast;
+}
+
+export interface CreateBroadcastResponse {
+  success: boolean;
+  broadcast_id: number;
+  recipient_count: number;
+  status: RealtorBroadcastStatus;
+  estimated_sms_segments?: number;
+  estimated_email_sends?: number;
+}
+
+export interface PreviewBroadcastAudienceResponse {
+  success: boolean;
+  preview: BroadcastAudiencePreview;
+}
+
+export interface RealtorBroadcastRecipient {
+  id: number;
+  broadcast_id: number;
+  broker_id: number | null;
+  prospect_id: number | null;
+  recipient_name: string | null;
+  recipient_email: string | null;
+  recipient_phone: string | null;
+  email_status: string | null;
+  sms_status: string | null;
+  email_ext_id: string | null;
+  sms_ext_id: string | null;
+  sms_bulk_message_id?: string | null;
+  conversation_id: string | null;
+  error_message: string | null;
+  sent_at: string | null;
+}
+
+export interface GetBroadcastRecipientsResponse {
+  success: boolean;
+  recipients: RealtorBroadcastRecipient[];
+  total: number;
+}
+
+export interface BroadcastSavedSegment {
+  id: number;
+  name: string;
+  filter_json: RealtorBroadcastAudienceFilter;
+  created_at: string;
+}
+
+export interface GetSavedSegmentsResponse {
+  success: boolean;
+  segments: BroadcastSavedSegment[];
+}
+
+export interface CreateSavedSegmentRequest {
+  name: string;
+  filter_json: RealtorBroadcastAudienceFilter;
+}
+
+export interface ResendFailedResponse {
+  success: boolean;
+  retried: number;
+}
+
+export interface ResendPendingResponse {
+  success: boolean;
+  retried: number;
+}
+
+// ─── Platform billing & quota ─────────────────────────────────────────────────
+
+export interface BillingPlanSnapshot {
+  platformFeeUsd: number;
+  includedSmsSegments: number;
+  includedVoiceMinutes: number;
+  includedEmailSends: number;
+  includedSchedulerBookings: number;
+  includedMortgiAiTokens: number;
+}
+
+export type BillingPeriodAnchor = "stripe" | "calendar";
+
+export interface BillingSubscriptionSnapshot {
+  planCode: string;
+  status: string;
+  periodStart: string;
+  periodEnd: string | null;
+}
+
+export interface BillingConfigPayload {
+  billingQuotaMode: BillingQuotaMode;
+  billingUiEnabled: boolean;
+  billingOverageEnabled: boolean;
+  billingEnforceBroadcastDaily: boolean;
+  platformFeeUsd: number;
+  plan: BillingPlanSnapshot;
+  subscription: BillingSubscriptionSnapshot | null;
+  /** Stripe-linked tenants use subscription anniversary; others use calendar month */
+  billingPeriodAnchor?: BillingPeriodAnchor;
+  /** ISO date when included quotas reset (Stripe current_period_end) */
+  quotaRenewsOn?: string | null;
+  /** True when STRIPE_SECRET_KEY + STRIPE_PUBLISHABLE_KEY are set */
+  stripeEnabled?: boolean;
+  stripePublishableKey?: string | null;
+  stripeTestMode?: boolean;
+  stripeWebhookConfigured?: boolean;
+  /** True when STRIPE_PLATFORM_PRICE_ID is set */
+  stripePlatformSubscriptionConfigured?: boolean;
+  /** Stripe subscription id stored for this tenant */
+  stripeSubscriptionLinked?: boolean;
+  stripeSubscriptionActive?: boolean;
+  /** Latest status from Stripe (e.g. incomplete, active, past_due) */
+  stripeSubscriptionStatus?: string | null;
+  /** True when customer has a default payment method on file */
+  hasPaymentMethod?: boolean;
+  stripeCustomerId?: string | null;
+  /** Dev/finance only — when false, COGS/margin/infra breakdown are hidden and stripped from API */
+  billingInternalEconomicsEnabled?: boolean;
+}
+
+export interface GetBillingConfigResponse {
+  success: boolean;
+  config: BillingConfigPayload;
+}
+
+export type {
+  BillingAccessLevel,
+  BillingAccessState,
+  BillingGraceKind,
+  BillingTeamNotice,
+  BillingTeamNoticeLevel,
+} from "./billing-access";
+
+export interface GetBillingTeamNoticeResponse {
+  success: boolean;
+  notice: import("./billing-access").BillingTeamNotice;
+}
+
+export interface GetBillingAccessResponse {
+  success: boolean;
+  access: import("./billing-access").BillingAccessState;
+}
+
+export interface SimulateBillingAccessResponse {
+  success: boolean;
+  access: import("./billing-access").BillingAccessState;
+}
+
+export interface BillingUsageSnapshot {
+  periodStart: string;
+  periodEnd: string;
+  tenantId: number;
+  totalSmsSegments: number;
+  broadcastSmsSegments: number;
+  convoSmsSegments: number;
+  totalEmailSends: number;
+  broadcastEmailSends: number;
+  callsLogged: number;
+  voiceMinutesRecorded: number;
+  voiceMinutesEstimated?: number;
+  schedulerBookings: number;
+  mortgiAiTokens: number;
+  mortgiSessions: number;
+  mortgiUserMessages: number;
+}
+
+export interface BillingBroadcastEconomics {
+  smsSegments: number;
+  emailSends: number;
+  cogsUsd: number;
+  emailCogsUsd: number;
+  shareOfSmsPct: number;
+  shareOfVariableCogsPct: number;
+  pctOfIncludedSms: number;
+  pctOfIncludedEmail: number;
+}
+
+export interface BillingFixedInfraBreakdown {
+  vercelUsd: number;
+  ablyUsd: number;
+  tidbUsd: number;
+  resendUsd: number;
+  cdnHostgatorImapUsd: number;
+  tenDlcAmortizedUsd: number;
+  zoomApiLicenseUsd: number;
+}
+
+export interface BillingTopUpPackEconomics {
+  variableCogsUsd: number;
+  stripeFeeUsd: number;
+  netMarginUsd: number;
+  marginPct: number;
+}
+
+export interface BillingExpenditurePayload {
+  usage: BillingUsageSnapshot;
+  broadcast: BillingBroadcastEconomics;
+  voiceMinutesBilled: number;
+  variableUsageCogsUsd: number;
+  fixedInfraCogsUsd: number;
+  fixedInfraBreakdown: BillingFixedInfraBreakdown;
+  zoomBrokerCogsUsd: number;
+  totalPlatformCogsUsd: number;
+  overageRetailUsd: number;
+  platformFeeUsd: number;
+  addonsUsd: number;
+  ownerTotalUsd: number;
+  stripeFeesUsd: number;
+  grossMarginUsd: number;
+  /** Net margin after vendor COGS + Stripe */
+  estimatedMarginUsd: number;
+  pctSms: number;
+  pctVoice: number;
+  pctEmail: number;
+  pctScheduler: number;
+  pctMortgiAiTokens: number;
+  mortgiCogsUsd: number;
+}
+
+export interface GetBillingUsageResponse {
+  success: boolean;
+  usage: BillingUsageSnapshot;
+  expenditure: BillingExpenditurePayload;
+  refreshedAt: string;
+}
+
+export interface GetBillingQuotaResponse {
+  success: boolean;
+  quota: UnifiedQuotaSummary;
+}
+
+export interface BillingActivePeriodCapacity {
+  dimension: UsageDimension;
+  title: string;
+  planIncluded: number;
+  topUpIncluded: number;
+  totalIncluded: number;
+  used: number;
+  reserved: number;
+  pct: number;
+}
+
+export interface BillingActivePeriodSummary {
+  periodStart: string;
+  periodEnd: string | null;
+  subscriptionStatus: string | null;
+  platformFeeUsd: number;
+  capacities: BillingActivePeriodCapacity[];
+}
+
+export interface BillingCapacityPurchase {
+  id: number;
+  type: "top_up";
+  dimension: UsageDimension;
+  units: number;
+  amountCents: number | null;
+  label: string;
+  paymentIntentId: string | null;
+  source: string;
+  appliedPeriodStart: string | null;
+  activeForCurrentPeriod: boolean;
+  createdAt: string;
+}
+
+export interface GetBillingPurchasesResponse {
+  success: boolean;
+  activePeriod: BillingActivePeriodSummary;
+  purchases: BillingCapacityPurchase[];
+}
+
+export interface BillingStripePack {
+  id: string;
+  dimension: string;
+  units: number;
+  label: string;
+  amountCents: number;
+  economics?: BillingTopUpPackEconomics;
+}
+
+export interface GetBillingStripePacksResponse {
+  success: boolean;
+  packs: BillingStripePack[];
+}
+
+export interface BillingTopUpTierOption {
+  tierIndex: number;
+  tierId: string;
+  units: number;
+  amountCents: number;
+  label: string;
+  chipLabel: string;
+  economics?: BillingTopUpPackEconomics;
+}
+
+export interface BillingTopUpChannelOption {
+  dimension: UsageDimension;
+  title: string;
+  unitLabel: string;
+  unitLabelShort: string;
+  tiers: BillingTopUpTierOption[];
+}
+
+export interface GetBillingTopUpOptionsResponse {
+  success: boolean;
+  channels: BillingTopUpChannelOption[];
+}
+
+export interface BillingTopUpQuotePayload {
+  quoteKey: string;
+  tierId: string;
+  dimension: UsageDimension;
+  tierIndex: number;
+  units: number;
+  amountCents: number;
+  label: string;
+  economics?: BillingTopUpPackEconomics;
+}
+
+export interface PostBillingTopUpQuoteResponse {
+  success: boolean;
+  quote: BillingTopUpQuotePayload;
+}
+
+export interface BillingStripeChargeQuoteResponse {
+  success: boolean;
+  granted?: boolean;
+  already_fulfilled?: boolean;
+  quote?: BillingTopUpQuotePayload | null;
+  quota?: UnifiedQuotaSummary;
+  error?: string;
+  code?: string;
+  client_secret?: string;
+  payment_intent_id?: string;
+}
+
+export interface BillingStripeCheckoutResponse {
+  success: boolean;
+  url: string | null;
+  session_id: string;
+}
+
+export interface BillingStripePortalResponse {
+  success: boolean;
+  url: string;
+}
+
+export interface BillingSavedPaymentMethod {
+  id: string;
+  brand: string;
+  last4: string;
+  expMonth: number;
+  expYear: number;
+}
+
+export interface GetBillingPaymentMethodResponse {
+  success: boolean;
+  payment_method: BillingSavedPaymentMethod | null;
+}
+
+export interface BillingStripePaymentMethodSetupResponse {
+  success: boolean;
+  client_secret: string;
+  setup_intent_id: string;
+}
+
+export interface BillingStripeConfirmPaymentMethodResponse {
+  success: boolean;
+  payment_method: BillingSavedPaymentMethod | null;
+}
+
+export interface GetBillingStripeConfigResponse {
+  success: boolean;
+  enabled: boolean;
+  publishableKey: string | null;
+  testMode: boolean;
+  webhookConfigured: boolean;
+}
+
+export interface BillingStripeFulfillmentPayload {
+  granted: boolean;
+  already_fulfilled: boolean;
+  pack: BillingStripePack | null;
+  quota: UnifiedQuotaSummary;
+}
+
+export interface BillingStripeConfirmPaymentResponse {
+  success: boolean;
+  granted: boolean;
+  already_fulfilled: boolean;
+  pack: BillingStripePack | null;
+  quota: UnifiedQuotaSummary;
+}
+
+export interface BillingStripeChargePackResponse {
+  success: boolean;
+  granted?: boolean;
+  already_fulfilled?: boolean;
+  pack?: BillingStripePack | null;
+  quota?: UnifiedQuotaSummary;
+  error?: string;
+  code?: string;
+  client_secret?: string;
+  payment_intent_id?: string;
+}
+
+export interface BillingStripePaymentIntentResponse {
+  success: boolean;
+  client_secret: string;
+  payment_intent_id: string;
+  pack: BillingStripePack;
+}
+
+export interface BillingStripeSubscriptionSetupResponse {
+  success: boolean;
+  client_secret?: string | null;
+  subscription_id?: string;
+  stripe_status?: string;
+  already_active?: boolean;
+  error?: string;
+  /** 409: renewal unpaid — pay this invoice instead of subscribing again. */
+  overdue?: BillingOverdueInvoice;
+}
+
+/** Unpaid platform renewal invoice, read from Stripe (platform owner only). */
+export interface BillingOverdueInvoice {
+  invoice_id: string;
+  number: string | null;
+  amount_due_usd: number;
+  currency: string;
+  /** When the renewal was first attempted and failed (ISO). */
+  failed_at: string;
+  days_overdue: number;
+  attempt_count: number;
+  next_payment_attempt: string | null;
+  hosted_invoice_url: string | null;
+}
+
+export interface GetBillingOverdueResponse {
+  success: boolean;
+  overdue: BillingOverdueInvoice | null;
+  error?: string;
+}
+
+/** Card on file for paying the overdue renewal (usable or not, with why). */
+export interface BillingOverduePaymentCard {
+  id: string;
+  brand: string;
+  last4: string;
+  exp_month: number;
+  exp_year: number;
+  wallet: string | null;
+  is_default: boolean;
+  usable: boolean;
+  unusable_reason: string | null;
+}
+
+export interface GetBillingOverduePaymentOptionsResponse {
+  success: boolean;
+  overdue: BillingOverdueInvoice | null;
+  cards: BillingOverduePaymentCard[];
+  supported_brands?: string[];
+  error?: string;
+}
+
+export interface PayBillingOverdueRequest {
+  invoice_id: string;
+  payment_method_id: string;
+}
+
+export interface PayBillingOverdueResponse {
+  success: boolean;
+  paid?: boolean;
+  invoice_id?: string;
+  /** Bank verification (3-D Secure) needed — finish with Stripe.js. */
+  requires_action?: boolean;
+  client_secret?: string;
+  error?: string;
+}
+
+export interface BillingStripeConfirmSubscriptionResponse {
+  success: boolean;
+  stripe_status: string;
+  subscription: BillingSubscriptionSnapshot | null;
+  payment_method?: BillingSavedPaymentMethod | null;
+  receipt_email?: {
+    sent: boolean;
+    skipped?: string;
+    error?: string;
+  };
+  error?: string;
+}
+
+export interface BillingStripeResetSubscriptionTestResponse {
+  success: boolean;
+  reset: boolean;
+  message: string;
+  error?: string;
+}
+
+export type BillingQuotaMode = "off" | "shadow" | "warn" | "enforce";
+
+export type UsageDimension =
+  | "sms_segments"
+  | "voice_minutes"
+  | "email_sends"
+  | "scheduler_bookings"
+  | "mortgi_ai_tokens";
+
+export interface QuotaUsageSlice {
+  dimension: UsageDimension;
+  used: number;
+  included: number;
+  reserved: number;
+  pct: number;
+}
+
+export interface UnifiedQuotaSummary {
+  mode: BillingQuotaMode;
+  periodStart: string;
+  sms_segments: QuotaUsageSlice;
+  voice_minutes: QuotaUsageSlice;
+  email_sends: QuotaUsageSlice;
+  scheduler_bookings: QuotaUsageSlice;
+  mortgi_ai_tokens: QuotaUsageSlice;
 }

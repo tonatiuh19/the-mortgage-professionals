@@ -52,7 +52,14 @@ INSERT INTO `admin_section_controls` (`id`, `tenant_id`, `section_id`, `is_disab
 (8, 2, 'conversations', 0, 'Coming Soon', '2026-02-28 17:35:37', '2026-03-16 19:05:47'),
 (9, 2, 'reports', 0, 'Coming Soon', '2026-02-28 17:35:37', '2026-03-16 19:05:47'),
 (10, 2, 'brokers', 0, 'Coming Soon', '2026-02-28 17:35:37', '2026-03-16 19:05:47'),
-(11, 2, 'settings', 0, 'Coming Soon', '2026-02-28 17:35:37', '2026-03-16 19:05:47');
+(11, 2, 'settings', 0, 'Coming Soon', '2026-02-28 17:35:37', '2026-03-16 19:05:47'),
+(12, 2, 'crm-people', 0, 'Coming Soon', '2026-08-21 00:00:00', '2026-08-21 00:00:00'),
+(13, 2, 'broadcasts', 0, 'Coming Soon', '2026-08-21 00:00:00', '2026-08-21 00:00:00'),
+(14, 2, 'compliance', 0, 'Coming Soon', '2026-08-21 00:00:00', '2026-08-21 00:00:00'),
+(15, 2, 'notifications', 0, 'Coming Soon', '2026-08-21 00:00:00', '2026-08-21 00:00:00'),
+(16, 2, 'calendar', 0, 'Coming Soon', '2026-08-21 00:00:00', '2026-08-21 00:00:00'),
+(17, 2, 'contact-submissions', 0, 'Coming Soon', '2026-08-21 00:00:00', '2026-08-21 00:00:00'),
+(18, 2, 'income-calculator', 0, 'Coming Soon', '2026-08-21 00:00:00', '2026-08-21 00:00:00');
 
 -- --------------------------------------------------------
 
@@ -125,7 +132,18 @@ CREATE TABLE `brokers` (
   `public_token` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'UUID token for public broker share link',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `created_by_broker_id` int(11) DEFAULT NULL COMMENT 'The admin/Mortgage Banker who created this partner broker'
+  `created_by_broker_id` int(11) DEFAULT NULL COMMENT 'The admin/Mortgage Banker who created this partner broker',
+  `slug` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Human-readable broker slug for short public URLs e.g. alexgomez (used in /apply/ and /scheduler/)',
+  `twilio_phone_sid` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Twilio IncomingPhoneNumber SID assigned to this broker for inbound routing and outbound caller ID',
+  `twilio_caller_id` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'E.164 phone number derived from twilio_phone_sid; used as callerId for outbound calls',
+  `voice_available` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = broker has toggled Available in the CRM and their Twilio Device is registered',
+  `call_forwarding_enabled` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = simultaneously ring this broker personal phone on incoming CRM calls',
+  `call_forwarding_phone` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'E.164 personal phone number for call forwarding',
+  `timezone` varchar(60) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'America/Los_Angeles',
+  `voicemail_enabled` tinyint(1) DEFAULT NULL COMMENT 'NULL = inherit tenant; 1/0 = override for this banker''s personal line',
+  `voicemail_greeting_text` text COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Text-to-speech greeting override for this banker',
+  `voicemail_greeting_url` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Pre-recorded greeting MP3/WAV URL override for this banker',
+  `sms_blast_opted_in` tinyint(1) DEFAULT NULL COMMENT 'NULL=unknown, 1=opted in, 0=opted out via STOP reply'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -168,6 +186,29 @@ CREATE TABLE `broker_monthly_metrics` (
 -- Table structure for table `broker_profiles`
 --
 
+
+-- --------------------------------------------------------
+-- Table structure for table `broker_notification_preferences`
+-- --------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS `broker_notification_preferences` (
+  `broker_id` int NOT NULL,
+  `tenant_id` int NOT NULL DEFAULT 2,
+  `email_new_application` tinyint(1) NOT NULL DEFAULT 1,
+  `email_voicemail` tinyint(1) NOT NULL DEFAULT 1,
+  `email_inbound_sms` tinyint(1) NOT NULL DEFAULT 1,
+  `email_inbound_email` tinyint(1) NOT NULL DEFAULT 0,
+  `email_scheduler_booking` tinyint(1) NOT NULL DEFAULT 1,
+  `email_reminder_flow_broker` tinyint(1) NOT NULL DEFAULT 1,
+  `secondary_email` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`broker_id`),
+  KEY `idx_bnp_tenant` (`tenant_id`),
+  CONSTRAINT `fk_bnp_broker` FOREIGN KEY (`broker_id`) REFERENCES `brokers` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_bnp_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE `broker_profiles` (
   `id` int(11) NOT NULL,
   `broker_id` int(11) NOT NULL,
@@ -186,7 +227,8 @@ CREATE TABLE `broker_profiles` (
   `years_experience` int(11) DEFAULT NULL,
   `total_loans_closed` int(11) DEFAULT '0',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `date_of_birth` date DEFAULT NULL COMMENT 'Date of birth for birthday calendar events'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -232,7 +274,7 @@ CREATE TABLE `campaigns` (
   `tenant_id` int(11) NOT NULL DEFAULT '1',
   `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `description` text COLLATE utf8mb4_unicode_ci,
-  `campaign_type` enum('email','sms','whatsapp','mixed') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `campaign_type` enum('email','sms','mixed') COLLATE utf8mb4_unicode_ci NOT NULL,
   `status` enum('draft','scheduled','active','paused','completed') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'draft',
   `target_audience` json DEFAULT NULL,
   `template_id` int(11) DEFAULT NULL,
@@ -277,6 +319,7 @@ CREATE TABLE `clients` (
   `first_name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
   `last_name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
   `phone` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `normalized_phone` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Last-10-digit normalised phone; maintained by app on every write',
   `alternate_phone` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `date_of_birth` date DEFAULT NULL,
   `ssn_encrypted` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
@@ -296,8 +339,14 @@ CREATE TABLE `clients` (
   `assigned_broker_id` int(11) DEFAULT NULL,
   `source` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `referral_code` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `list_visibility` enum('active','hidden','archived') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active' COMMENT 'Per-owner CRM list visibility after transfer/soft-remove',
+  `hidden_reason` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `hidden_at` datetime DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `middle_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Borrower middle name for MISMO MiddleName element',
+  `address_unit` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Apartment / unit number for MISMO AddressUnitIdentifier',
+  `sms_blast_opted_in` tinyint(1) DEFAULT NULL COMMENT 'NULL=unknown, 1=opted in, 0=opted out via STOP reply'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -322,7 +371,7 @@ CREATE TABLE `communications` (
   `from_broker_id` int(11) DEFAULT NULL,
   `to_user_id` int(11) DEFAULT NULL,
   `to_broker_id` int(11) DEFAULT NULL,
-  `communication_type` enum('email','sms','whatsapp','call','internal_note') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `communication_type` enum('email','sms','call','internal_note') COLLATE utf8mb4_unicode_ci NOT NULL,
   `direction` enum('inbound','outbound') COLLATE utf8mb4_unicode_ci NOT NULL,
   `subject` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `body` text COLLATE utf8mb4_unicode_ci,
@@ -338,12 +387,20 @@ CREATE TABLE `communications` (
   `read_timestamp` datetime DEFAULT NULL,
   `error_code` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `error_message` text COLLATE utf8mb4_unicode_ci,
-  `cost` decimal(10,4) DEFAULT NULL COMMENT 'Cost in USD for SMS/WhatsApp messages',
+  `cost` decimal(10,4) DEFAULT NULL COMMENT 'Cost in USD for SMS messages',
   `provider_response` json DEFAULT NULL COMMENT 'Full provider response for debugging',
   `metadata` json DEFAULT NULL,
   `scheduled_at` datetime DEFAULT NULL,
   `sent_at` datetime DEFAULT NULL,
-  `created_at` datetime DEFAULT CURRENT_TIMESTAMP
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `media_url` text COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'URL(s) of MMS media attachments — JSON array for multiple items, plain URL for single',
+  `media_content_type` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'MIME type of the primary media attachment (e.g. image/jpeg, application/pdf)',
+  `recording_url` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Twilio recording URL (mp3) for call communications',
+  `recording_duration` int DEFAULT NULL COMMENT 'Recording duration in seconds',
+  `mailbox_id` int DEFAULT NULL,
+  `source_execution_id` int DEFAULT NULL COMMENT 'reminder_flow_executions.id that produced this message (NULL = manual send)',
+  `is_voicemail` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1 = this call communication is an unanswered-call voicemail',
+  `voicemail_transcription` text COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Twilio-generated transcript of the voicemail recording'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -466,20 +523,26 @@ CREATE TABLE `conversation_threads` (
   `application_id` int(11) DEFAULT NULL,
   `lead_id` int(11) DEFAULT NULL,
   `client_id` int(11) DEFAULT NULL,
-  `broker_id` int(11) NOT NULL,
+  `broker_id` int(11) DEFAULT NULL,
+  `owner_client_scope_broker_id` int(11) DEFAULT NULL COMMENT 'Denormalized clients.assigned_broker_id for thread client_id',
   `client_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `client_phone` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `client_email` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `last_message_at` datetime NOT NULL,
   `last_message_preview` text COLLATE utf8mb4_unicode_ci,
-  `last_message_type` enum('email','sms','whatsapp','call','internal_note') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `last_message_type` enum('email','sms','call','internal_note') COLLATE utf8mb4_unicode_ci NOT NULL,
   `message_count` int(11) DEFAULT '0',
   `unread_count` int(11) DEFAULT '0',
   `priority` enum('low','normal','high','urgent') COLLATE utf8mb4_unicode_ci DEFAULT 'normal',
   `status` enum('active','archived','closed') COLLATE utf8mb4_unicode_ci DEFAULT 'active',
   `tags` json DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `mailbox_id` int DEFAULT NULL,
+  `contact_broker_id` int DEFAULT NULL COMMENT 'Broker/realtor who is the contact in this thread (not the CRM handler)',
+  `inbox_number` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Twilio number (To) that received the first inbound message',
+  `archived_at` datetime DEFAULT NULL COMMENT 'Set when status is changed to archived; used by the 7-day auto-delete job',
+  `normalized_client_phone` varchar(10) COLLATE utf8mb4_unicode_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -616,7 +679,16 @@ CREATE TABLE `loan_applications` (
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `submitted_at` datetime DEFAULT NULL,
-  `citizenship_status` enum('us_citizen','permanent_resident','non_resident','other') COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Applicant citizenship/immigration status at time of application'
+  `citizenship_status` enum('us_citizen','permanent_resident','non_resident','other') COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Applicant citizenship/immigration status at time of application',
+  `property_unit` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Property unit/apt number for MISMO COLLATERAL AddressUnitIdentifier',
+  `marital_status` enum('married','separated','single','divorced','widowed') COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Borrower marital status for MISMO MaritalStatusType',
+  `employment_status` enum('employed','self_employed','unemployed','retired','retired_with_pension') COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Applicant employment status at time of application',
+  `employer_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Employer or business name at time of application',
+  `years_employed` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Years at current employer/business at time of application',
+  `source_category` enum('current_client_referral','past_client','past_client_referral','personal_friend','realtor','advertisement','business_partner','builder','other') COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Lead source category for this loan application — used in Lead Source Analysis metrics',
+  `dependent_count` tinyint unsigned DEFAULT NULL COMMENT 'Number of financial dependents for MISMO DependentCount',
+  `dependent_ages` json DEFAULT NULL COMMENT 'Array of dependent ages in years',
+  `years_at_address` decimal(4,1) DEFAULT NULL COMMENT 'Years borrower has lived at current address'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -636,9 +708,11 @@ CREATE TABLE `notifications` (
   `id` int(11) NOT NULL,
   `tenant_id` int(11) NOT NULL DEFAULT '1',
   `user_id` int(11) NOT NULL,
+  `recipient_type` enum('client','broker') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'client',
   `title` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `message` text COLLATE utf8mb4_unicode_ci NOT NULL,
   `notification_type` enum('info','success','warning','error') COLLATE utf8mb4_unicode_ci DEFAULT 'info',
+  `category` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'system',
   `is_read` tinyint(1) DEFAULT '0',
   `action_url` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
@@ -662,7 +736,7 @@ CREATE TABLE `pipeline_step_templates` (
   `id` int(11) NOT NULL,
   `tenant_id` int(11) NOT NULL DEFAULT '1',
   `pipeline_step` enum('app_sent','application_received','prequalified','preapproved','under_contract_loan_setup','submitted_to_underwriting','approved_with_conditions','clear_to_close','docs_out','loan_funded') COLLATE utf8mb4_unicode_ci NOT NULL,
-  `communication_type` enum('email','sms','whatsapp') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `communication_type` enum('email','sms') COLLATE utf8mb4_unicode_ci NOT NULL,
   `template_id` int(11) NOT NULL,
   `is_active` tinyint(1) DEFAULT '1',
   `created_by_broker_id` int(11) DEFAULT NULL,
@@ -691,7 +765,11 @@ CREATE TABLE `pre_approval_letters` (
   `created_by_broker_id` int(11) NOT NULL COMMENT 'Broker who issued the letter',
   `updated_by_broker_id` int(11) DEFAULT NULL COMMENT 'Broker who last edited the letter',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `purchase_property_address` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Street address of the property the client intends to purchase',
+  `purchase_property_city` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'City of the intended purchase property',
+  `purchase_property_state` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'State of the intended purchase property',
+  `purchase_property_zip` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'ZIP code of the intended purchase property'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Pre-approval letters attached to loan applications. One letter per loan, customizable HTML content.';
 
 -- --------------------------------------------------------
@@ -712,7 +790,10 @@ CREATE TABLE `reminder_flows` (
   `loan_type_filter` enum('all','purchase','refinance') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'all' COMMENT 'Restrict this flow to a specific loan type or all',
   `created_by_broker_id` int(11) DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `flow_category` enum('loan','realtor_prospecting') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'loan',
+  `restricted_to_broker_id` int DEFAULT NULL COMMENT 'NULL = visible to all brokers in tenant. Otherwise only this broker can see/run the flow.',
+  `enable_trace_logging` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'When 1, engine writes per-step rows into reminder_flow_step_logs.'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -754,7 +835,9 @@ CREATE TABLE `reminder_flow_executions` (
   `started_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `completed_at` datetime DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `prospect_id` int DEFAULT NULL COMMENT 'realtor_prospects.id — set for realtor_prospecting flows; NULL for loan flows',
+  `conversation_id` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Conversation thread tied to this execution — conv_client_{clientId}_loan_{loanId}_flow_{flowId}'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -767,7 +850,7 @@ CREATE TABLE `reminder_flow_steps` (
   `id` int(11) NOT NULL,
   `flow_id` int(11) NOT NULL,
   `step_key` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Unique key within flow for React Flow node id',
-  `step_type` enum('trigger','wait','send_notification','send_email','send_sms','send_whatsapp','condition','branch','wait_for_response','end') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `step_type` enum('trigger','wait','send_notification','send_email','send_sms','condition','branch','wait_for_response','wait_until_date','end') COLLATE utf8mb4_unicode_ci NOT NULL,
   `label` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `description` text COLLATE utf8mb4_unicode_ci,
   `config` json DEFAULT NULL COMMENT 'Step-specific configuration (message, delay hours/days, condition type, etc.)',
@@ -1067,7 +1150,7 @@ CREATE TABLE `templates` (
   `tenant_id` int(11) NOT NULL DEFAULT '1',
   `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `description` text COLLATE utf8mb4_unicode_ci,
-  `template_type` enum('email','sms','whatsapp') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `template_type` enum('email','sms') COLLATE utf8mb4_unicode_ci NOT NULL,
   `category` enum('welcome','reminder','update','follow_up','marketing','system') COLLATE utf8mb4_unicode_ci DEFAULT 'system',
   `subject` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'For email templates',
   `body` text COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -1116,7 +1199,12 @@ CREATE TABLE `tenants` (
   `custom_js` text COLLATE utf8mb4_unicode_ci,
   `settings` json DEFAULT NULL COMMENT 'Additional tenant-specific settings',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `voicemail_enabled` tinyint(1) NOT NULL DEFAULT '1' COMMENT '1 = unanswered inbound calls fall back to voicemail',
+  `voicemail_greeting_text` text COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Text-to-speech greeting (used when voicemail_greeting_url is NULL)',
+  `voicemail_greeting_url` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Public MP3/WAV URL of pre-recorded greeting (overrides greeting_text)',
+  `voicemail_max_seconds` int NOT NULL DEFAULT '120' COMMENT 'Maximum voicemail length in seconds (Twilio caps at 3600)',
+  `voicemail_transcribe` tinyint(1) NOT NULL DEFAULT '1' COMMENT '1 = ask Twilio to transcribe voicemails (small per-minute fee)'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -1280,12 +1368,14 @@ ALTER TABLE `campaign_recipients`
 ALTER TABLE `clients`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `unique_tenant_email` (`tenant_id`,`email`),
+  ADD UNIQUE KEY `uq_clients_tenant_owner_norm_phone` (`tenant_id`,`assigned_broker_id`,`normalized_phone`),
   ADD KEY `idx_email` (`email`),
   ADD KEY `idx_status` (`status`),
   ADD KEY `idx_assigned_broker` (`assigned_broker_id`),
   ADD KEY `idx_income_type` (`income_type`),
   ADD KEY `tenant_id` (`tenant_id`),
-  ADD KEY `idx_clients_citizenship` (`citizenship_status`);
+  ADD KEY `idx_clients_citizenship` (`citizenship_status`),
+  ADD KEY `idx_clients_owner_visibility` (`tenant_id`,`assigned_broker_id`,`list_visibility`);
 
 --
 -- Indexes for table `communications`
@@ -1348,6 +1438,7 @@ ALTER TABLE `conversation_threads`
   ADD KEY `idx_tenant_lead` (`tenant_id`,`lead_id`),
   ADD KEY `idx_tenant_client` (`tenant_id`,`client_id`),
   ADD KEY `idx_broker_id` (`broker_id`),
+  ADD KEY `idx_ct_owner_scope` (`tenant_id`,`owner_client_scope_broker_id`,`client_id`),
   ADD KEY `idx_last_message_at` (`last_message_at`),
   ADD KEY `idx_status` (`status`),
   ADD KEY `idx_priority` (`priority`),
@@ -1940,7 +2031,8 @@ ALTER TABLE `conversation_threads`
   ADD CONSTRAINT `fk_conversation_threads_broker` FOREIGN KEY (`broker_id`) REFERENCES `brokers` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `fk_conversation_threads_client` FOREIGN KEY (`client_id`) REFERENCES `clients` (`id`) ON DELETE SET NULL,
   ADD CONSTRAINT `fk_conversation_threads_lead` FOREIGN KEY (`lead_id`) REFERENCES `leads` (`id`) ON DELETE SET NULL,
-  ADD CONSTRAINT `fk_conversation_threads_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE;
+  ADD CONSTRAINT `fk_conversation_threads_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_ct_owner_scope_broker` FOREIGN KEY (`owner_client_scope_broker_id`) REFERENCES `brokers` (`id`) ON DELETE SET NULL;
 
 --
 -- Constraints for table `documents`
@@ -1979,8 +2071,7 @@ ALTER TABLE `loan_applications`
 -- Constraints for table `notifications`
 --
 ALTER TABLE `notifications`
-  ADD CONSTRAINT `fk_notifications_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `notifications_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `clients` (`id`) ON DELETE CASCADE;
+  ADD CONSTRAINT `fk_notifications_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `pipeline_step_templates`
@@ -2076,3 +2167,680 @@ COMMIT;
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
 /*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
+
+
+-- ---------- Per-owner CRM tables (tenant 2) ----------
+CREATE TABLE IF NOT EXISTS `crm_person_groups` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL,
+  `status` enum('pending','linked','merged','rejected') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `canonical_client_id` int DEFAULT NULL COMMENT 'Set when merged; borrower-of-record default',
+  `created_by_broker_id` int NOT NULL,
+  `approved_by_broker_id` int DEFAULT NULL,
+  `approved_at` datetime DEFAULT NULL,
+  `notes` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_cpg_tenant_status` (`tenant_id`, `status`),
+  KEY `idx_cpg_created_by` (`created_by_broker_id`),
+  CONSTRAINT `fk_cpg_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_cpg_created_by` FOREIGN KEY (`created_by_broker_id`) REFERENCES `brokers` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_cpg_approved_by` FOREIGN KEY (`approved_by_broker_id`) REFERENCES `brokers` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_cpg_canonical_client` FOREIGN KEY (`canonical_client_id`) REFERENCES `clients` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Identity link groups — same real person across owner CRM rows';
+
+CREATE TABLE IF NOT EXISTS `crm_person_group_members` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL,
+  `group_id` int NOT NULL,
+  `entity_type` enum('client','broker','lead') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `entity_id` int NOT NULL,
+  `role` enum('member','borrower_of_record') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'member',
+  `joined_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_cpgm_entity` (`tenant_id`, `entity_type`, `entity_id`),
+  KEY `idx_cpgm_group` (`group_id`),
+  CONSTRAINT `fk_cpgm_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_cpgm_group` FOREIGN KEY (`group_id`) REFERENCES `crm_person_groups` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Members of a crm_person_groups identity link';
+
+CREATE TABLE IF NOT EXISTS `crm_transfer_jobs` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL,
+  `from_broker_id` int NOT NULL,
+  `to_broker_id` int NOT NULL,
+  `source_entity_type` enum('client','broker') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `source_entity_id` int NOT NULL,
+  `status` enum('pending','review','completed','cancelled') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `resolution_json` json DEFAULT NULL,
+  `created_by_broker_id` int NOT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `completed_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_ctj_tenant_status` (`tenant_id`, `status`),
+  KEY `idx_ctj_from_broker` (`from_broker_id`),
+  KEY `idx_ctj_to_broker` (`to_broker_id`),
+  CONSTRAINT `fk_ctj_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_ctj_from_broker` FOREIGN KEY (`from_broker_id`) REFERENCES `brokers` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_ctj_to_broker` FOREIGN KEY (`to_broker_id`) REFERENCES `brokers` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_ctj_created_by` FOREIGN KEY (`created_by_broker_id`) REFERENCES `brokers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Client/realtor transfer wizard jobs (copy/shared access)';
+
+INSERT IGNORE INTO `system_settings`
+  (`tenant_id`, `setting_key`, `setting_value`, `setting_type`, `description`)
+VALUES
+  (2, 'per_owner_crm_enabled', 'false', 'boolean',
+   'Deprecated DB mirror — use PER_OWNER_CRM_ENABLED env var'),
+  (2, 'per_owner_crm_allow_production', 'false', 'boolean',
+   'Deprecated — ignored at runtime'),
+  (2, 'per_owner_crm_pilot_broker_ids', '[]', 'json',
+   'Deprecated — ignored at runtime');
+
+
+-- ---------- Realtor Broadcast Center (from migrations) ----------
+CREATE TABLE IF NOT EXISTS realtor_broadcasts (
+  id              INT NOT NULL AUTO_INCREMENT,
+  tenant_id       INT NOT NULL,
+  created_by      INT NOT NULL,
+  title           VARCHAR(255) NOT NULL,
+  channel         ENUM('email','sms','both') NOT NULL,
+  sms_engine      ENUM('messages','bulk') NOT NULL DEFAULT 'messages',
+  twilio_operation_ids JSON DEFAULT NULL,
+  bulk_stats_json JSON DEFAULT NULL,
+  subject         VARCHAR(500) DEFAULT NULL,
+  body_email      LONGTEXT DEFAULT NULL,
+  body_sms        TEXT DEFAULT NULL,
+  audience_filter JSON NOT NULL,
+  recipient_count INT NOT NULL DEFAULT 0,
+  sent_count      INT NOT NULL DEFAULT 0,
+  failed_count    INT NOT NULL DEFAULT 0,
+  status          ENUM('draft','scheduled','sending','sent','failed','cancelled') NOT NULL DEFAULT 'draft',
+  is_cancelled    TINYINT(1) NOT NULL DEFAULT 0,
+  scheduled_at    DATETIME DEFAULT NULL,
+  started_at      DATETIME DEFAULT NULL,
+  completed_at    DATETIME DEFAULT NULL,
+  created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_tenant_status (tenant_id, status),
+  KEY idx_scheduled_at (scheduled_at),
+  CONSTRAINT fk_rb_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  CONSTRAINT fk_rb_broker FOREIGN KEY (created_by) REFERENCES brokers(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS realtor_broadcast_recipients (
+  id                INT NOT NULL AUTO_INCREMENT,
+  broadcast_id      INT NOT NULL,
+  tenant_id         INT NOT NULL,
+  broker_id         INT DEFAULT NULL,
+  prospect_id       INT DEFAULT NULL,
+  recipient_name    VARCHAR(255) DEFAULT NULL,
+  recipient_email   VARCHAR(255) DEFAULT NULL,
+  recipient_phone   VARCHAR(30) DEFAULT NULL,
+  email_status      ENUM('pending','processing','sent','failed','bounced','unsubscribed','skipped_no_contact') DEFAULT NULL,
+  sms_status        ENUM('pending','processing','sent','failed','undelivered','opted_out','skipped_no_contact') DEFAULT NULL,
+  email_ext_id      VARCHAR(255) DEFAULT NULL,
+  sms_ext_id        VARCHAR(255) DEFAULT NULL,
+  sms_bulk_message_id VARCHAR(128) DEFAULT NULL,
+  unsubscribe_token VARCHAR(64) DEFAULT NULL,
+  conversation_id   VARCHAR(255) DEFAULT NULL,
+  error_message     TEXT DEFAULT NULL,
+  sent_at           DATETIME DEFAULT NULL,
+  created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_broadcast_id (broadcast_id),
+  KEY idx_tenant (tenant_id),
+  KEY idx_unsubscribe_token (unsubscribe_token),
+  CONSTRAINT fk_rbr_broadcast FOREIGN KEY (broadcast_id) REFERENCES realtor_broadcasts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS realtor_email_unsubscribes (
+  id              INT NOT NULL AUTO_INCREMENT,
+  tenant_id       INT NOT NULL,
+  email           VARCHAR(255) NOT NULL,
+  unsubscribed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_tenant_email (tenant_id, email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS broadcast_saved_segments (
+  id          INT NOT NULL AUTO_INCREMENT,
+  tenant_id   INT NOT NULL,
+  created_by  INT NOT NULL,
+  name        VARCHAR(255) NOT NULL,
+  filter_json JSON NOT NULL COMMENT 'Serialized RealtorBroadcastAudienceFilter',
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_bss_tenant (tenant_id),
+  CONSTRAINT fk_bss_tenant  FOREIGN KEY (tenant_id)  REFERENCES tenants(id)  ON DELETE CASCADE,
+  CONSTRAINT fk_bss_creator FOREIGN KEY (created_by) REFERENCES brokers(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+ALTER TABLE brokers
+  ADD COLUMN IF NOT EXISTS sms_blast_opted_in TINYINT(1) DEFAULT NULL
+    COMMENT 'NULL=unknown, 1=opted in, 0=opted out via STOP reply';
+
+ALTER TABLE clients
+  ADD COLUMN IF NOT EXISTS sms_blast_opted_in TINYINT(1) DEFAULT NULL
+    COMMENT 'NULL=unknown, 1=opted in, 0=opted out via STOP reply';
+
+INSERT INTO system_settings
+  (tenant_id, setting_key, setting_value, setting_type, description)
+VALUES
+  (2, 'broadcast_sms_engine', 'messages', 'string',
+   'SMS broadcast delivery engine: messages (default) or bulk (Twilio Bulk Messaging beta)'),
+  (2, 'broadcast_bulk_min_recipients', '1', 'number',
+   'Minimum SMS recipients before Bulk engine is used when broadcast_sms_engine=bulk'),
+  (2, 'broadcast_bulk_chunk_size', '9000', 'number',
+   'Max recipients per Twilio Bulk Messages request (hard cap 10000)')
+ON DUPLICATE KEY UPDATE
+  description = VALUES(description);
+
+-- ---------- realtor_prospects (used by broadcast audience + prospecting) ----------
+CREATE TABLE IF NOT EXISTS `realtor_prospects` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL DEFAULT 2,
+  `stage` enum('contact_attempted','contacted','appt_set','waiting_for_1st_deal','first_deal_funded','second_deal_funded','top_agent_whale') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'contact_attempted',
+  `status` enum('open','won','lost') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'open',
+  `opportunity_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `opportunity_value` decimal(12,2) NOT NULL DEFAULT '0.00',
+  `contact_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `contact_email` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `contact_phone` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `business_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `opportunity_source` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `tags` json DEFAULT NULL,
+  `notes` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `owner_broker_id` int DEFAULT NULL,
+  `followers` json DEFAULT NULL,
+  `progress_report` enum('ready_to_send','sent') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `add_to_refi_rates_dropped` tinyint(1) NOT NULL DEFAULT '0',
+  `created_by_broker_id` int NOT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_realtor_prospects_tenant` (`tenant_id`),
+  KEY `idx_realtor_prospects_stage` (`stage`),
+  KEY `idx_realtor_prospects_status` (`status`),
+  KEY `idx_realtor_prospects_owner` (`owner_broker_id`),
+  KEY `idx_realtor_prospects_created_by` (`created_by_broker_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Tables below were synced from the live database on 2026-11-02.
+
+CREATE TABLE `ai_chat_sessions` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL DEFAULT '1',
+  `user_type` enum('broker','client') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` int NOT NULL,
+  `session_key` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Unique per browser tab/day',
+  `messages` longtext COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'JSON array of {role, content} objects',
+  `tokens_used` int NOT NULL DEFAULT '0',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_session_key` (`session_key`),
+  KEY `idx_user` (`user_type`,`user_id`),
+  KEY `idx_tenant` (`tenant_id`),
+  CONSTRAINT `fk_ai_sessions_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Mortgi AI assistant chat sessions';
+
+CREATE TABLE `calendar_events` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL DEFAULT '1',
+  `broker_id` int DEFAULT NULL COMMENT 'Owning broker (NULL = applies to all)',
+  `event_type` enum('birthday','home_anniversary','realtor_anniversary','important_date','reminder','other') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'other',
+  `title` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `description` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `event_date` date NOT NULL COMMENT 'The date of the event (or base date for yearly recurrence)',
+  `event_time` time DEFAULT NULL COMMENT 'Optional time for non-all-day events',
+  `all_day` tinyint(1) NOT NULL DEFAULT '1',
+  `recurrence` enum('none','yearly') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'none',
+  `color` varchar(30) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Optional hex or named color for display',
+  `linked_client_id` int DEFAULT NULL COMMENT 'Optional FK to clients.id',
+  `linked_person_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Free-text contact name (realtor, etc.)',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_calendar_events_tenant_broker` (`tenant_id`,`broker_id`),
+  KEY `idx_calendar_events_date` (`event_date`),
+  KEY `idx_calendar_events_client` (`linked_client_id`),
+  KEY `fk_calendar_events_broker` (`broker_id`),
+  CONSTRAINT `fk_calendar_events_broker` FOREIGN KEY (`broker_id`) REFERENCES `brokers` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_calendar_events_client` FOREIGN KEY (`linked_client_id`) REFERENCES `clients` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `conversation_email_mailboxes` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL DEFAULT '1',
+  `provider` enum('office365','imap') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'office365',
+  `mailbox_email` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `display_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `assigned_broker_id` int NOT NULL,
+  `status` enum('pending','active','disabled','error','auth_required') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `is_default` tinyint(1) NOT NULL DEFAULT '0',
+  `office365_tenant_id` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `office365_client_id` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `oauth_access_token` mediumtext COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `oauth_refresh_token` mediumtext COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `oauth_expires_at` datetime DEFAULT NULL,
+  `last_sync_at` datetime DEFAULT NULL,
+  `last_sync_status` enum('ok','error') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `last_sync_error` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `last_graph_delta_link` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_by_broker_id` int DEFAULT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_conversation_email_mailboxes` (`tenant_id`,`provider`,`mailbox_email`),
+  KEY `idx_conversation_email_mailboxes_tenant_status` (`tenant_id`,`status`),
+  KEY `idx_conversation_email_mailboxes_assigned` (`assigned_broker_id`),
+  KEY `idx_conversation_email_mailboxes_default` (`tenant_id`,`is_default`),
+  KEY `fk_conversation_email_mailboxes_created_by` (`created_by_broker_id`),
+  CONSTRAINT `fk_conversation_email_mailboxes_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_conversation_email_mailboxes_created_by` FOREIGN KEY (`created_by_broker_id`) REFERENCES `brokers` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_email_mailboxes_broker` FOREIGN KEY (`assigned_broker_id`) REFERENCES `brokers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `email_attachment_cache` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL DEFAULT '1',
+  `mailbox_id` int NOT NULL,
+  `graph_message_id` varchar(512) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Graph API message ID',
+  `graph_attachment_id` varchar(512) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Graph API attachment ID',
+  `comm_id` int DEFAULT NULL COMMENT 'communications.id that owns this attachment',
+  `name` varchar(512) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `content_type` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `size_bytes` int DEFAULT NULL,
+  `cdn_url` varchar(2048) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'CDN URL if already downloaded',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_email_attachment` (`mailbox_id`,`graph_message_id`(200),`graph_attachment_id`(200)),
+  KEY `idx_email_attachment_comm` (`comm_id`),
+  KEY `fk_email_attachment_tenant` (`tenant_id`),
+  CONSTRAINT `fk_email_attachment_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_email_attachment_mailbox` FOREIGN KEY (`mailbox_id`) REFERENCES `conversation_email_mailboxes` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `email_drafts` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL DEFAULT '1',
+  `mailbox_id` int NOT NULL,
+  `broker_id` int NOT NULL,
+  `subject` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `body_html` mediumtext COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `to_emails` json DEFAULT NULL COMMENT 'Array of {email, name} objects',
+  `cc_emails` json DEFAULT NULL COMMENT 'Array of {email, name} objects',
+  `bcc_emails` json DEFAULT NULL COMMENT 'Array of {email, name} objects',
+  `reply_to_comm_id` int DEFAULT NULL COMMENT 'communications.id being replied to',
+  `conversation_id` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_email_drafts_broker` (`tenant_id`,`broker_id`),
+  KEY `idx_email_drafts_mailbox` (`mailbox_id`),
+  KEY `fk_email_drafts_broker` (`broker_id`),
+  CONSTRAINT `fk_email_drafts_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_email_drafts_mailbox` FOREIGN KEY (`mailbox_id`) REFERENCES `conversation_email_mailboxes` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_email_drafts_broker` FOREIGN KEY (`broker_id`) REFERENCES `brokers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `email_signatures` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL DEFAULT '1',
+  `broker_id` int NOT NULL,
+  `name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'Default',
+  `html` mediumtext COLLATE utf8mb4_unicode_ci NOT NULL,
+  `is_default` tinyint(1) NOT NULL DEFAULT '0',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_email_signatures_broker` (`tenant_id`,`broker_id`),
+  KEY `fk_email_signatures_broker` (`broker_id`),
+  CONSTRAINT `fk_email_signatures_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_email_signatures_broker` FOREIGN KEY (`broker_id`) REFERENCES `brokers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `email_sync_log` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL DEFAULT '1',
+  `mailbox_id` int NOT NULL,
+  `trigger` enum('cron','manual') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'cron',
+  `started_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `finished_at` datetime DEFAULT NULL,
+  `messages_synced` int NOT NULL DEFAULT '0',
+  `errors` int NOT NULL DEFAULT '0',
+  `status` enum('running','ok','error','partial') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'running',
+  `error_detail` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_email_sync_log_mailbox` (`mailbox_id`,`started_at`),
+  KEY `fk_email_sync_log_tenant` (`tenant_id`),
+  CONSTRAINT `fk_email_sync_log_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_email_sync_log_mailbox` FOREIGN KEY (`mailbox_id`) REFERENCES `conversation_email_mailboxes` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `reminder_flow_step_logs` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL DEFAULT '1',
+  `flow_id` int NOT NULL,
+  `execution_id` int NOT NULL,
+  `step_key` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `step_type` enum('trigger','wait','send_notification','send_email','send_sms','send_whatsapp','condition','branch','wait_for_response','wait_until_date','end') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `event` enum('started','succeeded','failed','skipped','timeout','cancelled') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `channel` enum('sms','email','whatsapp','notification','none') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'none',
+  `recipient` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'phone or email used at send time',
+  `external_id` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'twilio SID, email message-id, etc.',
+  `delivery_status` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'queued/sent/delivered/failed/undelivered',
+  `payload` json DEFAULT NULL COMMENT 'snapshot: rendered message, subject, edge taken, etc.',
+  `error_message` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `duration_ms` int DEFAULT NULL COMMENT 'wall-clock time for the step',
+  `started_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `completed_at` datetime DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_flow_step_logs_flow` (`flow_id`),
+  KEY `idx_flow_step_logs_execution` (`execution_id`),
+  KEY `idx_flow_step_logs_tenant` (`tenant_id`),
+  KEY `idx_flow_step_logs_started` (`started_at`),
+  CONSTRAINT `fk_flow_step_logs_flow` FOREIGN KEY (`flow_id`) REFERENCES `reminder_flows` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_flow_step_logs_execution` FOREIGN KEY (`execution_id`) REFERENCES `reminder_flow_executions` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `revoked_tokens` (
+  `jti` varchar(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_type` enum('client','broker') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `user_id` bigint NOT NULL,
+  `expires_at` timestamp NOT NULL,
+  `revoked_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`jti`),
+  KEY `idx_revoked_tokens_expires_at` (`expires_at`),
+  KEY `idx_revoked_tokens_user` (`user_type`,`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `scheduled_meetings` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL DEFAULT '1',
+  `broker_id` int DEFAULT NULL,
+  `client_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `client_email` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `client_phone` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `meeting_date` date NOT NULL,
+  `meeting_time` time NOT NULL,
+  `meeting_end_time` time NOT NULL,
+  `meeting_type` enum('phone','video','teams') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'phone',
+  `zoom_meeting_id` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Zoom meeting ID for video call meetings',
+  `zoom_join_url` varchar(1000) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Zoom join URL for attendees',
+  `zoom_start_url` varchar(1000) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Zoom start URL for the host (broker)',
+  `teams_meeting_id` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Microsoft Teams meeting ID for video call meetings',
+  `teams_join_url` varchar(1000) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Microsoft Teams join URL for attendees',
+  `status` enum('pending','confirmed','cancelled','completed','no_show') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'confirmed',
+  `notes` text COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Notes from the client at booking time',
+  `broker_notes` text COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Private notes from the broker',
+  `booking_token` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'UUID for client self-cancellation',
+  `public_token` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Broker public_token used to make the booking (brokers.public_token)',
+  `cancelled_reason` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `cancelled_by` enum('client','broker') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `cancelled_at` timestamp NULL DEFAULT NULL,
+  `reminder_24h_sent_at` timestamp NULL DEFAULT NULL,
+  `reminder_1h_sent_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_meetings_broker_date` (`broker_id`,`meeting_date`),
+  KEY `idx_meetings_booking_token` (`booking_token`),
+  KEY `idx_meetings_status` (`status`),
+  CONSTRAINT `fk_scheduled_meetings_broker` FOREIGN KEY (`broker_id`) REFERENCES `brokers` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `scheduler_availability` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL DEFAULT '1',
+  `broker_id` int NOT NULL,
+  `day_of_week` tinyint NOT NULL COMMENT '0=Sunday,1=Monday,...,6=Saturday',
+  `start_time` time NOT NULL,
+  `end_time` time NOT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_availability_broker_day` (`broker_id`,`day_of_week`),
+  CONSTRAINT `fk_scheduler_availability_broker` FOREIGN KEY (`broker_id`) REFERENCES `brokers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `scheduler_blocked_ranges` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL DEFAULT '1',
+  `broker_id` int NOT NULL,
+  `start_datetime` datetime NOT NULL COMMENT 'Inclusive start of blocked window',
+  `end_datetime` datetime NOT NULL COMMENT 'Inclusive end of blocked window',
+  `label` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Optional display label e.g. Vacation',
+  `source` enum('manual','o365') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'manual',
+  `external_id` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_sbr_broker_range` (`broker_id`,`start_datetime`,`end_datetime`),
+  KEY `idx_sbr_source_broker` (`broker_id`,`source`),
+  CONSTRAINT `fk_sbr_broker` FOREIGN KEY (`broker_id`) REFERENCES `brokers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `scheduler_settings` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL DEFAULT '1',
+  `broker_id` int NOT NULL,
+  `is_enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `meeting_title` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'Mortgage Consultation',
+  `meeting_description` text COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `slot_duration_minutes` int NOT NULL DEFAULT '30',
+  `buffer_time_minutes` int NOT NULL DEFAULT '15',
+  `advance_booking_days` int NOT NULL DEFAULT '30',
+  `min_booking_hours` int NOT NULL DEFAULT '2',
+  `timezone` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'America/Chicago',
+  `allow_phone` tinyint(1) NOT NULL DEFAULT '1',
+  `allow_video` tinyint(1) NOT NULL DEFAULT '0',
+  `allow_teams` tinyint(1) NOT NULL DEFAULT '0',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_scheduler_broker` (`tenant_id`,`broker_id`),
+  KEY `fk_scheduler_settings_broker` (`broker_id`),
+  CONSTRAINT `fk_scheduler_settings_broker` FOREIGN KEY (`broker_id`) REFERENCES `brokers` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `tenant_domains` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `tenant_id` int NOT NULL,
+  `domain` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Hostname only, no protocol or trailing slash (e.g. app.vercel.app)',
+  `is_primary` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'The canonical production domain for this tenant',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_domain` (`domain`),
+  KEY `idx_tenant_id` (`tenant_id`),
+  CONSTRAINT `fk_tenant_domains_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `tenants` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Stores all domain aliases per tenant for request-based tenant resolution';
+
+CREATE TABLE IF NOT EXISTS sms_opt_outs (
+  id              INT NOT NULL AUTO_INCREMENT,
+  tenant_id       INT NOT NULL,
+  phone_last10    VARCHAR(10) NOT NULL,
+  opted_out_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_tenant_phone (tenant_id, phone_last10)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS broker_role_section_permissions (
+  id          INT          NOT NULL AUTO_INCREMENT,
+  tenant_id   INT          NOT NULL,
+  broker_role VARCHAR(32)  NOT NULL,
+  section_id  VARCHAR(100) NOT NULL,
+  is_visible  TINYINT(1)   NOT NULL DEFAULT 1,
+  updated_by  INT          NULL,
+  updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_role_section (tenant_id, broker_role, section_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS tenant_subscription (
+  tenant_id INT NOT NULL,
+  plan_code VARCHAR(50) NOT NULL DEFAULT 'platform_standard',
+  status ENUM('active','trialing','past_due','canceled','inactive') NOT NULL DEFAULT 'active',
+  platform_fee_usd DECIMAL(10,2) NOT NULL DEFAULT 350.00,
+  period_start DATE NOT NULL,
+  period_end DATE NULL,
+  included_sms_segments INT NOT NULL DEFAULT 1000,
+  included_voice_minutes INT NOT NULL DEFAULT 1500,
+  included_email_sends INT NOT NULL DEFAULT 5000,
+  included_scheduler_bookings INT NOT NULL DEFAULT 100,
+  included_mortgi_ai_tokens BIGINT NOT NULL DEFAULT 500000,
+  overage_enabled TINYINT(1) NOT NULL DEFAULT 0,
+  stripe_customer_id VARCHAR(255) NULL,
+  stripe_subscription_id VARCHAR(255) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (tenant_id),
+  CONSTRAINT fk_tenant_subscription_tenant
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tenant_usage_period (
+  tenant_id INT NOT NULL,
+  period_start DATE NOT NULL,
+  dimension ENUM('sms_segments','voice_minutes','email_sends','scheduler_bookings','mortgi_ai_tokens') NOT NULL,
+  included_units BIGINT NOT NULL DEFAULT 0,
+  used_units BIGINT NOT NULL DEFAULT 0,
+  reserved_units BIGINT NOT NULL DEFAULT 0,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (tenant_id, period_start, dimension),
+  CONSTRAINT fk_tenant_usage_period_tenant
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tenant_usage_ledger (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  tenant_id INT NOT NULL,
+  dimension ENUM('sms_segments','voice_minutes','email_sends','scheduler_bookings','mortgi_ai_tokens') NOT NULL,
+  units DECIMAL(14,4) NOT NULL,
+  source VARCHAR(50) NOT NULL,
+  ref_type VARCHAR(50) NULL,
+  ref_id VARCHAR(100) NULL,
+  action ENUM('grant','consume','reserve','capture','release','top_up') NOT NULL,
+  metadata_json JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_tul_tenant_created (tenant_id, created_at),
+  KEY idx_tul_tenant_dimension (tenant_id, dimension),
+  CONSTRAINT fk_tenant_usage_ledger_tenant
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tenant_usage_reservations (
+  id BIGINT NOT NULL AUTO_INCREMENT,
+  tenant_id INT NOT NULL,
+  broadcast_id INT NULL,
+  units_json JSON NOT NULL,
+  expires_at DATETIME NOT NULL,
+  status ENUM('pending','captured','released','expired') NOT NULL DEFAULT 'pending',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_tur_tenant_status (tenant_id, status),
+  KEY idx_tur_tenant_broadcast (tenant_id, broadcast_id),
+  CONSTRAINT fk_tenant_usage_reservations_tenant
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  CONSTRAINT fk_tenant_usage_reservations_broadcast
+    FOREIGN KEY (broadcast_id) REFERENCES realtor_broadcasts(id) ON DELETE SET NULL
+);
+
+-- Feature flags (safe defaults: off / hidden)
+INSERT INTO system_settings (tenant_id, setting_key, setting_value, setting_type, description)
+VALUES
+  (2, 'billing_quota_mode', 'off', 'string', 'off|shadow|warn|enforce — quota enforcement mode'),
+  (2, 'billing_ui_enabled', 'false', 'boolean', 'Show /admin/billing for platform_owner'),
+  (2, 'billing_overage_enabled', 'false', 'boolean', 'Allow usage beyond included quota when in enforce mode'),
+  (2, 'billing_enforce_broadcast_daily', 'true', 'boolean', 'Keep broadcast_daily_* caps even in enforce mode')
+ON DUPLICATE KEY UPDATE
+  setting_value = VALUES(setting_value),
+  setting_type = VALUES(setting_type),
+  description = VALUES(description),
+  updated_at = NOW();
+
+-- Seed subscription row for tenant 1 (calendar month period)
+INSERT INTO tenant_subscription (
+  tenant_id,
+  plan_code,
+  status,
+  platform_fee_usd,
+  period_start,
+  period_end,
+  included_sms_segments,
+  included_voice_minutes,
+  included_email_sends,
+  included_scheduler_bookings,
+  included_mortgi_ai_tokens,
+  overage_enabled
+)
+VALUES (
+  2,
+  'platform_standard',
+  'active',
+  350.00,
+  DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-01'),
+  LAST_DAY(UTC_TIMESTAMP()),
+  1000,
+  1500,
+  5000,
+  100,
+  500000,
+  0
+)
+ON DUPLICATE KEY UPDATE
+  plan_code = VALUES(plan_code),
+  status = VALUES(status),
+  platform_fee_usd = VALUES(platform_fee_usd),
+  period_start = VALUES(period_start),
+  period_end = VALUES(period_end),
+  included_sms_segments = VALUES(included_sms_segments),
+  included_voice_minutes = VALUES(included_voice_minutes),
+  included_email_sends = VALUES(included_email_sends),
+  included_scheduler_bookings = VALUES(included_scheduler_bookings),
+  included_mortgi_ai_tokens = VALUES(included_mortgi_ai_tokens),
+  updated_at = NOW();
+-- Idempotency key for tenant_usage_ledger (Stripe top-up webhook + confirm race safety).
+-- NULL keys are allowed; only top-up rows set a key.
+
+ALTER TABLE tenant_usage_ledger
+  ADD COLUMN idempotency_key VARCHAR(150) DEFAULT NULL AFTER metadata_json;
+
+CREATE UNIQUE INDEX uk_tul_idempotency ON tenant_usage_ledger (tenant_id, idempotency_key);
+-- Billing access ladder: grace → restricted → suspended (subscription past_due)
+-- @see docs/BILLING_AND_QUOTA_PLAN.md D8c
+
+ALTER TABLE tenant_subscription
+  ADD COLUMN past_due_at DATETIME NULL COMMENT 'When platform fee payment first failed',
+  ADD COLUMN grace_ends_at DATETIME NULL COMMENT 'End of subscription grace window',
+  ADD COLUMN restricted_at DATETIME NULL COMMENT 'When cost actions were restricted post-grace',
+  ADD COLUMN suspended_at DATETIME NULL COMMENT 'When full billing wall applies';
+
+INSERT INTO system_settings (tenant_id, setting_key, setting_value, setting_type, description)
+VALUES
+  (2, 'billing_grace_days', '2', 'number', 'Days after past_due before restricting cost actions'),
+  (2, 'billing_suspend_days', '7', 'number', 'Days after past_due before suspending tenant (full wall)')
+ON DUPLICATE KEY UPDATE
+  setting_value = VALUES(setting_value),
+  setting_type = VALUES(setting_type),
+  description = VALUES(description),
+  updated_at = NOW();
+-- Stripe webhook event.id deduplication (Stripe retries up to ~3 days).
+
+CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+  event_id    VARCHAR(255) NOT NULL,
+  event_type  VARCHAR(100) NOT NULL,
+  processed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (event_id),
+  KEY idx_swe_processed (processed_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

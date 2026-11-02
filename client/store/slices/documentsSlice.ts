@@ -85,6 +85,104 @@ export const fetchAllDocuments = createAsyncThunk(
 /**
  * Delete document
  */
+function triggerBrowserDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function axiosBlobErrorMessage(error: any): Promise<string> {
+  const data = error?.response?.data;
+  if (data instanceof Blob) {
+    try {
+      const text = await data.text();
+      const parsed = JSON.parse(text);
+      if (parsed?.error) return String(parsed.error);
+      if (parsed?.message) return String(parsed.message);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (typeof data?.error === "string") return data.error;
+  if (typeof error?.message === "string") return error.message;
+  return "Download failed";
+}
+
+/** Download one document with semantic filename (LA#_ID.pdf / Seguro / Bank). */
+export const downloadDocumentLabeled = createAsyncThunk(
+  "documents/downloadLabeled",
+  async (documentId: number, { getState, rejectWithValue }) => {
+    try {
+      const state = getState() as RootState;
+      const token = state.brokerAuth.sessionToken;
+      const response = await axios.get(
+        `/api/documents/${documentId}/download`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          responseType: "blob",
+        },
+      );
+      const contentType = String(response.headers["content-type"] || "");
+      if (contentType.includes("application/json")) {
+        const text = await (response.data as Blob).text();
+        try {
+          const parsed = JSON.parse(text);
+          return rejectWithValue(parsed.error || "Download failed");
+        } catch {
+          return rejectWithValue("Download failed");
+        }
+      }
+      const disposition = String(response.headers["content-disposition"] || "");
+      const match = /filename="?([^";]+)"?/i.exec(disposition);
+      const filename = match?.[1] || `document_${documentId}.pdf`;
+      triggerBrowserDownload(response.data as Blob, filename);
+      return documentId;
+    } catch (error: any) {
+      return rejectWithValue(await axiosBlobErrorMessage(error));
+    }
+  },
+);
+
+/** Zip download for selected ids or all docs on a loan. */
+export const bulkDownloadDocuments = createAsyncThunk(
+  "documents/bulkDownload",
+  async (
+    payload: { document_ids?: number[]; application_id?: number },
+    { getState, rejectWithValue },
+  ) => {
+    try {
+      const state = getState() as RootState;
+      const token = state.brokerAuth.sessionToken;
+      const response = await axios.post("/api/documents/bulk-download", payload, {
+        headers: { Authorization: `Bearer ${token}` },
+        responseType: "blob",
+      });
+      const contentType = String(response.headers["content-type"] || "");
+      if (contentType.includes("application/json")) {
+        const text = await (response.data as Blob).text();
+        try {
+          const parsed = JSON.parse(text);
+          return rejectWithValue(parsed.error || "Failed to download zip");
+        } catch {
+          return rejectWithValue("Failed to download zip");
+        }
+      }
+      const disposition = String(response.headers["content-disposition"] || "");
+      const match = /filename="?([^";]+)"?/i.exec(disposition);
+      const filename = match?.[1] || "documents.zip";
+      triggerBrowserDownload(response.data as Blob, filename);
+      return true;
+    } catch (error: any) {
+      return rejectWithValue(await axiosBlobErrorMessage(error));
+    }
+  },
+);
+
 export const deleteDocument = createAsyncThunk(
   "documents/delete",
   async (documentId: number, { getState, rejectWithValue }) => {

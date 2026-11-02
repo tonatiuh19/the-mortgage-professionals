@@ -1,5 +1,6 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import Index from "./pages/Index";
+import Billing from "./pages/admin/Billing";
 import BrokerLogin from "./pages/BrokerLogin";
 import ClientLogin from "./pages/ClientLogin";
 import ApplicationWizard from "./pages/ApplicationWizard";
@@ -17,12 +18,14 @@ import Settings from "./pages/admin/Settings";
 import CommunicationTemplates from "./pages/admin/CommunicationTemplates";
 import Conversations from "./pages/admin/Conversations";
 import Reports from "./pages/admin/Reports";
-// import Compliance from "./pages/admin/Compliance";
-// import Notifications from "./pages/admin/Notifications";
 import Brokers from "./pages/admin/Brokers";
 import BrokerProfile from "./pages/admin/BrokerProfile";
 import ReminderFlows from "./pages/admin/ReminderFlows";
 import ContactSubmissions from "./pages/admin/ContactSubmissions";
+import Compliance from "./pages/admin/Compliance";
+import Notifications from "./pages/admin/Notifications";
+import CrmPeople from "./pages/admin/CrmPeople";
+import RealtorBroadcasts from "./pages/admin/RealtorBroadcasts";
 import ClientDashboard from "./pages/client/Dashboard";
 import ClientLoans from "./pages/client/Loans";
 import ClientTasks from "./pages/client/Tasks";
@@ -34,8 +37,9 @@ import Contact from "./pages/Contact";
 import ConventionalLoan from "./pages/ConventionalLoan";
 import FHALoan from "./pages/FHALoan";
 import VALoan from "./pages/VALoan";
-import OurTeam from "./pages/OurTeam";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
+import FAQ from "./pages/FAQ";
+import LoanOptions from "./pages/LoanOptions";
 import SchedulerPage from "./pages/Scheduler";
 import SchedulerReschedule from "./pages/SchedulerReschedule";
 import AdminScheduler from "./pages/admin/Scheduler";
@@ -174,9 +178,7 @@ const AppRoutes = () => (
     <Route
       path="/our-team"
       element={
-        <AppLayout showHeader={true} showFooter={true}>
-          <OurTeam />
-        </AppLayout>
+        <Navigate to="/about" replace />
       }
     />
     <Route
@@ -200,6 +202,22 @@ const AppRoutes = () => (
       element={
         <AppLayout showHeader={true} showFooter={true}>
           <PrivacyPolicy />
+        </AppLayout>
+      }
+    />
+    <Route
+      path="/faq"
+      element={
+        <AppLayout showHeader={true} showFooter={true}>
+          <FAQ />
+        </AppLayout>
+      }
+    />
+    <Route
+      path="/loan-options"
+      element={
+        <AppLayout showHeader={true} showFooter={true}>
+          <LoanOptions />
         </AppLayout>
       }
     />
@@ -310,22 +328,38 @@ const AppRoutes = () => (
         </AdminLayout>
       }
     />
-    {/* <Route
+    <Route
       path="/admin/compliance"
       element={
         <AdminLayout>
           <Compliance />
         </AdminLayout>
       }
-    /> */}
-    {/* <Route
+    />
+    <Route
       path="/admin/notifications"
       element={
         <AdminLayout>
           <Notifications />
         </AdminLayout>
       }
-    /> */}
+    />
+    <Route
+      path="/admin/crm/people"
+      element={
+        <AdminLayout>
+          <CrmPeople />
+        </AdminLayout>
+      }
+    />
+    <Route
+      path="/admin/broadcasts"
+      element={
+        <AdminLayout>
+          <RealtorBroadcasts />
+        </AdminLayout>
+      }
+    />
     <Route
       path="/admin/reminder-flows"
       element={
@@ -347,6 +381,14 @@ const AppRoutes = () => (
       element={
         <AdminLayout>
           <Brokers />
+        </AdminLayout>
+      }
+    />
+    <Route
+      path="/admin/billing"
+      element={
+        <AdminLayout>
+          <Billing />
         </AdminLayout>
       }
     />
