@@ -611,7 +611,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
       case "high":
         return "bg-destructive/10 text-destructive border-destructive/20";
       case "medium":
-        return "bg-amber-500/10 text-amber-500 border-amber-500/20";
+        return "bg-amber-500/10 text-amber-700 border-amber-500/20";
       case "low":
         return "bg-primary/10 text-primary border-primary/20";
       default:
@@ -1484,7 +1484,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                       </label>
                       {signingPdfUrl && (
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <CheckCircle2 className="h-4 w-4 text-green-500" />
+                          <CheckCircle2 className="h-4 w-4 text-green-700" />
                           <span className="truncate max-w-[220px]">
                             {signingOriginalFilename || "Document uploaded"}
                           </span>
@@ -1983,7 +1983,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <AlertCircle className="h-5 w-5 text-amber-500" />
+              <AlertCircle className="h-5 w-5 text-amber-700" />
               Update Task Template Warning
             </AlertDialogTitle>
             <AlertDialogDescription>

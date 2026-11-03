@@ -154,7 +154,7 @@ export default function Index() {
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-10 animate-slide-up">
             <button
               onClick={() => navigate("/apply")}
-              className="bg-amber-500 hover:bg-amber-600 text-white px-8 py-4 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 transform hover:scale-105 hover:shadow-2xl shadow-lg animate-glow-pulse"
+              className="bg-accent hover:bg-accent/90 text-primary px-8 py-4 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 transform hover:scale-105 hover:shadow-2xl shadow-lg animate-glow-pulse"
             >
               Get Pre-Approved
             </button>
@@ -169,15 +169,15 @@ export default function Index() {
           {/* Trust Micro-copy */}
           <div className="flex flex-col md:flex-row gap-6 justify-center text-sm text-primary-foreground/80 animate-slide-up">
             <div className="flex items-center gap-2">
-              <CheckCircle size={18} className="text-amber-400" />
+              <CheckCircle size={18} className="text-amber-700" />
               <span>Secure</span>
             </div>
             <div className="flex items-center gap-2">
-              <CheckCircle size={18} className="text-amber-400" />
+              <CheckCircle size={18} className="text-amber-700" />
               <span>Personalized</span>
             </div>
             <div className="flex items-center gap-2">
-              <CheckCircle size={18} className="text-amber-400" />
+              <CheckCircle size={18} className="text-amber-700" />
               <span>Trusted Professionals</span>
             </div>
           </div>
@@ -359,7 +359,7 @@ export default function Index() {
                     <div className="mt-1">
                       <CheckCircle
                         size={24}
-                        className="text-amber-500 flex-shrink-0"
+                        className="text-amber-700 flex-shrink-0"
                       />
                     </div>
                     <div>
@@ -372,7 +372,7 @@ export default function Index() {
               </div>
               <button
                 onClick={() => navigate("/about-us")}
-                className="mt-8 bg-amber-500 hover:bg-amber-600 text-white px-8 py-3 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 transform hover:scale-105"
+                className="mt-8 bg-accent hover:bg-accent/90 text-primary px-8 py-3 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 transform hover:scale-105"
               >
                 Learn More
               </button>
@@ -497,7 +497,7 @@ export default function Index() {
                     <Star
                       key={i}
                       size={16}
-                      className="fill-amber-500 text-amber-500"
+                      className="fill-amber-500 text-amber-700"
                     />
                   ))}
                 </div>
@@ -530,7 +530,7 @@ export default function Index() {
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <button
               onClick={() => navigate("/apply")}
-              className="bg-amber-500 hover:bg-amber-600 text-white px-8 py-4 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-2xl animate-glow-pulse"
+              className="bg-accent hover:bg-accent/90 text-primary px-8 py-4 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-2xl animate-glow-pulse"
             >
               Apply Online Now
             </button>
@@ -643,7 +643,7 @@ export default function Index() {
       <div className="fixed bottom-0 left-0 right-0 md:hidden bg-white border-t border-gray-200 p-4 shadow-2xl z-40">
         <button
           onClick={() => navigate("/apply")}
-          className="w-full bg-amber-500 hover:bg-amber-600 text-white px-6 py-3 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 flex items-center justify-center gap-2"
+          className="w-full bg-accent hover:bg-accent/90 text-primary px-6 py-3 rounded-lg font-semibold uppercase tracking-wider text-sm transition-all duration-300 flex items-center justify-center gap-2"
         >
           Get Pre-Approved <ChevronRight size={18} />
         </button>

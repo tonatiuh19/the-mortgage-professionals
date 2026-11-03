@@ -561,11 +561,11 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
                     <p className="text-sm font-medium text-gray-700">
                       Manual Entry
                     </p>
-                    <p className="text-xs text-gray-400 truncate">
+                    <p className="text-xs text-gray-500 truncate">
                       Fill in the details yourself via the step-by-step wizard
                     </p>
                   </div>
-                  <ChevronRight className="h-4 w-4 text-gray-400 shrink-0" />
+                  <ChevronRight className="h-4 w-4 text-gray-500 shrink-0" />
                 </motion.button>
               </motion.div>
             </AnimatePresence>

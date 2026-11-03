@@ -517,7 +517,7 @@ const ApplicationWizard = () => {
               animate={{ opacity: 1, y: 0 }}
               className="w-full max-w-sm bg-white rounded-2xl border border-gray-200 shadow-sm p-8 text-center"
             >
-              <AlertCircle className="h-10 w-10 text-red-400 mx-auto mb-3" />
+              <AlertCircle className="h-10 w-10 text-red-700 mx-auto mb-3" />
               <h1 className="text-xl font-bold text-gray-900 mb-2">
                 Link Not Found
               </h1>
@@ -578,7 +578,7 @@ const ApplicationWizard = () => {
                               <h1 className="text-2xl font-extrabold text-gray-900 tracking-tight">
                                 My Home Team
                               </h1>
-                              <p className="text-sm text-gray-400 mt-1">
+                              <p className="text-sm text-gray-500 mt-1">
                                 Your dedicated home loan professionals
                               </p>
                             </div>
@@ -594,7 +594,7 @@ const ApplicationWizard = () => {
                               >
                                 {brokerInfo.first_name} {brokerInfo.last_name}
                               </button>
-                              <span className="text-gray-300 font-light">
+                              <span className="text-gray-500 font-light">
                                 |
                               </span>
                               <button
@@ -650,12 +650,12 @@ const ApplicationWizard = () => {
                               <div className="flex gap-2 mb-5">
                                 {brokerInfo.total_loans_closed > 0 && (
                                   <div className="flex-1 flex items-center gap-1.5 bg-gray-50 rounded-lg px-2.5 py-2 border border-gray-100">
-                                    <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                                    <CheckCircle2 className="h-3.5 w-3.5 text-green-700 shrink-0" />
                                     <div>
                                       <p className="text-sm font-bold text-gray-900 leading-none">
                                         {brokerInfo.total_loans_closed}+
                                       </p>
-                                      <p className="text-[10px] text-gray-400">
+                                      <p className="text-[10px] text-gray-500">
                                         Closed
                                       </p>
                                     </div>
@@ -699,7 +699,7 @@ const ApplicationWizard = () => {
                               Your Email Address
                             </label>
                             <div className="relative">
-                              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-500" />
                               <Input
                                 id="guest-email"
                                 type="email"
@@ -721,7 +721,7 @@ const ApplicationWizard = () => {
                               />
                             </div>
                             {guestEmailError && (
-                              <p className="flex items-center gap-1 text-xs text-red-500">
+                              <p className="flex items-center gap-1 text-xs text-red-700">
                                 <AlertCircle className="h-3 w-3" />{" "}
                                 {guestEmailError}
                               </p>
@@ -756,7 +756,7 @@ const ApplicationWizard = () => {
                       ].map((b) => (
                         <div
                           key={b.label}
-                          className="flex flex-col items-center gap-1 text-gray-400"
+                          className="flex flex-col items-center gap-1 text-gray-500"
                         >
                           {b.icon}
                           <span className="text-[10px]">{b.label}</span>
@@ -826,7 +826,7 @@ const ApplicationWizard = () => {
                           <Phone className="h-3.5 w-3.5 text-primary" />
                         </div>
                         <div>
-                          <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">
+                          <p className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold">
                             Phone
                           </p>
                           <p className="text-sm font-semibold text-gray-900">
@@ -843,7 +843,7 @@ const ApplicationWizard = () => {
                         <Mail className="h-3.5 w-3.5 text-primary" />
                       </div>
                       <div>
-                        <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold">
                           Email
                         </p>
                         <p className="text-sm font-semibold text-gray-900 truncate">
@@ -873,7 +873,7 @@ const ApplicationWizard = () => {
                               <MapPin className="h-3.5 w-3.5 text-primary" />
                             </div>
                             <div className="min-w-0">
-                              <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">
+                              <p className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold">
                                 Address · Open in Maps ↗
                               </p>
                               {contactModalPerson.office_address && (
@@ -904,7 +904,7 @@ const ApplicationWizard = () => {
                     contactModalPerson.twitter_url ||
                     contactModalPerson.youtube_url) && (
                     <div className="mt-4 pt-4 border-t border-gray-100">
-                      <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold mb-3">
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold mb-3">
                         Connect
                       </p>
                       <div className="flex flex-wrap gap-2">
@@ -1097,7 +1097,7 @@ const ApplicationWizard = () => {
             >
               <div className="relative">
                 <div className="rounded-full bg-emerald-500/10 p-10">
-                  <CheckCircle2 className="h-20 w-20 text-emerald-500" />
+                  <CheckCircle2 className="h-20 w-20 text-emerald-700" />
                 </div>
                 <div className="absolute -top-1 -right-1 h-6 w-6 rounded-full bg-emerald-500 animate-ping opacity-60" />
               </div>
@@ -1153,7 +1153,7 @@ const ApplicationWizard = () => {
                         )}
                       </div>
                       <div>
-                        <p className="text-xs text-gray-400 leading-none mb-0.5">
+                        <p className="text-xs text-gray-500 leading-none mb-0.5">
                           {label}
                         </p>
                         <p className="text-sm font-bold text-gray-900">
@@ -1172,7 +1172,7 @@ const ApplicationWizard = () => {
                       >
                         {isHomeTeam ? (
                           <>
-                            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+                            <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">
                               Your Home Team
                             </p>
                             <TeamMember
@@ -1202,7 +1202,7 @@ const ApplicationWizard = () => {
                               )}
                             </div>
                             <div className="min-w-0">
-                              <p className="text-xs text-gray-400 mb-0.5">
+                              <p className="text-xs text-gray-500 mb-0.5">
                                 Your Mortgage Banker
                               </p>
                               <p className="text-sm font-bold text-gray-900 truncate">
@@ -2369,11 +2369,11 @@ const ApplicationWizard = () => {
             <div className="container flex flex-col items-center justify-between gap-4 sm:flex-row">
               <div className="flex items-center gap-6">
                 <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                  <ShieldCheck className="h-3 w-3 text-emerald-500" /> SOC2
+                  <ShieldCheck className="h-3 w-3 text-emerald-700" /> SOC2
                   Compliant
                 </div>
                 <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                  <LockIcon className="h-3 w-3 text-emerald-500" /> 256-bit
+                  <LockIcon className="h-3 w-3 text-emerald-700" /> 256-bit
                   Encryption
                 </div>
               </div>
@@ -2445,7 +2445,7 @@ const ApplicationWizard = () => {
                         <Phone className="h-3.5 w-3.5 text-primary" />
                       </div>
                       <div>
-                        <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold">
                           Phone
                         </p>
                         <p className="text-sm font-semibold text-gray-900">
@@ -2462,7 +2462,7 @@ const ApplicationWizard = () => {
                       <Mail className="h-3.5 w-3.5 text-primary" />
                     </div>
                     <div>
-                      <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">
+                      <p className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold">
                         Email
                       </p>
                       <p className="text-sm font-semibold text-gray-900 truncate">
@@ -2477,7 +2477,7 @@ const ApplicationWizard = () => {
                         <MapPin className="h-3.5 w-3.5 text-primary" />
                       </div>
                       <div>
-                        <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold">
                           Location
                         </p>
                         <p className="text-sm font-semibold text-gray-900">
@@ -2495,7 +2495,7 @@ const ApplicationWizard = () => {
                         <Award className="h-3.5 w-3.5 text-primary" />
                       </div>
                       <div>
-                        <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wide font-semibold">
                           Experience
                         </p>
                         <p className="text-sm font-semibold text-gray-900">

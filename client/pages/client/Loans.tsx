@@ -38,13 +38,13 @@ const Loans = () => {
   const getStatusColor = (status: string) => {
     const colors: { [key: string]: string } = {
       submitted: "bg-primary/10 text-primary border-primary/20",
-      under_review: "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
+      under_review: "bg-yellow-500/10 text-yellow-700 border-yellow-500/20",
       documents_pending:
-        "bg-amber-500/10 text-amber-500 border-amber-500/20",
+        "bg-amber-500/10 text-amber-700 border-amber-500/20",
       underwriting: "bg-primary/10 text-primary border-primary/20",
       conditional_approval:
         "bg-primary/10 text-primary border-primary/20",
-      approved: "bg-green-500/10 text-green-500 border-green-500/20",
+      approved: "bg-green-500/10 text-green-700 border-green-500/20",
       closed: "bg-gray-500/10 text-gray-500 border-gray-500/20",
       denied: "bg-red-500/10 text-red-500 border-red-500/20",
       cancelled: "bg-gray-500/10 text-gray-500 border-gray-500/20",
@@ -54,12 +54,12 @@ const Loans = () => {
 
   const getStatusIcon = (status: string) => {
     if (status === "approved" || status === "closed") {
-      return <CheckCircle2 className="h-5 w-5 text-green-500" />;
+      return <CheckCircle2 className="h-5 w-5 text-green-700" />;
     }
     if (status === "denied" || status === "cancelled") {
-      return <Clock className="h-5 w-5 text-red-500" />;
+      return <Clock className="h-5 w-5 text-red-700" />;
     }
-    return <Clock className="h-5 w-5 text-amber-500" />;
+    return <Clock className="h-5 w-5 text-amber-700" />;
   };
 
   if (loading && applications.length === 0) {
@@ -159,7 +159,7 @@ const Loans = () => {
                       className="h-3"
                     />
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <CheckCircle2 className="h-4 w-4 text-green-500" />
+                      <CheckCircle2 className="h-4 w-4 text-green-700" />
                       <span>
                         {Math.round(
                           (app.completed_tasks / app.total_tasks) * 100,

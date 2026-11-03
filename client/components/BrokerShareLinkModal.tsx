@@ -161,7 +161,7 @@ export default function BrokerShareLinkModal({
                   {/* URL display */}
                   <div className="flex items-center gap-2">
                     <div className="flex-1 flex items-center gap-2 bg-gray-50 border rounded-lg px-3 py-2.5 min-w-0">
-                      <Link2 className="h-4 w-4 text-gray-400 shrink-0" />
+                      <Link2 className="h-4 w-4 text-gray-500 shrink-0" />
                       <Input
                         value={brokerShareLink.share_url}
                         readOnly

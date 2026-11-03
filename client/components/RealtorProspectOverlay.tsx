@@ -197,7 +197,7 @@ function StageProgress({ stage }: { stage: RealtorProspectStage }) {
                   ? "w-5 h-5 bg-primary text-white shadow"
                   : done
                     ? "w-4 h-4 bg-green-100 text-green-600"
-                    : "w-4 h-4 bg-gray-100 text-gray-300",
+                    : "w-4 h-4 bg-gray-100 text-gray-500",
               )}
             >
               {done ? (
@@ -241,7 +241,7 @@ function InfoRow({
 }) {
   return (
     <div className="flex items-start gap-3 py-3 border-b border-gray-100 last:border-0">
-      <div className={cn("mt-0.5 flex-shrink-0 text-gray-400", accent)}>
+      <div className={cn("mt-0.5 flex-shrink-0 text-gray-500", accent)}>
         {icon}
       </div>
       <div className="flex-1 min-w-0">
@@ -398,7 +398,7 @@ export function RealtorProspectOverlay({
                   {prospect.contact_name || prospect.opportunity_name}
                 </SheetTitle>
                 {prospect.business_name && (
-                  <p className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
+                  <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
                     <Building2 className="h-3 w-3" />
                     {prospect.business_name}
                   </p>
@@ -439,7 +439,7 @@ export function RealtorProspectOverlay({
 
             {/* Pipeline progress */}
             <div className="mt-3 bg-gray-50 rounded-lg px-3 py-2.5">
-              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-2">
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium mb-2">
                 Pipeline Progress — Stage {currentIdx + 1} of {STAGES.length}:{" "}
                 <span className="text-gray-700">{stageConf.label}</span>
               </p>
@@ -626,7 +626,7 @@ export function RealtorProspectOverlay({
                         {formatCurrency(prospect.opportunity_value)}
                       </span>
                     }
-                    accent="text-green-500"
+                    accent="text-green-700"
                   />
                 )}
                 {prospect.tags && prospect.tags.length > 0 && (

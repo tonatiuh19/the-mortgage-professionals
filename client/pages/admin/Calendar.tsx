@@ -1000,7 +1000,7 @@ function UnifiedCalendarView({
                           "flex items-center gap-1 text-[10px] leading-tight rounded-sm px-1 py-0.5 truncate w-full",
                           br.source === "o365"
                             ? "bg-primary/15 text-primary/70"
-                            : "bg-amber-500/15 text-amber-400",
+                            : "bg-amber-500/15 text-amber-700",
                         )}
                       >
                         {br.source === "o365" ? (
@@ -1214,7 +1214,7 @@ function UnifiedCalendarView({
                         "inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-semibold",
                         isO365
                           ? "bg-primary/15 text-primary/70 border-primary/30"
-                          : "bg-amber-500/15 text-amber-400 border-amber-500/30",
+                          : "bg-amber-500/15 text-amber-700 border-amber-500/30",
                       )}
                     >
                       {isO365 ? (
@@ -2237,11 +2237,11 @@ function SettingsPanel() {
     return (
       <div className="flex items-center justify-between pt-3 border-t border-border/30">
         {savedSection === section ? (
-          <span className="text-xs text-green-500 flex items-center gap-1">
+          <span className="text-xs text-green-700 flex items-center gap-1">
             <CheckCircle2 className="h-3.5 w-3.5" /> Saved!
           </span>
         ) : (
-          <span className="text-xs text-amber-500">Unsaved changes</span>
+          <span className="text-xs text-amber-700">Unsaved changes</span>
         )}
         <Button
           type="button"
@@ -3419,7 +3419,7 @@ const AdminCalendar: React.FC = () => {
               className={cn(
                 "text-sm",
                 urlCopied
-                  ? "text-green-400"
+                  ? "text-green-700"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -3735,7 +3735,7 @@ const AdminCalendar: React.FC = () => {
                                 {m.meeting_type === "phone" ? (
                                   <Phone className="h-3.5 w-3.5 text-primary/70" />
                                 ) : (
-                                  <Video className="h-3.5 w-3.5 text-green-400" />
+                                  <Video className="h-3.5 w-3.5 text-green-700" />
                                 )}
                                 {m.meeting_type === "phone" ? "Phone" : "Video"}
                               </span>

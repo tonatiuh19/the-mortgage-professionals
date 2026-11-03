@@ -1538,7 +1538,7 @@ export default function ClientDetailPanel({
                       Phone {client.phone_verified ? "Verified" : "Unverified"}
                     </span>
                     {client.referral_code && (
-                      <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-medium border bg-primary/10 text-primary border-primary/20">
+                      <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-medium border bg-primary/5 text-primary border-primary/20">
                         <Hash className="w-3 h-3" />
                         Ref: {client.referral_code}
                       </span>
@@ -1561,7 +1561,7 @@ export default function ClientDetailPanel({
                           label: "Google",
                           href: `https://www.google.com/search?q=${encoded}`,
                           color: "text-primary",
-                          bg: "bg-primary/10 hover:bg-primary/10 border-primary/20",
+                          bg: "bg-primary/5 hover:bg-primary/10 border-primary/20",
                           icon: (
                             <svg
                               viewBox="0 0 24 24"
@@ -1591,7 +1591,7 @@ export default function ClientDetailPanel({
                           label: "LinkedIn",
                           href: `https://www.linkedin.com/search/results/people/?keywords=${encoded}`,
                           color: "text-primary",
-                          bg: "bg-primary/10 hover:bg-primary/10 border-primary/20",
+                          bg: "bg-primary/5 hover:bg-primary/10 border-primary/20",
                           icon: (
                             <svg
                               viewBox="0 0 24 24"
@@ -1606,7 +1606,7 @@ export default function ClientDetailPanel({
                           label: "Facebook",
                           href: `https://www.facebook.com/search/people/?q=${encoded}`,
                           color: "text-primary",
-                          bg: "bg-primary/10 hover:bg-primary/10 border-primary/20",
+                          bg: "bg-primary/5 hover:bg-primary/10 border-primary/20",
                           icon: (
                             <svg
                               viewBox="0 0 24 24"
@@ -1621,7 +1621,7 @@ export default function ClientDetailPanel({
                           label: "Zillow",
                           href: `https://www.zillow.com/profile/${encoded}/`,
                           color: "text-primary",
-                          bg: "bg-primary/10 hover:bg-primary/10 border-primary/20",
+                          bg: "bg-primary/5 hover:bg-primary/10 border-primary/20",
                           icon: (
                             <svg
                               viewBox="0 0 24 24"
@@ -2367,7 +2367,7 @@ export default function ClientDetailPanel({
               will be re-linked.
             </DialogDescription>
           </DialogHeader>
-          <div className="rounded-lg bg-primary/10 border border-primary/20 p-3 flex items-start gap-2 text-primary text-xs leading-snug">
+          <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 flex items-start gap-2 text-primary text-xs leading-snug">
             <Shield className="h-4 w-4 flex-shrink-0 mt-0.5" />
             This action preserves conversation history. The client account will
             be set to inactive (not deleted) so loan history remains intact.

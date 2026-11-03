@@ -586,7 +586,7 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
             )}
           >
             {sidebarCollapsed ? (
-              <span className="text-[9px] font-bold text-yellow-500 uppercase tracking-widest">
+              <span className="text-[9px] font-bold text-yellow-700 uppercase tracking-widest">
                 DEV
               </span>
             ) : (

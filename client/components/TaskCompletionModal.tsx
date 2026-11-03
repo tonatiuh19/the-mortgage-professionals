@@ -490,7 +490,7 @@ export const TaskCompletionModal: React.FC<TaskCompletionModalProps> = ({
           <div className="flex items-center justify-between gap-2 p-3 bg-muted/40 border rounded-lg overflow-hidden">
             <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
               {isPdf ? (
-                <FileText className="h-5 w-5 text-red-500 shrink-0" />
+                <FileText className="h-5 w-5 text-red-700 shrink-0" />
               ) : (
                 <Upload className="h-5 w-5 text-primary shrink-0" />
               )}
@@ -565,7 +565,7 @@ export const TaskCompletionModal: React.FC<TaskCompletionModalProps> = ({
         ) : isDone ? (
           /* ── Success ────────────────────────────────────────── */
           <div className="text-center py-14 space-y-4">
-            <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto" />
+            <CheckCircle2 className="h-16 w-16 text-green-700 mx-auto" />
             <div>
               <h2 className="text-xl font-bold">Submitted for Review!</h2>
               <p className="text-sm text-muted-foreground mt-1">

@@ -28,14 +28,14 @@ const UnderConstruction: React.FC<UnderConstructionProps> = ({
       <div className="max-w-3xl w-full text-center">
         {/* Icon Circle */}
         <div className="relative inline-flex items-center justify-center mb-8">
-          <div className="w-48 h-48 rounded-full bg-gradient-to-br from-primary to-primary dark:from-primary/20 dark:to-primary/10 flex items-center justify-center">
+          <div className="w-48 h-48 rounded-full bg-gradient-to-br from-primary/10 to-primary/5 dark:from-primary/20 dark:to-primary/20 flex items-center justify-center">
             <DisplayIcon
               className="h-24 w-24 text-primary"
               strokeWidth={1.5}
             />
           </div>
           {!Icon && (
-            <Sparkles className="h-8 w-8 text-yellow-500 absolute top-4 right-4 animate-bounce" />
+            <Sparkles className="h-8 w-8 text-yellow-700 absolute top-4 right-4 animate-bounce" />
           )}
         </div>
 
@@ -57,7 +57,7 @@ const UnderConstruction: React.FC<UnderConstructionProps> = ({
               <Badge
                 key={index}
                 variant="outline"
-                className="px-6 py-2.5 text-sm font-medium bg-primary/50 dark:bg-primary/20 border-primary/20 dark:border-primary text-primary dark:text-primary hover:bg-primary/10 dark:hover:bg-primary/30 transition-colors"
+                className="px-6 py-2.5 text-sm font-medium bg-primary/5 dark:bg-primary/20 border-primary/20 dark:border-primary text-primary dark:text-primary hover:bg-primary/10 dark:hover:bg-primary/20 transition-colors"
               >
                 {feature}
               </Badge>

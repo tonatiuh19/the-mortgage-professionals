@@ -125,7 +125,7 @@ export default function BrokerSchedulerLinkModal({
                 {/* URL display */}
                 <div className="flex items-center gap-2">
                   <div className="flex-1 flex items-center gap-2 bg-gray-50 border rounded-lg px-3 py-2.5 min-w-0">
-                    <CalendarDays className="h-4 w-4 text-gray-400 shrink-0" />
+                    <CalendarDays className="h-4 w-4 text-gray-500 shrink-0" />
                     <Input
                       value={schedulerUrl}
                       readOnly
@@ -171,7 +171,7 @@ export default function BrokerSchedulerLinkModal({
                 </Button>
 
                 {/* Info note */}
-                <div className="flex items-start gap-2 p-3 bg-primary/10 rounded-lg border border-primary/20">
+                <div className="flex items-start gap-2 p-3 bg-primary/5 rounded-lg border border-primary/20">
                   <AlertCircle className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                   <p className="text-xs text-primary leading-relaxed">
                     Clients who book through this link will be scheduled
@@ -182,7 +182,7 @@ export default function BrokerSchedulerLinkModal({
 
                 {/* Availability requirement note */}
                 <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-lg border border-amber-100">
-                  <Clock className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                  <Clock className="h-4 w-4 text-amber-700 mt-0.5 shrink-0" />
                   <p className="text-xs text-amber-700 leading-relaxed">
                     <strong>{brokerName}</strong> must configure their weekly
                     availability in the Calendar → Settings tab. Without it, the

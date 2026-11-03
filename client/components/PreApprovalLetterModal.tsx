@@ -715,7 +715,7 @@ export function PreApprovalLetterModal({
                   </div>
 
                   {!isAdmin && (
-                    <div className="flex items-start gap-3 p-4 bg-primary/10 border border-primary/20 rounded-lg">
+                    <div className="flex items-start gap-3 p-4 bg-primary/5 border border-primary/20 rounded-lg">
                       <AlertCircle className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
                       <p className="text-sm text-primary">
                         You can create and send pre-approval letters. Only

@@ -318,7 +318,7 @@ const Settings = () => {
           description="Manage letter configuration, notifications, and system preferences"
           actions={
             <div className="flex flex-wrap items-center gap-2">
-              <Badge className="border-primary/20 bg-primary/10 text-primary self-start md:self-auto">
+              <Badge className="border-primary/20 bg-primary/5 text-primary self-start md:self-auto">
                 <Tag className="mr-1 h-3 w-3" />
                 Version{" "}
                 {selectSettingValue(settings, "app_version") || "Not set"}
@@ -394,7 +394,7 @@ const Settings = () => {
                 icon={Bell}
                 title="Notifications"
                 description="Control which communication channels are active for your workspace"
-                accent="bg-primary/60"
+                accent="bg-primary/5"
               >
                 <div className="space-y-3">
                   <ToggleRow

@@ -270,7 +270,7 @@ function KpiCard({
         <span
           className={cn(
             "flex items-center gap-0.5 text-xs font-semibold",
-            over ? "text-emerald-500" : "text-destructive",
+            over ? "text-emerald-700" : "text-destructive",
           )}
         >
           {over ? (
@@ -302,7 +302,7 @@ function KpiCard({
             {onSaveGoal && !isPartner ? (
               <EditableCell value={goal} onSave={onSaveGoal} />
             ) : (
-              <span className="text-amber-500 font-semibold">{goal}</span>
+              <span className="text-amber-700 font-semibold">{goal}</span>
             )}
           </span>
         </div>
@@ -343,7 +343,7 @@ function RateCard({
       <span
         className={cn(
           "text-3xl font-extrabold",
-          over ? "text-emerald-500" : "text-primary",
+          over ? "text-emerald-700" : "text-primary",
         )}
       >
         {actual}%
@@ -354,17 +354,17 @@ function RateCard({
       <div className="flex items-center gap-1 mt-1">
         <span className="text-[10px] text-muted-foreground">Goal:</span>
         {onSaveGoal && !isPartner ? (
-          <span className="text-[11px] font-bold text-amber-500">
+          <span className="text-[11px] font-bold text-amber-700">
             <EditableCell value={goal} onSave={onSaveGoal} />
           </span>
         ) : (
-          <span className="text-[11px] font-bold text-amber-500">{goal}%</span>
+          <span className="text-[11px] font-bold text-amber-700">{goal}%</span>
         )}
       </div>
       <span
         className={cn(
           "text-[10px] font-medium",
-          over ? "text-emerald-500" : "text-destructive",
+          over ? "text-emerald-700" : "text-destructive",
         )}
       >
         {over ? "✓ On Track" : "↓ Below Goal"}
@@ -718,7 +718,7 @@ const BrokerMetricsPanel: React.FC<BrokerMetricsPanelProps> = ({
                 {/* Conversion Rate Goals */}
                 <section>
                   <div className="flex items-center gap-2 mb-3">
-                    <Zap className="h-4 w-4 text-amber-500" />
+                    <Zap className="h-4 w-4 text-amber-700" />
                     <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">
                       Conversion Rate Goals
                     </h3>
@@ -1050,7 +1050,7 @@ const BrokerMetricsPanel: React.FC<BrokerMetricsPanelProps> = ({
                 {/* Closings by Month */}
                 <section>
                   <div className="flex items-center gap-2 mb-4">
-                    <Home className="h-4 w-4 text-amber-500" />
+                    <Home className="h-4 w-4 text-amber-700" />
                     <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">
                       Closings by Month — {year}
                     </h3>
@@ -1115,7 +1115,7 @@ const BrokerMetricsPanel: React.FC<BrokerMetricsPanelProps> = ({
                 {/* Conversion Trend */}
                 <section>
                   <div className="flex items-center gap-2 mb-4">
-                    <TrendingUp className="h-4 w-4 text-emerald-500" />
+                    <TrendingUp className="h-4 w-4 text-emerald-700" />
                     <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">
                       Conversion Rate Trends — {year}
                     </h3>
@@ -1281,12 +1281,12 @@ const BrokerMetricsPanel: React.FC<BrokerMetricsPanelProps> = ({
                             {
                               label: "Annual Pre-Approvals",
                               value: annualMetrics.annual_pre_approvals,
-                              color: "text-emerald-500",
+                              color: "text-emerald-700",
                             },
                             {
                               label: "Annual Closings",
                               value: annualMetrics.annual_closings,
-                              color: "text-amber-500",
+                              color: "text-amber-700",
                             },
                           ].map((item) => (
                             <div
@@ -1528,7 +1528,7 @@ const BrokerMetricsPanel: React.FC<BrokerMetricsPanelProps> = ({
                                         </span>
                                       </td>
                                       <td className="px-4 py-2.5 text-center">
-                                        <span className="text-xs font-semibold text-amber-500">
+                                        <span className="text-xs font-semibold text-amber-700">
                                           {s.closings_goal > 0
                                             ? s.closings_goal
                                             : "—"}

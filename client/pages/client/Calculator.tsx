@@ -1070,13 +1070,13 @@ const CalculatorPage = ({ hideApplyCta = false }: CalculatorPageProps) => {
                       {
                         label: "Down Payment",
                         value: fmt(downPayment),
-                        icon: <Percent className="h-4 w-4 text-emerald-500" />,
+                        icon: <Percent className="h-4 w-4 text-emerald-700" />,
                       },
                       {
                         label: "Total Interest",
                         value: fmt(calc.totalInterest),
                         icon: (
-                          <TrendingDown className="h-4 w-4 text-amber-500" />
+                          <TrendingDown className="h-4 w-4 text-amber-700" />
                         ),
                       },
                       {

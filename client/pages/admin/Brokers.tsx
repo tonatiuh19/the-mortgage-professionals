@@ -396,7 +396,7 @@ export default function Brokers() {
         {/* Search Bar + Role Filter */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
           <div className="flex items-center gap-2 bg-white rounded-lg border p-3 flex-1">
-            <Search className="h-4 w-4 text-gray-400 flex-shrink-0" />
+            <Search className="h-4 w-4 text-gray-500 flex-shrink-0" />
             <Input
               placeholder="Search realtors by name or email..."
               value={searchQuery}
@@ -516,7 +516,7 @@ export default function Brokers() {
                       )}
                     </div>
                   ) : (
-                    <span className="text-sm text-gray-400">—</span>
+                    <span className="text-sm text-gray-500">—</span>
                   ),
               },
               {
@@ -526,7 +526,7 @@ export default function Brokers() {
                 render: (b) => {
                   if (!b.last_login) {
                     return (
-                      <span className="text-xs text-gray-400 italic">
+                      <span className="text-xs text-gray-500 italic">
                         Never
                       </span>
                     );
@@ -605,7 +605,7 @@ export default function Brokers() {
                             size="sm"
                             title="Get share link"
                             onClick={() => handleShareLinkClick(b)}
-                            className="h-8 w-8 p-0 text-primary hover:text-primary hover:bg-primary/10"
+                            className="h-8 w-8 p-0 text-primary hover:text-primary hover:bg-primary/5"
                           >
                             <Link2 className="h-4 w-4" />
                           </Button>
@@ -678,7 +678,7 @@ export default function Brokers() {
                       size="sm"
                       title="Copy scheduler link"
                       onClick={() => handleOpenSchedulerLink(broker)}
-                      className="h-8 gap-1 text-primary hover:text-primary hover:bg-primary/10"
+                      className="h-8 gap-1 text-primary hover:text-primary hover:bg-primary/5"
                     >
                       <CalendarDays className="h-3.5 w-3.5" />
                     </Button>
@@ -686,7 +686,7 @@ export default function Brokers() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleShareLinkClick(broker)}
-                      className="h-8 gap-1 text-primary hover:text-primary hover:bg-primary/10"
+                      className="h-8 gap-1 text-primary hover:text-primary hover:bg-primary/5"
                     >
                       <Link2 className="h-3.5 w-3.5" /> Link
                     </Button>

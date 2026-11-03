@@ -1125,7 +1125,7 @@ const BrokerProfile = () => {
               </CardHeader>
               <CardContent className="space-y-5">
                 <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/50 px-4 py-3">
-                  <PhoneForwarded className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                  <PhoneForwarded className="h-4 w-4 text-amber-700 mt-0.5 shrink-0" />
                   <p className="text-sm text-amber-800">
                     Call &amp; voicemail settings are temporarily unavailable.
                     This section will be re-enabled once phone features are
@@ -1614,10 +1614,10 @@ const BrokerProfile = () => {
                           <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
                         )}
                         {!slugChecking && slugAvailable === true && (
-                          <CheckCircle2 className="h-3.5 w-3.5 text-green-400" />
+                          <CheckCircle2 className="h-3.5 w-3.5 text-green-700" />
                         )}
                         {!slugChecking && slugAvailable === false && (
-                          <XCircle className="h-3.5 w-3.5 text-red-400" />
+                          <XCircle className="h-3.5 w-3.5 text-red-700" />
                         )}
                       </span>
                     </div>
@@ -1650,7 +1650,7 @@ const BrokerProfile = () => {
                     </p>
                   )}
                   {slugAvailable === true && slugInput !== user?.slug && (
-                    <p className="text-xs text-green-500 flex items-center gap-1">
+                    <p className="text-xs text-green-700 flex items-center gap-1">
                       <CheckCircle2 className="h-3 w-3" />
                       Available!
                     </p>

@@ -97,7 +97,7 @@ export function BrokerTimePicker({
               slot.available
                 ? value === slot.time
                   ? "bg-primary text-white border-primary shadow-sm"
-                  : "bg-background text-foreground border-border hover:bg-primary/10 hover:border-primary/20 hover:text-primary"
+                  : "bg-background text-foreground border-border hover:bg-primary/5 hover:border-primary/20 hover:text-primary"
                 : "bg-muted/40 text-muted-foreground border-muted cursor-not-allowed line-through opacity-50",
             )}
           >

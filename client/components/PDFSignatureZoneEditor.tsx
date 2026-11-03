@@ -246,7 +246,7 @@ const PDFSignatureZoneEditor: React.FC<PDFSignatureZoneEditorProps> = ({
         </div>
 
         {/* Instruction hint */}
-        <Alert className="mb-3 border-primary/20 bg-primary/50">
+        <Alert className="mb-3 border-primary/20 bg-primary/5">
           <PenTool className="h-4 w-4 text-primary" />
           <AlertDescription className="text-primary text-xs">
             Click and drag on the document to draw a signature zone.

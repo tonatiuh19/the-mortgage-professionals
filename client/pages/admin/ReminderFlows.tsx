@@ -216,7 +216,7 @@ const STEP_TYPES: StepMeta[] = [
     icon: <Clock className="h-4 w-4" />,
     color: "text-primary",
     borderColor: "border-primary",
-    bgColor: "bg-primary/10",
+    bgColor: "bg-primary/5",
     description: "Delay before next step",
   },
   {
@@ -234,7 +234,7 @@ const STEP_TYPES: StepMeta[] = [
     icon: <Mail className="h-4 w-4" />,
     color: "text-primary",
     borderColor: "border-primary",
-    bgColor: "bg-primary/10",
+    bgColor: "bg-primary/5",
     description: "Email to client",
   },
   {
@@ -243,7 +243,7 @@ const STEP_TYPES: StepMeta[] = [
     icon: <FaSms className="h-4 w-4" />,
     color: "text-primary",
     borderColor: "border-primary",
-    bgColor: "bg-primary/10",
+    bgColor: "bg-primary/5",
     description: "SMS to client",
   },
   {
@@ -261,7 +261,7 @@ const STEP_TYPES: StepMeta[] = [
     icon: <Split className="h-4 w-4" />,
     color: "text-primary",
     borderColor: "border-primary",
-    bgColor: "bg-primary/10",
+    bgColor: "bg-primary/5",
     description: "Multi-way branch (loan_type)",
   },
   {
@@ -270,7 +270,7 @@ const STEP_TYPES: StepMeta[] = [
     icon: <Hourglass className="h-4 w-4" />,
     color: "text-primary",
     borderColor: "border-primary",
-    bgColor: "bg-primary/10",
+    bgColor: "bg-primary/5",
     description: "Pause until client replies / timeout",
   },
   {
@@ -279,7 +279,7 @@ const STEP_TYPES: StepMeta[] = [
     icon: <CalendarClock className="h-4 w-4" />,
     color: "text-primary",
     borderColor: "border-primary",
-    bgColor: "bg-primary/10",
+    bgColor: "bg-primary/5",
     description: "Pause until a stored date",
   },
   {
@@ -1031,10 +1031,10 @@ function FlowBox({
   const colorCls: Record<string, string> = {
     default: "border-border bg-card text-foreground",
     green: "border-emerald-400 bg-emerald-50 text-emerald-800",
-    blue: "border-primary/20 bg-primary/10 text-primary",
+    blue: "border-primary/20 bg-primary/5 text-primary",
     orange: "border-amber-300 bg-amber-50 text-amber-800",
     yellow: "border-yellow-300 bg-yellow-50 text-yellow-800",
-    purple: "border-primary/20 bg-primary/10 text-primary",
+    purple: "border-primary/20 bg-primary/5 text-primary",
     red: "border-primary/50 bg-primary/10 text-primary",
     gray: "border-muted-foreground/30 bg-muted text-muted-foreground",
   };
@@ -1408,7 +1408,7 @@ function HowToUseModal({ open, onClose }: HowToUseModalProps) {
       <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Lightbulb className="h-5 w-5 text-amber-500" />
+            <Lightbulb className="h-5 w-5 text-amber-700" />
             How to build a Reminder Flow
           </DialogTitle>
           <DialogDescription>
@@ -1538,7 +1538,7 @@ function CanvasEmptyHint({ onDismiss }: { onDismiss: () => void }) {
               {
                 icon: <Link2 className="h-5 w-5" />,
                 label: "Connect",
-                color: "text-primary bg-primary/10 border-primary/20",
+                color: "text-primary bg-primary/5 border-primary/20",
               },
               {
                 icon: (
@@ -1550,7 +1550,7 @@ function CanvasEmptyHint({ onDismiss }: { onDismiss: () => void }) {
               {
                 icon: <Settings2 className="h-5 w-5" />,
                 label: "Configure",
-                color: "text-primary bg-primary/10 border-primary/20",
+                color: "text-primary bg-primary/5 border-primary/20",
               },
               {
                 icon: (
@@ -1688,7 +1688,7 @@ function FlowCanvasInner({ flow, onBack, onSaved }: FlowCanvasProps) {
         | "responded"
         | "no_response" = "default";
       let label: string | undefined;
-      let stroke = "#94a3b8";
+      let stroke = "#64748B";
       switch (sourceHandle) {
         case "yes":
           edgeType = "condition_yes";
@@ -2221,7 +2221,7 @@ function FlowCanvasInner({ flow, onBack, onSaved }: FlowCanvasProps) {
             proOptions={{ hideAttribution: true }}
             defaultEdgeOptions={{
               markerEnd: { type: MarkerType.ArrowClosed },
-              style: { stroke: "#94a3b8", strokeWidth: 2 },
+              style: { stroke: "#64748B", strokeWidth: 2 },
             }}
             minZoom={0.3}
             snapToGrid
@@ -2681,7 +2681,7 @@ const ReminderFlows = () => {
                       ? "Reminder Flows"
                       : "Realtor Prospecting Flows"}
                   </span>
-                  <ChevronDown className="h-5 w-5 text-gray-400" />
+                  <ChevronDown className="h-5 w-5 text-gray-500" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-56">

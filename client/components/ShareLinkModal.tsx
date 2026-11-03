@@ -172,7 +172,7 @@ export default function ShareLinkModal({
                 <DialogTitle className="text-sm font-bold text-gray-900 leading-tight">
                   Your Application Link
                 </DialogTitle>
-                <DialogDescription className="text-[11px] text-gray-400 mt-0.5">
+                <DialogDescription className="text-[11px] text-gray-500 mt-0.5">
                   Clients apply via this link — no sign-up needed
                 </DialogDescription>
               </div>
@@ -189,7 +189,7 @@ export default function ShareLinkModal({
                   "relative flex items-center gap-1.5 px-4 pb-3 text-xs font-medium transition-colors",
                   activeTab === tab.id
                     ? "text-primary"
-                    : "text-gray-400 hover:text-gray-600",
+                    : "text-gray-500 hover:text-gray-600",
                 )}
               >
                 {tab.icon}
@@ -220,7 +220,7 @@ export default function ShareLinkModal({
                 {shareLinkLoading ? (
                   <div className="flex flex-col items-center justify-center py-12 gap-3">
                     <Loader2 className="h-6 w-6 text-primary animate-spin" />
-                    <p className="text-xs text-gray-400">Loading your link…</p>
+                    <p className="text-xs text-gray-500">Loading your link…</p>
                   </div>
                 ) : shareLinkError ? (
                   <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 p-4 text-sm text-red-700">
@@ -233,7 +233,7 @@ export default function ShareLinkModal({
                     <div className="rounded-xl border border-gray-200 overflow-hidden">
                       {/* URL row */}
                       <div className="flex items-center gap-2 bg-gray-50 px-3.5 py-3 border-b border-gray-200">
-                        <Link2 className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                        <Link2 className="h-3.5 w-3.5 text-gray-500 shrink-0" />
                         <span className="flex-1 text-[11px] text-gray-500 font-mono truncate">
                           {shareLink}
                         </span>
@@ -271,7 +271,7 @@ export default function ShareLinkModal({
                           onClick={() => setShowRegenerateConfirm(true)}
                           disabled={shareLinkLoading}
                           title="Regenerate link"
-                          className="flex items-center justify-center px-4 py-2.5 text-amber-500 hover:bg-amber-50 transition-colors disabled:opacity-40"
+                          className="flex items-center justify-center px-4 py-2.5 text-amber-700 hover:bg-amber-50 transition-colors disabled:opacity-40"
                         >
                           <RefreshCw className="h-3.5 w-3.5" />
                         </button>
@@ -323,7 +323,7 @@ export default function ShareLinkModal({
 
                     {/* How it works — horizontal flow */}
                     <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3.5">
-                      <p className="text-[9px] font-bold text-gray-300 uppercase tracking-widest mb-3">
+                      <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-3">
                         How it works
                       </p>
                       {/* 2×2 grid on mobile, single row on sm+ */}
@@ -356,7 +356,7 @@ export default function ShareLinkModal({
                             <div className="flex h-6 w-6 items-center justify-center rounded-full bg-white border border-gray-200 shadow-sm text-primary">
                               {step.icon}
                             </div>
-                            <p className="text-[10px] text-gray-400 leading-tight px-1">
+                            <p className="text-[10px] text-gray-500 leading-tight px-1">
                               {step.text}
                             </p>
                           </div>
@@ -377,7 +377,7 @@ export default function ShareLinkModal({
                           <p className="text-xs font-semibold text-gray-700">
                             Send directly to a client
                           </p>
-                          <p className="text-[10px] text-gray-400 mt-0.5">
+                          <p className="text-[10px] text-gray-500 mt-0.5">
                             We'll email the link on your behalf
                           </p>
                         </div>
@@ -451,7 +451,7 @@ export default function ShareLinkModal({
                         />
                         {emailFormik.touched.client_email &&
                           emailFormik.errors.client_email && (
-                            <p className="text-xs text-red-500">
+                            <p className="text-xs text-red-700">
                               {emailFormik.errors.client_email}
                             </p>
                           )}
@@ -463,7 +463,7 @@ export default function ShareLinkModal({
                           className="text-xs font-semibold text-gray-600"
                         >
                           Client Name{" "}
-                          <span className="text-gray-400 font-normal">
+                          <span className="text-gray-500 font-normal">
                             (optional)
                           </span>
                         </Label>
@@ -481,7 +481,7 @@ export default function ShareLinkModal({
                           className="text-xs font-semibold text-gray-600"
                         >
                           Personal Message{" "}
-                          <span className="text-gray-400 font-normal">
+                          <span className="text-gray-500 font-normal">
                             (optional)
                           </span>
                         </Label>
@@ -527,11 +527,11 @@ export default function ShareLinkModal({
                         />
                         {emailFormik.touched.message &&
                           emailFormik.errors.message && (
-                            <p className="text-xs text-red-500">
+                            <p className="text-xs text-red-700">
                               {emailFormik.errors.message}
                             </p>
                           )}
-                        <p className="text-[10px] text-gray-400 text-right">
+                        <p className="text-[10px] text-gray-500 text-right">
                           {emailFormik.values.message.length}/500
                         </p>
                       </div>

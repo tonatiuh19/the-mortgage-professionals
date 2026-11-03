@@ -818,7 +818,7 @@ const SchedulerPage: React.FC = () => {
                         </div>
                         {formik.touched.client_name &&
                           formik.errors.client_name && (
-                            <p className="text-red-400 text-xs mt-1">
+                            <p className="text-red-700 text-xs mt-1">
                               {formik.errors.client_name}
                             </p>
                           )}
@@ -839,7 +839,7 @@ const SchedulerPage: React.FC = () => {
                         </div>
                         {formik.touched.client_email &&
                           formik.errors.client_email && (
-                            <p className="text-red-400 text-xs mt-1">
+                            <p className="text-red-700 text-xs mt-1">
                               {formik.errors.client_email}
                             </p>
                           )}
@@ -863,7 +863,7 @@ const SchedulerPage: React.FC = () => {
                         </div>
                         {formik.touched.client_phone &&
                           formik.errors.client_phone && (
-                            <p className="text-red-400 text-xs mt-1">
+                            <p className="text-red-700 text-xs mt-1">
                               {formik.errors.client_phone}
                             </p>
                           )}
@@ -886,7 +886,7 @@ const SchedulerPage: React.FC = () => {
                           />
                         </div>
                         {formik.touched.notes && formik.errors.notes && (
-                          <p className="text-red-400 text-xs mt-1">
+                          <p className="text-red-700 text-xs mt-1">
                             {formik.errors.notes}
                           </p>
                         )}
@@ -942,7 +942,7 @@ const SchedulerPage: React.FC = () => {
                       }}
                       className="w-20 h-20 rounded-full bg-green-500/15 border border-green-500/40 flex items-center justify-center mx-auto mb-6"
                     >
-                      <CheckCircle2 className="h-10 w-10 text-green-400" />
+                      <CheckCircle2 className="h-10 w-10 text-green-700" />
                     </motion.div>
 
                     <h2 className="text-2xl font-bold text-foreground mb-2">
@@ -1012,7 +1012,7 @@ const SchedulerPage: React.FC = () => {
                             className="shrink-0 p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                           >
                             {copied ? (
-                              <CheckCircle2 className="h-4 w-4 text-green-400" />
+                              <CheckCircle2 className="h-4 w-4 text-green-700" />
                             ) : (
                               <Copy className="h-4 w-4" />
                             )}

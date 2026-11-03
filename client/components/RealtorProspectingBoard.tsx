@@ -107,7 +107,7 @@ const STAGES: Array<{
     label: "Contacted",
     description: "Made initial contact",
     icon: <Phone className="h-3.5 w-3.5" />,
-    color: "bg-primary/10 border-primary/20",
+    color: "bg-primary/5 border-primary/20",
     headerGradient: "from-primary to-primary",
     dotColor: "bg-primary",
     badgeBg: "bg-primary/10",
@@ -118,7 +118,7 @@ const STAGES: Array<{
     label: "Appt Set",
     description: "Meeting scheduled",
     icon: <CheckCircle2 className="h-3.5 w-3.5" />,
-    color: "bg-primary/10 border-primary/20",
+    color: "bg-primary/5 border-primary/20",
     headerGradient: "from-primary to-primary",
     dotColor: "bg-primary",
     badgeBg: "bg-primary/10",
@@ -151,7 +151,7 @@ const STAGES: Array<{
     label: "2nd Deal Funded",
     description: "Repeat referral partner",
     icon: <TrendingUp className="h-3.5 w-3.5" />,
-    color: "bg-primary/10 border-primary/20",
+    color: "bg-primary/5 border-primary/20",
     headerGradient: "from-primary to-primary",
     dotColor: "bg-primary",
     badgeBg: "bg-primary/10",
@@ -526,7 +526,7 @@ function OpportunityForm({
                     {(form.tags ?? []).map((tag) => (
                       <span
                         key={tag}
-                        className="inline-flex items-center gap-1 bg-primary/10 text-primary text-xs rounded-full px-2.5 py-1 font-medium"
+                        className="inline-flex items-center gap-1 bg-primary/5 text-primary text-xs rounded-full px-2.5 py-1 font-medium"
                       >
                         {tag}
                         <button
@@ -584,7 +584,7 @@ function OpportunityForm({
                   <button
                     type="button"
                     onClick={() => set("progress_report", null)}
-                    className="text-xs text-gray-400 hover:text-gray-600"
+                    className="text-xs text-gray-500 hover:text-gray-600"
                   >
                     Clear
                   </button>
@@ -755,7 +755,7 @@ function ProspectCard({
         {/* Business / Brokerage */}
         {prospect.business_name && (
           <div className="flex items-center gap-1.5">
-            <Building2 className="h-3 w-3 text-gray-400 flex-shrink-0" />
+            <Building2 className="h-3 w-3 text-gray-500 flex-shrink-0" />
             <span className="text-xs text-gray-600 truncate">
               {prospect.business_name}
             </span>
@@ -766,7 +766,7 @@ function ProspectCard({
         <div className="flex items-center gap-3">
           {prospect.contact_phone && (
             <div className="flex items-center gap-1">
-              <Phone className="h-3 w-3 text-gray-400" />
+              <Phone className="h-3 w-3 text-gray-500" />
               <span className="text-[11px] text-gray-500">
                 {prospect.contact_phone}
               </span>
@@ -774,7 +774,7 @@ function ProspectCard({
           )}
           {prospect.contact_email && (
             <div className="flex items-center gap-1 min-w-0">
-              <Mail className="h-3 w-3 text-gray-400 flex-shrink-0" />
+              <Mail className="h-3 w-3 text-gray-500 flex-shrink-0" />
               <span className="text-[11px] text-gray-500 truncate">
                 {prospect.contact_email}
               </span>
@@ -789,7 +789,7 @@ function ProspectCard({
             <span className="text-sm font-semibold text-emerald-700">
               {formatCurrency(prospect.opportunity_value)}
             </span>
-            <span className="text-[10px] text-gray-400 ml-0.5">Opp. Val.</span>
+            <span className="text-[10px] text-gray-500 ml-0.5">Opp. Val.</span>
           </div>
         )}
 
@@ -844,7 +844,7 @@ function ProspectCard({
               </Badge>
             )}
             {prospect.stage === "top_agent_whale" && (
-              <Star className="h-3 w-3 text-yellow-500 fill-yellow-400" />
+              <Star className="h-3 w-3 text-yellow-700 fill-yellow-400" />
             )}
           </div>
         </div>
@@ -1063,22 +1063,22 @@ export function RealtorProspectingBoard({
           <Users className="h-4 w-4 text-primary" />
           <span className="text-sm font-medium text-gray-700">
             {prospects.length}{" "}
-            <span className="text-gray-400 font-normal">prospects</span>
+            <span className="text-gray-500 font-normal">prospects</span>
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <DollarSign className="h-4 w-4 text-emerald-500" />
+          <DollarSign className="h-4 w-4 text-emerald-700" />
           <span className="text-sm font-medium text-gray-700">
             {new Intl.NumberFormat("en-US", {
               style: "currency",
               currency: "USD",
               minimumFractionDigits: 0,
             }).format(totalValue)}{" "}
-            <span className="text-gray-400 font-normal">total value</span>
+            <span className="text-gray-500 font-normal">total value</span>
           </span>
         </div>
         {isLoading && (
-          <RefreshCw className="h-3.5 w-3.5 text-gray-400 animate-spin ml-auto" />
+          <RefreshCw className="h-3.5 w-3.5 text-gray-500 animate-spin ml-auto" />
         )}
       </div>
 
@@ -1115,7 +1115,7 @@ export function RealtorProspectingBoard({
                     className={cn(
                       "flex-1 space-y-3 p-3 rounded-lg border-2 min-h-[400px] transition-all duration-150",
                       isDragOver
-                        ? "border-primary bg-primary/10 scale-[1.01]"
+                        ? "border-primary bg-primary/5 scale-[1.01]"
                         : cn("border-gray-200", stage.color),
                     )}
                     onDragOver={handleDragOver}
@@ -1163,7 +1163,7 @@ export function RealtorProspectingBoard({
                         "w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium transition-all duration-150 border border-dashed",
                         isDragOver
                           ? "opacity-0"
-                          : "text-gray-400 border-gray-200 hover:text-gray-600 hover:border-gray-300 hover:bg-white/60",
+                          : "text-gray-500 border-gray-200 hover:text-gray-600 hover:border-gray-300 hover:bg-white/60",
                       )}
                     >
                       <Plus className="h-3.5 w-3.5" />

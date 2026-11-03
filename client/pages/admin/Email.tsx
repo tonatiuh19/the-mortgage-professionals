@@ -684,7 +684,7 @@ function EmailActionToolbar({
               className={cn(
                 actionBtn,
                 isFlagged
-                  ? "text-amber-500 hover:text-amber-600"
+                  ? "text-amber-700 hover:text-amber-600"
                   : "text-muted-foreground hover:text-amber-500",
               )}
               onClick={() => onAction(isFlagged ? "unflag" : "flag")}
@@ -1850,7 +1850,7 @@ const Email = () => {
                         >
                           {mb.mailbox_email}
                           {mb.status !== "active" && (
-                            <span className="ml-1 text-amber-500">
+                            <span className="ml-1 text-amber-700">
                               (reconnect)
                             </span>
                           )}
@@ -2064,7 +2064,7 @@ const Email = () => {
               {/* Auth-required reconnect banner */}
               {selectedAuthRequired && (
                 <div className="mx-3 mt-3 flex items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5">
-                  <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                  <AlertTriangle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
                       Reconnect required

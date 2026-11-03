@@ -232,29 +232,29 @@ const BADGE_CLASSES: Record<string, string> = {
   primary: "bg-primary/10 text-primary border-primary/20",
   emerald:
     "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400",
-  sky: "bg-primary/10 text-primary border-primary/20 dark:bg-primary/20 dark:text-primary",
+  sky: "bg-primary/5 text-primary border-primary/20 dark:bg-primary/20 dark:text-primary",
   amber:
     "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400",
   violet:
-    "bg-primary/10 text-primary border-primary/20 dark:bg-primary/20 dark:text-primary",
+    "bg-primary/5 text-primary border-primary/20 dark:bg-primary/20 dark:text-primary",
   orange:
     "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400",
-  rose: "bg-primary/10 text-primary border-primary/20 dark:bg-primary/20 dark:text-primary",
-  teal: "bg-primary/10 text-primary border-primary/20 dark:bg-primary/20 dark:text-primary",
+  rose: "bg-primary/5 text-primary border-primary/20 dark:bg-primary/20 dark:text-primary",
+  teal: "bg-primary/5 text-primary border-primary/20 dark:bg-primary/20 dark:text-primary",
 };
 
 const ICON_CLASSES: Record<string, string> = {
   primary: "bg-primary/10 text-primary",
   emerald:
     "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400",
-  sky: "bg-primary/10 text-primary dark:bg-primary/30 dark:text-primary",
+  sky: "bg-primary/10 text-primary dark:bg-primary/20 dark:text-primary",
   amber: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
   violet:
-    "bg-primary/10 text-primary dark:bg-primary/30 dark:text-primary",
+    "bg-primary/10 text-primary dark:bg-primary/20 dark:text-primary",
   orange:
     "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
-  rose: "bg-primary/10 text-primary dark:bg-primary/30 dark:text-primary",
-  teal: "bg-primary/10 text-primary dark:bg-primary/30 dark:text-primary",
+  rose: "bg-primary/10 text-primary dark:bg-primary/20 dark:text-primary",
+  teal: "bg-primary/10 text-primary dark:bg-primary/20 dark:text-primary",
 };
 
 // ─── Component ───────────────────────────────────────────────────────────────

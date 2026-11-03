@@ -139,7 +139,7 @@ const Tasks = () => {
       case "in_progress":
         return <Clock className="h-4 w-4 text-primary" />;
       case "pending":
-        return <AlertCircle className="h-4 w-4 text-amber-500" />;
+        return <AlertCircle className="h-4 w-4 text-amber-700" />;
       default:
         return <Clock className="h-4 w-4 text-muted-foreground" />;
     }
@@ -148,11 +148,11 @@ const Tasks = () => {
   const getStatusColor = (status: string) => {
     switch (status) {
       case "completed":
-        return "bg-emerald-500/10 text-emerald-500 border-emerald-500/20";
+        return "bg-emerald-500/10 text-emerald-700 border-emerald-500/20";
       case "in_progress":
         return "bg-primary/10 text-primary border-primary/20";
       case "pending":
-        return "bg-amber-500/10 text-amber-500 border-amber-500/20";
+        return "bg-amber-500/10 text-amber-700 border-amber-500/20";
       default:
         return "bg-gray-500/10 text-gray-500 border-gray-500/20";
     }
@@ -163,7 +163,7 @@ const Tasks = () => {
       case "high":
         return "bg-red-500/10 text-red-500 border-red-500/20";
       case "medium":
-        return "bg-amber-500/10 text-amber-500 border-amber-500/20";
+        return "bg-amber-500/10 text-amber-700 border-amber-500/20";
       case "low":
         return "bg-primary/10 text-primary border-primary/20";
       default:

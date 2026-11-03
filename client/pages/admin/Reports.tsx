@@ -281,7 +281,7 @@ const Reports = () => {
                         <div className="text-2xl font-bold">
                           {overview.clients.total_clients}
                         </div>
-                        <p className="text-xs text-emerald-500 mt-1">
+                        <p className="text-xs text-emerald-700 mt-1">
                           {overview.clients.active_clients} active
                         </p>
                       </CardContent>
@@ -474,7 +474,7 @@ const Reports = () => {
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className="text-3xl font-bold text-emerald-500">
+                      <div className="text-3xl font-bold text-emerald-700">
                         {formatPercent(
                           performance.conversionRate.approval_rate,
                         )}
@@ -517,7 +517,7 @@ const Reports = () => {
                       <div className="text-3xl font-bold">
                         {performance.taskCompletion.total_tasks}
                       </div>
-                      <p className="text-xs text-emerald-500 mt-2">
+                      <p className="text-xs text-emerald-700 mt-2">
                         {performance.taskCompletion.completed} completed
                       </p>
                     </CardContent>
@@ -561,7 +561,7 @@ const Reports = () => {
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className="text-2xl font-bold text-emerald-500">
+                      <div className="text-2xl font-bold text-emerald-700">
                         {auditStats.byStatus.find((s) => s.status === "success")
                           ?.count || 0}
                       </div>
@@ -574,7 +574,7 @@ const Reports = () => {
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className="text-2xl font-bold text-red-500">
+                      <div className="text-2xl font-bold text-red-700">
                         {auditStats.byStatus.find((s) => s.status === "failure")
                           ?.count || 0}
                       </div>
@@ -587,7 +587,7 @@ const Reports = () => {
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className="text-2xl font-bold text-amber-500">
+                      <div className="text-2xl font-bold text-amber-700">
                         {auditStats.byStatus.find((s) => s.status === "warning")
                           ?.count || 0}
                       </div>

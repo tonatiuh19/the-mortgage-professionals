@@ -1067,7 +1067,7 @@ function ResultsCards({
             "mt-2 rounded-lg px-3 py-2 font-semibold",
             result.surplus >= 0
               ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
-              : "bg-primary/10 text-primary border border-primary/20",
+              : "bg-primary/5 text-primary border border-primary/20",
           )}
         >
           {result.surplus >= 0 ? "Surplus" : "Shortfall"}{" "}

@@ -91,7 +91,7 @@ export default function Header({
           {onGetPreApproved && (
             <button
               onClick={onGetPreApproved}
-              className="hidden md:inline-flex bg-amber-500 hover:bg-amber-600 text-white px-5 py-2 rounded-lg font-semibold text-sm transition-all duration-300 transform hover:scale-105 shadow"
+              className="hidden md:inline-flex bg-accent hover:bg-accent/90 text-primary px-5 py-2 rounded-lg font-semibold text-sm transition-all duration-300 transform hover:scale-105 shadow"
             >
               Get Pre-Approved
             </button>
@@ -190,7 +190,7 @@ export default function Header({
                     onGetPreApproved();
                     setIsOpen(false);
                   }}
-                  className="w-full bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg font-semibold text-sm transition-all duration-300"
+                  className="w-full bg-accent hover:bg-accent/90 text-primary px-4 py-2 rounded-lg font-semibold text-sm transition-all duration-300"
                 >
                   Get Pre-Approved
                 </button>

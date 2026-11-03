@@ -165,9 +165,9 @@ const Tasks = () => {
                     ) : isPendingApproval ? (
                       <FileQuestion className="h-5 w-5 text-primary" />
                     ) : isReopened ? (
-                      <RotateCcw className="h-5 w-5 text-amber-500" />
+                      <RotateCcw className="h-5 w-5 text-amber-700" />
                     ) : task.status === "in_progress" ? (
-                      <Play className="h-5 w-5 text-amber-500" />
+                      <Play className="h-5 w-5 text-amber-700" />
                     ) : (
                       <Clock className="h-5 w-5 text-primary" />
                     )}
@@ -205,7 +205,7 @@ const Tasks = () => {
                     </Badge>
                   )}
                   {isReopened && (
-                    <Badge className="bg-amber-500 text-white">
+                    <Badge className="bg-accent hover:bg-accent/90 text-primary">
                       Needs Revision
                     </Badge>
                   )}
@@ -384,7 +384,7 @@ const Tasks = () => {
           {pendingTasks.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-16">
-                <CheckCircle2 className="h-16 w-16 text-green-500 mb-4" />
+                <CheckCircle2 className="h-16 w-16 text-green-700 mb-4" />
                 <h3 className="text-xl font-semibold mb-2">
                   All caught up! 🎉
                 </h3>

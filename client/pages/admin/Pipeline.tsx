@@ -262,7 +262,7 @@ const Pipeline = () => {
     {
       id: "app_sent",
       name: "App Sent",
-      color: "bg-primary/10",
+      color: "bg-primary/5",
       headerColor: "bg-primary/10",
       textColor: "text-primary",
       description: "Application sent to client",
@@ -270,7 +270,7 @@ const Pipeline = () => {
     {
       id: "application_received",
       name: "Application Received",
-      color: "bg-primary/10",
+      color: "bg-primary/5",
       headerColor: "bg-primary/10",
       textColor: "text-primary",
       description: "Application received & reviewing",
@@ -278,7 +278,7 @@ const Pipeline = () => {
     {
       id: "preapproved",
       name: "Pre-Approved",
-      color: "bg-primary/10",
+      color: "bg-primary/5",
       headerColor: "bg-primary/10",
       textColor: "text-primary",
       description: "Client preapproved",
@@ -302,7 +302,7 @@ const Pipeline = () => {
     {
       id: "approved_with_conditions",
       name: "Approved with Conditions",
-      color: "bg-primary/10",
+      color: "bg-primary/5",
       headerColor: "bg-primary/10",
       textColor: "text-primary",
       description: "Conditions pending",
@@ -310,7 +310,7 @@ const Pipeline = () => {
     {
       id: "clear_to_close",
       name: "Clear to Close",
-      color: "bg-primary/10",
+      color: "bg-primary/5",
       headerColor: "bg-primary/10",
       textColor: "text-primary",
       description: "Cleared for closing",
@@ -376,11 +376,11 @@ const Pipeline = () => {
                         ? "Loan Pipeline"
                         : "Realtor Prospecting"}
                     </span>
-                    <ChevronDown className="h-4 w-4 text-gray-400 group-hover:text-primary transition-colors" />
+                    <ChevronDown className="h-4 w-4 text-gray-500 group-hover:text-primary transition-colors" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="w-60 shadow-lg">
-                  <DropdownMenuLabel className="text-xs text-gray-400 font-normal uppercase tracking-wider">
+                  <DropdownMenuLabel className="text-xs text-gray-500 font-normal uppercase tracking-wider">
                     Switch Pipeline
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
@@ -395,7 +395,7 @@ const Pipeline = () => {
                     <Kanban className="h-4 w-4 flex-shrink-0" />
                     <div>
                       <div className="text-sm font-medium">Loan Pipeline</div>
-                      <div className="text-xs text-gray-400">
+                      <div className="text-xs text-gray-500">
                         Track loan applications
                       </div>
                     </div>
@@ -419,7 +419,7 @@ const Pipeline = () => {
                       <div className="text-sm font-medium">
                         Realtor Prospecting
                       </div>
-                      <div className="text-xs text-gray-400">
+                      <div className="text-xs text-gray-500">
                         Build referral partnerships
                       </div>
                     </div>
@@ -433,9 +433,9 @@ const Pipeline = () => {
             description={
               activePipeline === "loan" ? (
                 <span className="flex items-center gap-1.5">
-                  <TrendingUp className="h-3.5 w-3.5 text-green-500" />
+                  <TrendingUp className="h-3.5 w-3.5 text-green-700" />
                   {loans.length} active applications
-                  <Badge className="bg-primary/10 text-primary text-[10px] h-4 px-1.5">
+                  <Badge className="bg-primary/5 text-primary text-[10px] h-4 px-1.5">
                     Live
                   </Badge>
                 </span>
@@ -443,7 +443,7 @@ const Pipeline = () => {
                 <span className="flex items-center gap-1.5">
                   <Users className="h-3.5 w-3.5 text-primary" />
                   {realtorProspects.length} realtor prospects
-                  <Badge className="bg-primary/10 text-primary text-[10px] h-4 px-1.5">
+                  <Badge className="bg-primary/5 text-primary text-[10px] h-4 px-1.5">
                     Live
                   </Badge>
                 </span>
@@ -766,7 +766,7 @@ const Pipeline = () => {
                           "flex-1 space-y-3 p-3 rounded-lg border-2 min-h-[400px] transition-all duration-150",
                           dragOverColumnId === column.id &&
                             draggingFromColumn !== column.id
-                            ? "border-primary bg-primary/10 scale-[1.01]"
+                            ? "border-primary bg-primary/5 scale-[1.01]"
                             : cn("border-gray-200", column.color),
                         )}
                         onDragOver={handleDragOver}
@@ -841,7 +841,7 @@ const Pipeline = () => {
                                 {loan.broker_first_name ||
                                 loan.partner_first_name ? (
                                   <>
-                                    <User className="h-3 w-3 text-gray-400" />
+                                    <User className="h-3 w-3 text-gray-500" />
                                     <span className="text-xs text-gray-500 truncate">
                                       {loan.broker_first_name
                                         ? `${loan.broker_first_name} ${loan.broker_last_name}`
@@ -857,7 +857,7 @@ const Pipeline = () => {
                               </div>
                               <div className="flex items-center justify-between pt-2 border-t border-gray-100">
                                 <div className="flex items-center gap-1">
-                                  <Calendar className="h-3 w-3 text-gray-400" />
+                                  <Calendar className="h-3 w-3 text-gray-500" />
                                   <span className="text-xs text-gray-500">
                                     {new Date(
                                       loan.created_at,

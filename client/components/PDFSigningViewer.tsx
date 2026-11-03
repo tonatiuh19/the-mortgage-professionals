@@ -287,7 +287,7 @@ const PDFSigningViewer: React.FC<PDFSigningViewerProps> = ({
                           </span>
                         </div>
                       )}
-                      <CheckCircle2 className="absolute top-1 right-1 h-3 w-3 text-green-500" />
+                      <CheckCircle2 className="absolute top-1 right-1 h-3 w-3 text-green-700" />
                     </div>
                   ) : readOnly ? (
                     // ReadOnly + unsigned: show "not signed" placeholder

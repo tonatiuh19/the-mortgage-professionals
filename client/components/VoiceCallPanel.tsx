@@ -737,7 +737,7 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
             )}
           >
             {callState === "error" ? (
-              <PhoneMissed className="h-4 w-4 text-red-500" />
+              <PhoneMissed className="h-4 w-4 text-red-700" />
             ) : callState === "ended" ? (
               <PhoneOff className="h-4 w-4 text-muted-foreground" />
             ) : (
@@ -806,7 +806,7 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
       {/* Mic preemption banner — shows when the OS has paused the browser's
           microphone (most often: an incoming cell-phone call on macOS/iOS). */}
       {micPreempted && callState === "in-call" && (
-        <div className="flex items-start gap-2 text-xs bg-primary/10 border border-primary/20 rounded px-3 py-2 animate-in fade-in slide-in-from-top-1 duration-200">
+        <div className="flex items-start gap-2 text-xs bg-primary/5 border border-primary/20 rounded px-3 py-2 animate-in fade-in slide-in-from-top-1 duration-200">
           <MicOff className="h-4 w-4 text-primary shrink-0 mt-0.5" />
           <div className="flex-1 leading-snug">
             <p className="font-semibold text-primary">Microphone unavailable</p>
@@ -853,7 +853,7 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
                 <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                   {micLevel > 5 ? (
                     <>
-                      <Mic className="h-2.5 w-2.5 text-green-500" /> Mic active
+                      <Mic className="h-2.5 w-2.5 text-green-700" /> Mic active
                     </>
                   ) : (
                     <>
@@ -988,7 +988,7 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
                       · {Math.round(speakerVolume * 100)}%
                     </span>
                   </p>
-                  <p className="flex items-center gap-1.5 text-green-500 border-t pt-1.5">
+                  <p className="flex items-center gap-1.5 text-green-700 border-t pt-1.5">
                     <CheckCircle2 className="h-3 w-3 shrink-0" />
                     HD · Echo Cancel · Noise Reduction
                   </p>
@@ -1091,7 +1091,7 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
                   <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                     {micLevel > 5 ? (
                       <>
-                        <Mic className="h-2.5 w-2.5 text-green-500" /> Mic
+                        <Mic className="h-2.5 w-2.5 text-green-700" /> Mic
                         active
                       </>
                     ) : (

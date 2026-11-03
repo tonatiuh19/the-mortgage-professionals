@@ -1548,7 +1548,7 @@ const Conversations = () => {
                   <TooltipProvider delayDuration={400}>
                     {/* Closed-mode banner */}
                     {selectedStatus === "closed" && (
-                      <div className="flex items-center gap-2 px-3 py-2 mb-1 rounded-lg bg-primary/10 border border-primary/20 text-primary">
+                      <div className="flex items-center gap-2 px-3 py-2 mb-1 rounded-lg bg-primary/5 border border-primary/20 text-primary">
                         <CircleCheck className="h-3.5 w-3.5 shrink-0" />
                         <p className="text-xs flex-1 font-medium">
                           Closed conversations
@@ -1574,7 +1574,7 @@ const Conversations = () => {
                         return (
                           <div
                             key={thread.id}
-                            className="p-3 rounded-lg border border-primary/20 bg-primary/10 animate-in fade-in-0 slide-in-from-left-1"
+                            className="p-3 rounded-lg border border-primary/20 bg-primary/5 animate-in fade-in-0 slide-in-from-left-1"
                           >
                             <div className="flex items-center gap-2">
                               <CircleCheck className="h-4 w-4 text-primary shrink-0" />
@@ -1697,7 +1697,7 @@ const Conversations = () => {
                                               thread.conversation_id,
                                             );
                                           }}
-                                          className="p-1 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                                          className="p-1 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors"
                                         >
                                           <X className="h-3.5 w-3.5" />
                                         </button>
@@ -2377,7 +2377,7 @@ const Conversations = () => {
                                 <CheckCheck className="h-3 w-3 text-white/60 animate-in fade-in-0 zoom-in-75 duration-300" />
                               )}
                               {opt.status === "failed" && (
-                                <X className="h-3 w-3 text-red-400" />
+                                <X className="h-3 w-3 text-red-700" />
                               )}
                             </div>
                           </div>
@@ -2522,9 +2522,9 @@ const Conversations = () => {
                                   <div className="mt-0.5 shrink-0">
                                     {hasVars ? (
                                       score >= 1 ? (
-                                        <CircleCheck className="h-3.5 w-3.5 text-green-500" />
+                                        <CircleCheck className="h-3.5 w-3.5 text-green-700" />
                                       ) : (
-                                        <CircleAlert className="h-3.5 w-3.5 text-amber-500" />
+                                        <CircleAlert className="h-3.5 w-3.5 text-amber-700" />
                                       )
                                     ) : (
                                       <CircleCheck className="h-3.5 w-3.5 text-muted-foreground/30" />
@@ -3129,7 +3129,7 @@ const Conversations = () => {
                       {currentThread.contact_broker_id && (
                         <Badge
                           variant="outline"
-                          className="text-xs bg-primary/10 text-primary border-primary/20"
+                          className="text-xs bg-primary/5 text-primary border-primary/20"
                         >
                           Realtor
                         </Badge>
@@ -3206,7 +3206,7 @@ const Conversations = () => {
                         <Button
                           variant="outline"
                           size="sm"
-                          className="mt-1.5 h-7 text-xs w-full gap-1.5 hover:bg-primary/10 hover:text-primary hover:border-primary/20"
+                          className="mt-1.5 h-7 text-xs w-full gap-1.5 hover:bg-primary/5 hover:text-primary hover:border-primary/20"
                           onClick={() => setScheduleDialogOpen(true)}
                         >
                           <CalendarPlus className="h-3 w-3" />
@@ -3221,7 +3221,7 @@ const Conversations = () => {
                       "@noemail.placeholder",
                     ) && (
                       <div className="flex items-start gap-3">
-                        <div className="p-1.5 bg-primary/10 rounded-md flex-shrink-0">
+                        <div className="p-1.5 bg-primary/5 rounded-md flex-shrink-0">
                           <Mail className="h-3.5 w-3.5 text-primary" />
                         </div>
                         <div className="min-w-0">
@@ -3298,7 +3298,7 @@ const Conversations = () => {
                     className={cn(
                       "p-1.5 rounded-md flex-shrink-0",
                       currentThread.last_message_type === "email"
-                        ? "bg-primary/10"
+                        ? "bg-primary/5"
                         : "bg-primary/10",
                     )}
                   >
@@ -3336,7 +3336,7 @@ const Conversations = () => {
                       "text-sm",
                       currentThread.status === "active"
                         ? "bg-green-50 text-green-700 border-green-200"
-                        : "bg-primary/10 text-primary border-primary/20",
+                        : "bg-primary/5 text-primary border-primary/20",
                     )}
                   >
                     {currentThread.status}
@@ -3443,7 +3443,7 @@ const Conversations = () => {
                       <ExternalLink className="h-4 w-4" />
                       Preview Booking Page
                     </Button>
-                    <div className="flex items-start gap-2 p-3 bg-primary/10 rounded-lg border border-primary/20 text-xs text-primary">
+                    <div className="flex items-start gap-2 p-3 bg-primary/5 rounded-lg border border-primary/20 text-xs text-primary">
                       <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                       <span>
                         Copy this link and send it to the client via SMS or

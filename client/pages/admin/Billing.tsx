@@ -547,7 +547,7 @@ const Billing = () => {
                   <Card>
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2 text-base">
-                        <Megaphone className="h-4 w-4 text-amber-500" />
+                        <Megaphone className="h-4 w-4 text-amber-700" />
                         Broadcast economics
                       </CardTitle>
                       <CardDescription>

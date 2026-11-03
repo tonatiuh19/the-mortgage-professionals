@@ -80,10 +80,10 @@ const Dashboard = () => {
   const getStatusColor = (status: string) => {
     const colors: { [key: string]: string } = {
       submitted: "bg-primary/10 text-primary border-primary/20",
-      under_review: "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
-      approved: "bg-green-500/10 text-green-500 border-green-500/20",
+      under_review: "bg-yellow-500/10 text-yellow-700 border-yellow-500/20",
+      approved: "bg-green-500/10 text-green-700 border-green-500/20",
       documents_pending:
-        "bg-amber-500/10 text-amber-500 border-amber-500/20",
+        "bg-amber-500/10 text-amber-700 border-amber-500/20",
       denied: "bg-primary/10 text-primary border-primary/20",
     };
     return colors[status] || "bg-gray-500/10 text-gray-500 border-gray-500/20";
@@ -175,10 +175,10 @@ const Dashboard = () => {
               <CardTitle className="text-sm font-medium">
                 Pending Tasks
               </CardTitle>
-              <Clock className="h-4 w-4 text-amber-500" />
+              <Clock className="h-4 w-4 text-amber-700" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-amber-500">
+              <div className="text-3xl font-bold text-amber-700">
                 {pendingTasks.length}
               </div>
               <p className="text-xs text-muted-foreground mt-1">
@@ -198,10 +198,10 @@ const Dashboard = () => {
               <CardTitle className="text-sm font-medium">
                 Completed Tasks
               </CardTitle>
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
+              <CheckCircle2 className="h-4 w-4 text-green-700" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-green-500">
+              <div className="text-3xl font-bold text-green-700">
                 {completedTasks.length}
               </div>
               <p className="text-xs text-muted-foreground mt-1">
@@ -243,7 +243,7 @@ const Dashboard = () => {
           >
             <Card className="border-primary/30 bg-gradient-to-br from-primary/5 to-transparent">
               <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-red-500">
+                <CardTitle className="flex items-center gap-2 text-red-700">
                   <AlertCircle className="h-5 w-5" />
                   Urgent Tasks Require Attention
                 </CardTitle>
@@ -376,9 +376,9 @@ const Dashboard = () => {
                     >
                       <div className="flex items-center gap-3">
                         {task.status === "completed" ? (
-                          <CheckCircle2 className="h-5 w-5 text-green-500" />
+                          <CheckCircle2 className="h-5 w-5 text-green-700" />
                         ) : (
-                          <Clock className="h-5 w-5 text-amber-500" />
+                          <Clock className="h-5 w-5 text-amber-700" />
                         )}
                         <div>
                           <p className="font-medium text-sm">{task.title}</p>

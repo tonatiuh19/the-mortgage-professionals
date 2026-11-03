@@ -466,9 +466,9 @@ export function BrokerWizard({
                               {
                                 value: "admin",
                                 label: "Admin",
-                                color: "border-primary/20 bg-primary/10",
+                                color: "border-primary/20 bg-primary/5",
                                 selectedColor:
-                                  "border-primary bg-primary/10 ring-2 ring-primary/20",
+                                  "border-primary bg-primary/5 ring-2 ring-primary/20",
                                 badgeColor: "bg-primary/10 text-primary",
                                 desc: "Full system access. Manages all loans, clients, staff, templates, settings and reports.",
                                 sections: [
@@ -488,9 +488,9 @@ export function BrokerWizard({
                               {
                                 value: "loan_officer",
                                 label: "Loan Officer",
-                                color: "border-primary/20 bg-primary/40",
+                                color: "border-primary/20 bg-primary/5",
                                 selectedColor:
-                                  "border-primary bg-primary/10 ring-2 ring-primary/20",
+                                  "border-primary bg-primary/5 ring-2 ring-primary/20",
                                 badgeColor: "bg-primary/10 text-primary",
                                 desc: "Staff member with full tenant visibility. Can assign loan officers and partners to files, manage clients and generate reports.",
                                 sections: [
@@ -507,9 +507,9 @@ export function BrokerWizard({
                               {
                                 value: "loan_processor",
                                 label: "Loan Processor",
-                                color: "border-primary/20 bg-primary/40",
+                                color: "border-primary/20 bg-primary/5",
                                 selectedColor:
-                                  "border-primary bg-primary/10 ring-2 ring-primary/20",
+                                  "border-primary bg-primary/5 ring-2 ring-primary/20",
                                 badgeColor: "bg-primary/10 text-primary",
                                 desc: "Staff member with full tenant visibility. Focuses on task processing and document management. No reports access.",
                                 sections: [
@@ -525,9 +525,9 @@ export function BrokerWizard({
                               {
                                 value: "realtor",
                                 label: "Realtor",
-                                color: "border-primary/20 bg-primary/40",
+                                color: "border-primary/20 bg-primary/5",
                                 selectedColor:
-                                  "border-primary bg-primary/10 ring-2 ring-primary/20",
+                                  "border-primary bg-primary/5 ring-2 ring-primary/20",
                                 badgeColor: "bg-primary/10 text-primary",
                                 desc: "Referring real estate agent. Sees only loans and clients where they are the assigned partner.",
                                 sections: [
@@ -541,9 +541,9 @@ export function BrokerWizard({
                               {
                                 value: "buyers_agent",
                                 label: "Buyer's Agent",
-                                color: "border-primary/20 bg-primary/40",
+                                color: "border-primary/20 bg-primary/5",
                                 selectedColor:
-                                  "border-primary bg-primary/10 ring-2 ring-primary/20",
+                                  "border-primary bg-primary/5 ring-2 ring-primary/20",
                                 badgeColor: "bg-primary/10 text-primary",
                                 desc: "Partner representing homebuyers. Sees only loans and clients where they are the assigned partner.",
                                 sections: [
@@ -557,9 +557,9 @@ export function BrokerWizard({
                               {
                                 value: "listing_agent",
                                 label: "Listing Agent",
-                                color: "border-primary/20 bg-primary/40",
+                                color: "border-primary/20 bg-primary/5",
                                 selectedColor:
-                                  "border-primary bg-primary/10 ring-2 ring-primary/20",
+                                  "border-primary bg-primary/5 ring-2 ring-primary/20",
                                 badgeColor: "bg-primary/10 text-primary",
                                 desc: "Partner representing home sellers. Sees only loans and clients where they are the assigned partner.",
                                 sections: [
@@ -660,7 +660,7 @@ export function BrokerWizard({
                             ))}
                           </SelectContent>
                         </Select>
-                        <p className="text-xs text-gray-400">
+                        <p className="text-xs text-gray-500">
                           This manager (admin or loan officer) will appear
                           co-branded on the partner's public apply page.
                         </p>
@@ -793,7 +793,7 @@ export function BrokerWizard({
                         </>
                       )}
                       {mode === "create" && (
-                        <p className="text-xs text-gray-400 italic flex items-center gap-1.5">
+                        <p className="text-xs text-gray-500 italic flex items-center gap-1.5">
                           <Camera className="h-3.5 w-3.5" />
                           Profile photo can be set after the realtor account is
                           created.
@@ -812,7 +812,7 @@ export function BrokerWizard({
                           {...formik.getFieldProps("bio")}
                           className="resize-none"
                         />
-                        <p className="text-xs text-gray-400 text-right">
+                        <p className="text-xs text-gray-500 text-right">
                           {(formik.values.bio || "").length}/500
                         </p>
                         {formik.touched.bio && formik.errors.bio && (
@@ -912,7 +912,7 @@ export function BrokerWizard({
                               htmlFor="website_url"
                               className="flex items-center gap-1.5"
                             >
-                              <Globe className="h-3.5 w-3.5 text-gray-400" />{" "}
+                              <Globe className="h-3.5 w-3.5 text-gray-500" />{" "}
                               Website
                             </Label>
                             <Input

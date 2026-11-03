@@ -232,7 +232,7 @@ const PhoneNumbersPanel: React.FC<PhoneNumbersPanelProps> = ({
           </SheetHeader>
 
           {/* How routing works */}
-          <div className="rounded-lg bg-primary/10 border border-primary/20 p-3 text-xs text-primary space-y-1">
+          <div className="rounded-lg bg-primary/5 border border-primary/20 p-3 text-xs text-primary space-y-1">
             <p className="font-semibold flex items-center gap-1.5">
               <Users className="h-3.5 w-3.5" />
               How inbound call routing works
@@ -426,7 +426,7 @@ const NumberCard: React.FC<NumberCardProps> = ({
               </span>
             )}
             {num.capabilities.mms && (
-              <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-medium">
+              <span className="text-[10px] bg-primary/5 text-primary px-1.5 py-0.5 rounded font-medium">
                 MMS
               </span>
             )}
@@ -463,7 +463,7 @@ const NumberCard: React.FC<NumberCardProps> = ({
           className={cn(
             "w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors",
             isShared
-              ? "bg-primary/10 text-primary"
+              ? "bg-primary/5 text-primary"
               : "hover:bg-muted/50 text-muted-foreground cursor-pointer",
           )}
         >
@@ -507,7 +507,7 @@ const NumberCard: React.FC<NumberCardProps> = ({
         <div
           className={cn(
             "px-3 py-2.5 transition-colors",
-            !isShared ? "bg-primary/10" : "hover:bg-muted/50",
+            !isShared ? "bg-primary/5" : "hover:bg-muted/50",
           )}
         >
           <div className="flex items-center gap-3">

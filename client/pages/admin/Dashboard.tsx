@@ -312,7 +312,7 @@ const AdminDashboard = () => {
                     ? "..."
                     : `${stats.avgClosingDays} Days`,
                 trend: "up",
-                icon: <Clock className="text-amber-500" />,
+                icon: <Clock className="text-amber-700" />,
               },
               {
                 title: "Closure Rate",
