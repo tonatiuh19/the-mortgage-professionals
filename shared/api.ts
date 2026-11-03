@@ -715,6 +715,8 @@ export interface UpdateBrokerRequest {
   specializations?: string[];
   /** Reassign the Mortgage Banker who "owns" this partner (role=broker only) */
   created_by_broker_id?: number | null;
+  /** Owner-only: grant or remove platform owner access (admins only). */
+  is_platform_owner?: boolean;
 }
 
 export interface BrokerResponse {

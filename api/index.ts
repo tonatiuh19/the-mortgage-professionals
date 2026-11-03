@@ -1396,6 +1396,11 @@ const readAppUrlEnv = (value: string | undefined): string | null => {
   return url;
 };
 
+/** Admins and loan processors work every file; loan officers and partners only their own. */
+const hasGlobalFileAccess = (role: string | undefined): boolean =>
+  role === "admin" || role === "loan_processor";
+
+
 // Base URL helper — prefers explicit BASE_URL, then the production domain
 // (or the preview's own URL), then localhost for local dev
 const getBaseUrl = (): string => {
@@ -3705,6 +3710,39 @@ const requireBrokerRoles =
   };
 
 const requireAdmin = requireBrokerRoles("admin");
+
+/** For loan officers and partners, the :loanId or :taskId in the URL must be one of their own files. */
+const requireOwnFileParam: RequestHandler = async (req, res, next) => {
+  try {
+    const brokerRole = (req as any).brokerRole as string;
+    if (hasGlobalFileAccess(brokerRole)) return next();
+    let loanId = Number(req.params.loanId);
+    if (!loanId && req.params.taskId) {
+      const [rows] = await pool.query<RowDataPacket[]>(
+        "SELECT application_id FROM tasks WHERE id = ? AND tenant_id = ? LIMIT 1",
+        [req.params.taskId, MORTGAGE_TENANT_ID],
+      );
+      loanId = Number(rows[0]?.application_id);
+    }
+    if (!loanId) {
+      return res.status(404).json({ success: false, error: "Not found" });
+    }
+    const access = await assertLoanAccess(
+      (req as any).brokerId,
+      brokerRole,
+      loanId,
+    );
+    if (access.ok === false) {
+      return res
+        .status(access.status)
+        .json({ success: false, error: access.error });
+    }
+    next();
+  } catch (error) {
+    console.error("requireOwnFileParam error:", error);
+    return res.status(500).json({ success: false, error: "Access check failed" });
+  }
+};
 const requireReportsAccess = requireBrokerRoles("admin", "loan_officer");
 
 // =====================================================
@@ -8972,7 +9010,7 @@ const handleGetLoans: RequestHandler = async (req, res) => {
   try {
     const brokerId = (req as any).brokerId;
     const brokerRole = (req as any).brokerRole;
-    const hasGlobalLoanAccess = isOperationalRole(brokerRole);
+    const hasGlobalLoanAccess = hasGlobalFileAccess(brokerRole);
 
     // Extract query parameters for filtering
     const {
@@ -9244,7 +9282,7 @@ const handleGetLoanDetails: RequestHandler = async (req, res) => {
     const brokerId = (req as any).brokerId;
     const brokerRole = (req as any).brokerRole;
     const loanId = req.params.loanId;
-    const hasGlobalLoanAccess = isOperationalRole(brokerRole);
+    const hasGlobalLoanAccess = hasGlobalFileAccess(brokerRole);
 
     // Scope loan detail to the client owner or any banker explicitly linked on the loan.
     const whereClause = hasGlobalLoanAccess
@@ -9339,7 +9377,7 @@ const handleUpdateLoanDetails: RequestHandler = async (req, res) => {
   try {
     const brokerId = (req as any).brokerId;
     const brokerRole = (req as any).brokerRole;
-    const hasGlobalLoanAccess = isOperationalRole(brokerRole);
+    const hasGlobalLoanAccess = hasGlobalFileAccess(brokerRole);
     const loanId = parseInt(req.params.loanId as string);
 
     if (isNaN(loanId)) {
@@ -9628,6 +9666,18 @@ const handleAssignBroker: RequestHandler = async (req, res) => {
     }
 
     const loanId = parseInt(req.params.loanId as string);
+    if (!hasGlobalFileAccess(brokerRole)) {
+      const access = await assertLoanAccess(
+        (req as any).brokerId,
+        brokerRole,
+        loanId,
+      );
+      if (access.ok === false) {
+        return res
+          .status(access.status)
+          .json({ success: false, error: access.error });
+      }
+    }
     const { broker_id } = req.body; // null = unassign
 
     if (broker_id !== null && broker_id !== undefined) {
@@ -9680,6 +9730,18 @@ const handleAssignPartner: RequestHandler = async (req, res) => {
     }
 
     const loanId = parseInt(req.params.loanId as string);
+    if (!hasGlobalFileAccess(brokerRole)) {
+      const access = await assertLoanAccess(
+        (req as any).brokerId,
+        brokerRole,
+        loanId,
+      );
+      if (access.ok === false) {
+        return res
+          .status(access.status)
+          .json({ success: false, error: access.error });
+      }
+    }
     const { partner_id } = req.body; // null = unassign
 
     if (partner_id !== null && partner_id !== undefined) {
@@ -9736,7 +9798,7 @@ const handleUpdateLoanStatus: RequestHandler = async (req, res) => {
   try {
     const brokerId = (req as any).brokerId;
     const brokerRole = (req as any).brokerRole;
-    const hasGlobalLoanAccess = isOperationalRole(brokerRole);
+    const hasGlobalLoanAccess = hasGlobalFileAccess(brokerRole);
     const loanId = parseInt(req.params.loanId as string);
     const { status: newStatus, notes } = req.body;
 
@@ -10524,7 +10586,7 @@ const handleGetClientDetailProfile: RequestHandler = async (req, res) => {
     );
     const hasGlobalClientAccess = crmFlags.activeForBroker
       ? isAdminRole(brokerRole)
-      : isOperationalRole(brokerRole);
+      : hasGlobalFileAccess(brokerRole);
     const clientId = parseInt(req.params.clientId as string);
     if (isNaN(clientId)) {
       return res
@@ -10684,7 +10746,7 @@ const handleGetClients: RequestHandler = async (req, res) => {
     );
     const hasGlobalClientAccess = crmFlags.activeForBroker
       ? isAdminRole(brokerRole)
-      : isOperationalRole(brokerRole);
+      : hasGlobalFileAccess(brokerRole);
     const usePerOwnerList =
       crmFlags.activeForBroker && !hasGlobalClientAccess;
     const visibilityFilter = clientListVisibilityFilter(crmFlags);
@@ -10981,7 +11043,7 @@ const handleUpdateClient: RequestHandler = async (req, res) => {
     const { clientId } = req.params;
     const brokerId = (req as any).brokerId;
     const brokerRole = (req as any).brokerRole;
-    const hasGlobalClientAccess = isOperationalRole(brokerRole);
+    const hasGlobalClientAccess = hasGlobalFileAccess(brokerRole);
     const {
       first_name,
       middle_name,
@@ -11299,7 +11361,7 @@ const handleDeleteClient: RequestHandler = async (req, res) => {
     const { clientId } = req.params;
     const brokerId = (req as any).brokerId;
     const brokerRole = (req as any).brokerRole;
-    const hasGlobalClientAccess = isOperationalRole(brokerRole);
+    const hasGlobalClientAccess = hasGlobalFileAccess(brokerRole);
 
     // Check if client exists and belongs to this broker
     const [clientRows] = await pool.query<RowDataPacket[]>(
@@ -11590,7 +11652,8 @@ const handleGetBrokers: RequestHandler = async (req, res) => {
     }
 
     const brokerRole = brokerRows[0].role;
-    if (!isAdminRole(brokerRole)) {
+    const isOfficer = brokerRole === "loan_officer";
+    if (!isAdminRole(brokerRole) && !isOfficer) {
       return res.status(403).json({
         success: false,
         message: "Only admins can view all brokers",
@@ -11605,6 +11668,10 @@ const handleGetBrokers: RequestHandler = async (req, res) => {
     const offset = (page - 1) * limit;
     const search = (req.query.search as string) || "";
     const roleFilter = (req.query.role as string) || "";
+    // Loan officers see only the partners they added.
+    const ownerWhere = isOfficer
+      ? ` AND created_by_broker_id = ${Number(brokerId)} AND role IN ('${PARTNER_ROLE_LIST.join("','")}')`
+      : "";
     const sortBy = (req.query.sortBy as string) || "first_name";
     const sortOrder =
       ((req.query.sortOrder as string) || "ASC").toUpperCase() === "ASC"
@@ -11643,7 +11710,7 @@ const handleGetBrokers: RequestHandler = async (req, res) => {
     const roleParams: any[] = roleList;
 
     const [[countRow]] = (await connection.execute(
-      `SELECT COUNT(*) as total FROM brokers WHERE status = 'active' AND tenant_id = ?${searchWhere}${roleWhere}`,
+      `SELECT COUNT(*) as total FROM brokers WHERE status = 'active' AND tenant_id = ?${searchWhere}${roleWhere}${ownerWhere}`,
       [MORTGAGE_TENANT_ID, ...searchParams, ...roleParams],
     )) as [RowDataPacket[], any];
     const total = Number((countRow as any)?.total || 0);
@@ -11657,6 +11724,7 @@ const handleGetBrokers: RequestHandler = async (req, res) => {
         last_name,
         phone,
         role,
+        is_platform_owner,
         status,
         email_verified,
         last_login,
@@ -11666,7 +11734,7 @@ const handleGetBrokers: RequestHandler = async (req, res) => {
         slug,
         created_by_broker_id
       FROM brokers
-      WHERE status = 'active' AND tenant_id = ?${searchWhere}${roleWhere}
+      WHERE status = 'active' AND tenant_id = ?${searchWhere}${roleWhere}${ownerWhere}
       ORDER BY ${safeSortBy} ${sortOrder}
       LIMIT ${limit} OFFSET ${offset}`,
       [MORTGAGE_TENANT_ID, ...searchParams, ...roleParams],
@@ -11721,10 +11789,18 @@ const handleCreateBroker: RequestHandler = async (req, res) => {
       [brokerId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
-    if (adminCheck.length === 0 || adminCheck[0].role !== "admin") {
+    const requesterRole = adminCheck[0]?.role;
+    const isOfficer = requesterRole === "loan_officer";
+    if (requesterRole !== "admin" && !isOfficer) {
       return res.status(403).json({
         success: false,
-        error: "Only admins can create brokers",
+        error: "Only admins and loan officers can create users",
+      });
+    }
+    if (isOfficer && !PARTNER_ROLE_LIST.includes(role || "broker")) {
+      return res.status(403).json({
+        success: false,
+        error: "Loan officers can only add partners",
       });
     }
 
@@ -11750,7 +11826,9 @@ const handleCreateBroker: RequestHandler = async (req, res) => {
     }
 
     // Insert new broker — track which admin created this partner
-    const createdByBrokerId = role === "broker" ? brokerId : null;
+    const createdByBrokerId = PARTNER_ROLE_LIST.includes(role || "broker")
+      ? brokerId
+      : null;
     const [result] = (await pool.query(
       `INSERT INTO brokers 
         (tenant_id, email, first_name, last_name, phone, role, license_number, specializations, status, email_verified, created_by_broker_id, public_token) 
@@ -11819,11 +11897,25 @@ const handleUpdateBroker: RequestHandler = async (req, res) => {
       [brokerId, MORTGAGE_TENANT_ID],
     )) as [RowDataPacket[], any];
 
-    if (adminCheck.length === 0 || adminCheck[0].role !== "admin") {
-      return res.status(403).json({
-        success: false,
-        error: "Only admins can update brokers",
-      });
+    const requesterRole = adminCheck[0]?.role;
+    if (requesterRole !== "admin") {
+      // Loan officers manage only the partners they added, and cannot change roles.
+      const [owned] = (await pool.query(
+        `SELECT id FROM brokers WHERE id = ? AND tenant_id = ? AND created_by_broker_id = ?
+         AND role IN (${PARTNER_ROLE_LIST.map(() => "?").join(",")})`,
+        [req.params.brokerId, MORTGAGE_TENANT_ID, brokerId, ...PARTNER_ROLE_LIST],
+      )) as [RowDataPacket[], any];
+      const changesRole =
+        req.body?.role !== undefined && !PARTNER_ROLE_LIST.includes(req.body.role);
+      if (
+        requesterRole !== "loan_officer" ||
+        !owned.length ||
+        changesRole ||
+        req.body?.created_by_broker_id !== undefined ||
+        req.body?.is_platform_owner !== undefined
+      ) {
+        return res.status(403).json({ success: false, error: "Access denied" });
+      }
     }
 
     // Check if target broker exists
@@ -11899,6 +11991,40 @@ const handleUpdateBroker: RequestHandler = async (req, res) => {
       updates.push("phone = ?");
       values.push(phone || null);
     }
+    if (req.body?.is_platform_owner !== undefined) {
+      if (!(req as any).broker?.is_platform_owner) {
+        return res.status(403).json({
+          success: false,
+          error: "Only platform owners can change owner access",
+        });
+      }
+      const makeOwner = Boolean(req.body.is_platform_owner);
+      const [targetRows] = (await pool.query(
+        "SELECT role, is_platform_owner FROM brokers WHERE id = ? AND tenant_id = ?",
+        [req.params.brokerId, MORTGAGE_TENANT_ID],
+      )) as [RowDataPacket[], any];
+      const nextRole = role ?? targetRows[0]?.role;
+      if (makeOwner && nextRole !== "admin") {
+        return res.status(400).json({
+          success: false,
+          error: "Only admins can be platform owners",
+        });
+      }
+      if (!makeOwner && targetRows[0]?.is_platform_owner) {
+        const [owners] = (await pool.query(
+          "SELECT COUNT(*) AS n FROM brokers WHERE tenant_id = ? AND is_platform_owner = 1 AND status = 'active'",
+          [MORTGAGE_TENANT_ID],
+        )) as [RowDataPacket[], any];
+        if (Number(owners[0]?.n) <= 1) {
+          return res.status(400).json({
+            success: false,
+            error: "At least one platform owner is required",
+          });
+        }
+      }
+      updates.push("is_platform_owner = ?");
+      values.push(makeOwner ? 1 : 0);
+    }
     if (role !== undefined) {
       updates.push("role = ?");
       values.push(role);
@@ -11968,11 +12094,25 @@ const handleDeleteBroker: RequestHandler = async (req, res) => {
       [brokerId, MORTGAGE_TENANT_ID],
     );
 
-    if (adminCheck.length === 0 || adminCheck[0].role !== "admin") {
-      return res.status(403).json({
-        success: false,
-        error: "Only admins can delete brokers",
-      });
+    const requesterRole = adminCheck[0]?.role;
+    if (requesterRole !== "admin") {
+      // Loan officers manage only the partners they added, and cannot change roles.
+      const [owned] = (await pool.query(
+        `SELECT id FROM brokers WHERE id = ? AND tenant_id = ? AND created_by_broker_id = ?
+         AND role IN (${PARTNER_ROLE_LIST.map(() => "?").join(",")})`,
+        [req.params.brokerId, MORTGAGE_TENANT_ID, brokerId, ...PARTNER_ROLE_LIST],
+      )) as [RowDataPacket[], any];
+      const changesRole =
+        req.body?.role !== undefined && !PARTNER_ROLE_LIST.includes(req.body.role);
+      if (
+        requesterRole !== "loan_officer" ||
+        !owned.length ||
+        changesRole ||
+        req.body?.created_by_broker_id !== undefined ||
+        req.body?.is_platform_owner !== undefined
+      ) {
+        return res.status(403).json({ success: false, error: "Access denied" });
+      }
     }
 
     // Prevent self-deletion
@@ -13697,7 +13837,7 @@ const handleGetTaskDocuments: RequestHandler = async (req, res) => {
       });
     }
 
-    const hasGlobalDocumentAccess = isOperationalRole(brokerRole);
+    const hasGlobalDocumentAccess = hasGlobalFileAccess(brokerRole);
 
     const [documents] = await pool.query(
       `SELECT td.* FROM task_documents td 
@@ -13761,7 +13901,7 @@ const handleDeleteTaskDocument: RequestHandler = async (req, res) => {
       });
     }
 
-    const hasGlobalDocumentAccess = isOperationalRole(brokerRole);
+    const hasGlobalDocumentAccess = hasGlobalFileAccess(brokerRole);
 
     const [documentRows] = await pool.query<RowDataPacket[]>(
       `SELECT td.id
@@ -15363,7 +15503,7 @@ const handleGetAllTaskDocuments: RequestHandler = async (req, res) => {
   try {
     const brokerId = (req as any).brokerId;
     const brokerRole = (req as any).brokerRole;
-    const hasGlobalDocumentAccess = isOperationalRole(brokerRole);
+    const hasGlobalDocumentAccess = hasGlobalFileAccess(brokerRole);
 
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
     const limit = Math.min(
@@ -21166,7 +21306,7 @@ async function assertBrokerCanAccessTaskDocument(
   brokerId: number,
   brokerRole: string,
 ): Promise<RowDataPacket | null> {
-  const hasGlobal = brokerRole === "admin";
+  const hasGlobal = hasGlobalFileAccess(brokerRole);
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT td.id, td.file_path, td.original_filename, td.filename, td.document_type,
             t.title AS task_title, tff.field_name, tff.field_label,
@@ -21393,7 +21533,7 @@ async function assertCalculatorClientAccess(
   if (!client) {
     return { ok: false, status: 404, error: "Client not found" };
   }
-  if (brokerRole === "admin") {
+  if (hasGlobalFileAccess(brokerRole)) {
     return { ok: true, client };
   }
   const crmFlags = await getPerOwnerCrmFlags(
@@ -21511,11 +21651,11 @@ const handleReassignClient: RequestHandler = async (req, res) => {
         .json({ success: false, error: "broker_id is required" });
     }
 
-    // Non-admins can only transfer a client to themselves
-    if (brokerRole !== "admin" && broker_id !== requestingBrokerId) {
+    // Only admins and loan processors move clients between people.
+    if (!hasGlobalFileAccess(brokerRole)) {
       return res.status(403).json({
         success: false,
-        error: "You can only transfer clients to your own account",
+        error: "Ask an admin to transfer this client",
       });
     }
 
@@ -29069,7 +29209,7 @@ async function assertLoanAccess(
   if (!loan) {
     return { ok: false, status: 404, error: "Loan not found" };
   }
-  if (brokerRole === "admin") {
+  if (hasGlobalFileAccess(brokerRole)) {
     return { ok: true, loan };
   }
   if (!rowHasLoanOwnershipAccess(brokerId, loan)) {
@@ -30662,7 +30802,7 @@ function registerBulkImportRoutes(
 
         validation = applyBulkImportImporterRestrictions(
           validation,
-          brokerRole,
+          (req as any).broker?.is_platform_owner ? "platform_owner" : brokerRole,
         );
 
         const fileSha = crypto
@@ -31097,7 +31237,7 @@ function registerBulkImportRoutes(
 
               try {
                 if (
-                  brokerRole !== "platform_owner" &&
+                  !(req as any).broker?.is_platform_owner &&
                   (row.role === "admin" ||
                     row.partner_type === "mortgage_banker")
                 ) {
@@ -40960,37 +41100,37 @@ function createServer() {
   expressApp.get("/api/loans", verifyBrokerSession, handleGetLoans);
   expressApp.get(
     "/api/loans/:loanId",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleGetLoanDetails,
   );
   expressApp.patch(
     "/api/loans/:loanId/details",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleUpdateLoanDetails,
   );
   expressApp.patch(
     "/api/loans/:loanId/assign-broker",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleAssignBroker,
   );
   expressApp.patch(
     "/api/loans/:loanId/assign-partner",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleAssignPartner,
   );
   expressApp.patch(
     "/api/loans/:loanId/status",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleUpdateLoanStatus,
   );
   expressApp.patch(
     "/api/loans/:loanId/source",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleUpdateLoanSourceCategory,
   );
   expressApp.get(
     "/api/loans/:loanId/export-mismo",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleGenerateMISMO,
   );
   expressApp.get("/api/clients", verifyBrokerSession, handleGetClients);
@@ -41055,7 +41195,7 @@ function createServer() {
   );
   expressApp.get("/api/tasks", verifyBrokerSession, handleGetTaskTemplates);
   expressApp.post("/api/tasks", verifyBrokerSession, handleCreateTaskTemplate);
-  expressApp.patch("/api/tasks/:taskId", verifyBrokerSession, handleUpdateTask);
+  expressApp.patch("/api/tasks/:taskId", verifyBrokerSession, requireOwnFileParam, handleUpdateTask);
   expressApp.put(
     "/api/tasks/:taskId",
     verifyBrokerSession,
@@ -41077,12 +41217,12 @@ function createServer() {
   // Task approval routes
   expressApp.post(
     "/api/tasks/:taskId/approve",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleApproveTask,
   );
   expressApp.post(
     "/api/tasks/:taskId/reopen",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleReopenTask,
   );
 
@@ -41101,19 +41241,19 @@ function createServer() {
   // Task form responses (broker review)
   expressApp.get(
     "/api/tasks/:taskId/responses",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleGetTaskFormResponses,
   );
 
   // Task documents routes (broker and client can access)
   expressApp.post(
     "/api/tasks/:taskId/documents",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleUploadTaskDocument,
   );
   expressApp.get(
     "/api/tasks/:taskId/documents",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleGetTaskDocuments,
   );
   expressApp.delete(
@@ -41132,7 +41272,7 @@ function createServer() {
   // Task form submission routes (broker and client can access)
   expressApp.post(
     "/api/tasks/:taskId/submit-form",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleSubmitTaskForm,
   );
 
@@ -41152,7 +41292,7 @@ function createServer() {
   );
   expressApp.get(
     "/api/tasks/:taskId/signatures",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleGetTaskSignatures,
   );
 
@@ -41811,27 +41951,27 @@ function createServer() {
   // Pre-Approval Letter routes
   expressApp.get(
     "/api/loans/:loanId/pre-approval-letter",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleGetPreApprovalLetter,
   );
   expressApp.post(
     "/api/loans/:loanId/pre-approval-letter",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleCreatePreApprovalLetter,
   );
   expressApp.put(
     "/api/loans/:loanId/pre-approval-letter",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleUpdatePreApprovalLetter,
   );
   expressApp.delete(
     "/api/loans/:loanId/pre-approval-letter",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleDeletePreApprovalLetter,
   );
   expressApp.post(
     "/api/loans/:loanId/pre-approval-letter/send-email",
-    verifyBrokerSession,
+    verifyBrokerSession, requireOwnFileParam,
     handleSendPreApprovalLetterEmail,
   );
 

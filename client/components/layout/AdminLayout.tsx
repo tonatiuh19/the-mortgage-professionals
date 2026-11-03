@@ -210,7 +210,7 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
       label: "People Management",
       icon: <UserCog className="h-4 w-4" />,
       path: "/admin/brokers",
-      hidden: isPartner || isStaff,
+      hidden: isPartner || user?.role === "loan_processor",
     },
     {
       id: "crm-people",

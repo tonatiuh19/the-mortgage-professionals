@@ -172,6 +172,8 @@ export default function Brokers() {
     setShareLinkModalOpen(true);
   };
 
+  const isOfficerUser = currentBroker?.role === "loan_officer";
+
   const handleWizardSubmit = async (values: BrokerFormValues) => {
     try {
       if (wizardMode === "create") {
@@ -191,6 +193,7 @@ export default function Brokers() {
         ).unwrap();
         // If a partner, set the assigned MB right away
         if (
+          !isOfficerUser &&
           values.role === "broker" &&
           values.created_by_broker_id &&
           newBroker?.id
@@ -255,8 +258,13 @@ export default function Brokers() {
                 ? values.specializations
                 : undefined,
             created_by_broker_id:
-              values.role === "broker"
+              values.role === "broker" && !isOfficerUser
                 ? (values.created_by_broker_id ?? null)
+                : undefined,
+            is_platform_owner:
+              currentBroker?.is_platform_owner &&
+              values.is_platform_owner !== Boolean(selectedBroker.is_platform_owner)
+                ? values.is_platform_owner
                 : undefined,
           }),
         ).unwrap();
@@ -372,7 +380,7 @@ export default function Brokers() {
           description="Manage realtor accounts and permissions"
           className="mb-0"
           actions={
-            isAdmin ? (
+            isAdmin || isOfficerUser ? (
               <div className="flex items-center gap-2">
                 {canBulkImport && (
                   <Button
@@ -466,6 +474,11 @@ export default function Brokers() {
                       <Badge className={getRoleBadgeColor(b.role)}>
                         {ROLE_LABELS[b.role as BrokerRole] ?? b.role}
                       </Badge>
+                      {b.is_platform_owner ? (
+                        <Badge className="bg-accent/20 text-primary border-accent/40">
+                          Platform Owner
+                        </Badge>
+                      ) : null}
                       {assignedMB && (
                         <p className="text-xs text-gray-500 whitespace-nowrap">
                           → {assignedMB.first_name} {assignedMB.last_name}
@@ -573,7 +586,7 @@ export default function Brokers() {
                   );
                 },
               },
-              ...(isAdmin
+              ...(isAdmin || isOfficerUser
                 ? [
                     {
                       key: "actions",
@@ -671,7 +684,7 @@ export default function Brokers() {
                     License: {broker.license_number}
                   </p>
                 )}
-                {isAdmin && (
+                {(isAdmin || isOfficerUser) && (
                   <div className="flex items-center gap-2 pt-1">
                     <Button
                       variant="ghost"

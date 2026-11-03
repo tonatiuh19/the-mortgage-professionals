@@ -73,6 +73,8 @@ export interface BrokerFormValues {
   specializations: string[];
   /** Assigned Manager (admin or loan_officer) — only for partner-tier roles */
   created_by_broker_id: number | null;
+  /** Only owners may change this, and only for admins. */
+  is_platform_owner: boolean;
   // Profile fields
   bio: string;
   office_address: string;
@@ -161,6 +163,8 @@ export function BrokerWizard({
 
   const { selectedBrokerProfile, profileLoading, mortgageBankers } =
     useAppSelector((state) => state.brokers);
+  const currentUser = useAppSelector((state) => state.brokerAuth.user);
+  const isOfficerUser = currentUser?.role === "loan_officer";
 
   // Fetch full profile when editing
   useEffect(() => {
@@ -189,6 +193,7 @@ export function BrokerWizard({
           ? broker.specializations
           : [],
       created_by_broker_id: broker?.created_by_broker_id ?? null,
+      is_platform_owner: Boolean(broker?.is_platform_owner),
       bio: "",
       office_address: "",
       office_city: "",
@@ -571,7 +576,13 @@ export function BrokerWizard({
                                 ],
                               },
                             ] as const
-                          ).map((r) => {
+                          )
+                            .filter(
+                              (r) =>
+                                !isOfficerUser ||
+                                PARTNER_ROLES.includes(r.value as BrokerRole),
+                            )
+                            .map((r) => {
                             const isSelected = formik.values.role === r.value;
                             return (
                               <button
@@ -621,8 +632,36 @@ export function BrokerWizard({
                       </div>
                     </div>
 
+                    {mode === "edit" &&
+                      currentUser?.is_platform_owner &&
+                      formik.values.role === "admin" && (
+                        <label className="flex items-start gap-3 rounded-xl border border-accent/40 bg-accent/10 p-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="mt-1 h-4 w-4 accent-primary"
+                            checked={formik.values.is_platform_owner}
+                            onChange={(e) =>
+                              formik.setFieldValue(
+                                "is_platform_owner",
+                                e.target.checked,
+                              )
+                            }
+                          />
+                          <span>
+                            <span className="block text-sm font-semibold text-foreground">
+                              Platform Owner
+                            </span>
+                            <span className="block text-xs text-muted-foreground">
+                              Billing, subscription and payments. At least one
+                              owner is always required.
+                            </span>
+                          </span>
+                        </label>
+                      )}
+
                     {/* Assigned Manager — only for partner-tier roles */}
-                    {PARTNER_ROLES.includes(
+                    {!isOfficerUser &&
+                      PARTNER_ROLES.includes(
                       formik.values.role as BrokerRole,
                     ) && (
                       <div className="space-y-1.5">

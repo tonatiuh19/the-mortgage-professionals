@@ -1753,6 +1753,8 @@ paths:
           required: true
           schema: { type: integer }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Loan detail
           content:
@@ -1790,6 +1792,8 @@ paths:
               properties:
                 broker_id: { type: integer }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Broker assigned
           content:
@@ -1817,6 +1821,8 @@ paths:
               properties:
                 partner_broker_id: { type: integer, nullable: true }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Partner assigned
           content:
@@ -1845,6 +1851,8 @@ paths:
                 status: { type: string }
                 notes: { type: string }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Status updated
           content:
@@ -1884,6 +1892,8 @@ paths:
                     - builder
                     - other
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Source category updated
           content:
@@ -2014,6 +2024,8 @@ paths:
           required: true
           schema: { type: integer }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: MISMO XML file
           content:
@@ -2034,6 +2046,8 @@ paths:
           required: true
           schema: { type: integer }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Pre-approval letter data
           content:
@@ -2067,6 +2081,8 @@ paths:
               type: object
               description: Pre-approval letter fields
       responses:
+        '403':
+          description: Role not allowed
         "201":
           description: Letter created
           content:
@@ -2090,6 +2106,8 @@ paths:
               type: object
               description: Fields to update
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Updated
           content:
@@ -2106,6 +2124,8 @@ paths:
           required: true
           schema: { type: integer }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Deleted
           content:
@@ -2132,6 +2152,8 @@ paths:
               properties:
                 recipient_email: { type: string, format: email }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Email sent
           content:
@@ -3359,6 +3381,8 @@ paths:
                 notes: { type: string }
                 due_date: { type: string, format: date }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Updated
           content:
@@ -3440,6 +3464,8 @@ paths:
               properties:
                 comment: { type: string }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Approved
           content:
@@ -3465,6 +3491,8 @@ paths:
               properties:
                 comment: { type: string }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Reopened
           content:
@@ -3532,6 +3560,8 @@ paths:
           required: true
           schema: { type: integer }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Form responses
           content:
@@ -3563,6 +3593,8 @@ paths:
               properties:
                 responses: { type: array, items: { type: object } }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Submitted
           content:
@@ -3593,6 +3625,8 @@ paths:
                 file_size: { type: integer }
                 mime_type: { type: string }
       responses:
+        '403':
+          description: Role not allowed
         "201":
           description: Uploaded
           content:
@@ -3609,6 +3643,8 @@ paths:
           required: true
           schema: { type: integer }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Documents
           content:
@@ -3697,6 +3733,8 @@ paths:
           required: true
           schema: { type: integer }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Signatures
           content:
