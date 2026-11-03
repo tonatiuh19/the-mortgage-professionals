@@ -3095,12 +3095,7 @@ const AdminCalendar: React.FC = () => {
     }
   }, [calendarError, toast, dispatch]);
 
-  // Scheduler lives on the portal origin, not the admin subdomain
-  const portalOrigin =
-    window.location.hostname === "localhost" ||
-    window.location.hostname === "127.0.0.1"
-      ? window.location.origin
-      : `https://the-mortgage-professionals.vercel.app`;
+  const portalOrigin = window.location.origin;
 
   const schedulerUrl = user
     ? `${portalOrigin}/scheduler/${user.slug ?? user.public_token}`
