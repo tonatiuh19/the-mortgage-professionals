@@ -1045,15 +1045,15 @@ export function LoanOverlay({
       case "pending":
         return "text-yellow-600 bg-yellow-50 border-yellow-200";
       case "in_progress":
-        return "text-blue-600 bg-blue-50 border-blue-200";
+        return "text-primary bg-primary/10 border-primary/20";
       case "completed":
         return "text-emerald-600 bg-emerald-50 border-emerald-200";
       case "pending_approval":
-        return "text-purple-600 bg-purple-50 border-purple-200";
+        return "text-primary bg-primary/10 border-primary/20";
       case "approved":
         return "text-green-600 bg-green-50 border-green-200";
       case "reopened":
-        return "text-orange-600 bg-orange-50 border-orange-200";
+        return "text-amber-600 bg-amber-50 border-amber-200";
       case "cancelled":
         return "text-gray-600 bg-gray-50 border-gray-200";
       case "overdue":
@@ -1100,7 +1100,7 @@ export function LoanOverlay({
         {isLoadingDetails ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <Kanban className="h-12 w-12 mx-auto mb-3 animate-pulse text-blue-600" />
+              <Kanban className="h-12 w-12 mx-auto mb-3 animate-pulse text-primary" />
               <p className="text-sm text-gray-600">Loading details...</p>
             </div>
           </div>
@@ -1121,9 +1121,9 @@ export function LoanOverlay({
                     selectedLoan.priority === "urgent" &&
                       "bg-red-100 text-red-700 border-red-200",
                     selectedLoan.priority === "high" &&
-                      "bg-orange-100 text-orange-700 border-orange-200",
+                      "bg-amber-100 text-amber-700 border-amber-200",
                     selectedLoan.priority === "medium" &&
-                      "bg-blue-100 text-blue-700 border-blue-200",
+                      "bg-primary/10 text-primary border-primary/20",
                     selectedLoan.priority === "low" &&
                       "bg-gray-100 text-gray-700 border-gray-200",
                   )}
@@ -1308,11 +1308,11 @@ export function LoanOverlay({
                   }
                 >
                   <div className="flex items-center gap-3">
-                    <div className="p-2 bg-red-100 rounded-lg shrink-0">
-                      <Award className="h-5 w-5 text-red-600" />
+                    <div className="p-2 bg-primary/10 rounded-lg shrink-0">
+                      <Award className="h-5 w-5 text-primary" />
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-red-900">
+                      <p className="text-sm font-semibold text-primary">
                         Pre-Approved:{" "}
                         {new Intl.NumberFormat("en-US", {
                           style: "currency",
@@ -1320,7 +1320,7 @@ export function LoanOverlay({
                           minimumFractionDigits: 0,
                         }).format(preApprovalLetter.approved_amount)}
                       </p>
-                      <p className="text-xs text-red-600 flex items-center gap-1 flex-wrap">
+                      <p className="text-xs text-primary flex items-center gap-1 flex-wrap">
                         <Shield className="h-3 w-3" />
                         Max:{" "}
                         {new Intl.NumberFormat("en-US", {
@@ -1374,7 +1374,7 @@ export function LoanOverlay({
                           "gap-1.5 text-xs font-medium transition-all duration-200",
                           isDraftEditOpen
                             ? "text-slate-600 hover:bg-slate-100"
-                            : "text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700",
+                            : "text-primary hover:bg-primary/10 hover:text-primary",
                         )}
                       >
                         {isDraftEditOpen ? (
@@ -1487,7 +1487,7 @@ export function LoanOverlay({
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div className="space-y-1">
                             <label className="text-xs font-medium text-gray-600">
-                              Loan Type <span className="text-red-400">*</span>
+                              Loan Type <span className="text-primary/70">*</span>
                             </label>
                             <Select
                               value={draftForm.loan_type}
@@ -1950,7 +1950,7 @@ export function LoanOverlay({
                           Save Draft
                         </Button>
                         <Button
-                          className="flex-1 gap-1.5 text-sm bg-indigo-600 hover:bg-indigo-700 text-white"
+                          className="flex-1 gap-1.5 text-sm bg-primary hover:bg-primary text-white"
                           disabled={
                             isSavingDraft ||
                             isPromotingToAppSent ||
@@ -1982,21 +1982,21 @@ export function LoanOverlay({
                           </p>
                         </div>
                         {selectedLoan.property_value != null && (
-                          <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                            <p className="text-xs font-medium text-blue-700 mb-1">
+                          <div className="p-3 bg-primary/10 border border-primary/20 rounded-lg">
+                            <p className="text-xs font-medium text-primary mb-1">
                               Property Value
                             </p>
-                            <p className="text-xl font-bold text-blue-900">
+                            <p className="text-xl font-bold text-primary">
                               {formatCurrency(selectedLoan.property_value)}
                             </p>
                           </div>
                         )}
                         {selectedLoan.down_payment != null && (
-                          <div className="p-3 bg-violet-50 border border-violet-200 rounded-lg">
-                            <p className="text-xs font-medium text-violet-700 mb-1">
+                          <div className="p-3 bg-primary/10 border border-primary/20 rounded-lg">
+                            <p className="text-xs font-medium text-primary mb-1">
                               Down Payment
                             </p>
-                            <p className="text-xl font-bold text-violet-900">
+                            <p className="text-xl font-bold text-primary">
                               {formatCurrency(selectedLoan.down_payment)}
                             </p>
                           </div>
@@ -2018,7 +2018,7 @@ export function LoanOverlay({
                               %
                             </Badge>
                           )}
-                        <Badge className="bg-indigo-50 text-indigo-700 border-indigo-200 text-xs px-2 py-1 capitalize">
+                        <Badge className="bg-primary/10 text-primary border-primary/20 text-xs px-2 py-1 capitalize">
                           {selectedLoan.loan_type?.replace(/_/g, " ")}
                         </Badge>
                         {selectedLoan.property_type && (
@@ -2028,7 +2028,7 @@ export function LoanOverlay({
                           </Badge>
                         )}
                         {selectedLoan.loan_term_months && (
-                          <Badge className="bg-teal-50 text-teal-700 border-teal-200 text-xs px-2 py-1">
+                          <Badge className="bg-primary/10 text-primary border-primary/20 text-xs px-2 py-1">
                             {selectedLoan.loan_term_months >= 12
                               ? `${selectedLoan.loan_term_months / 12}yr`
                               : `${selectedLoan.loan_term_months}mo`}{" "}
@@ -2042,7 +2042,7 @@ export function LoanOverlay({
                           </Badge>
                         )}
                         {selectedLoan.citizenship_status && (
-                          <Badge className="bg-sky-50 text-sky-700 border-sky-200 text-xs px-2 py-1 capitalize">
+                          <Badge className="bg-primary/10 text-primary border-primary/20 text-xs px-2 py-1 capitalize">
                             <Globe className="h-3 w-3 mr-1" />
                             {selectedLoan.citizenship_status.replace(/_/g, " ")}
                           </Badge>
@@ -2274,7 +2274,7 @@ export function LoanOverlay({
                 <Card className="border-gray-200 shadow-sm">
                   <CardHeader className="pb-3 border-b border-gray-100">
                     <CardTitle className="text-lg flex items-center gap-2 text-gray-900">
-                      <UserPlus className="h-5 w-5 text-blue-600" />
+                      <UserPlus className="h-5 w-5 text-primary" />
                       Assigned Loan Officer
                     </CardTitle>
                   </CardHeader>
@@ -2282,8 +2282,8 @@ export function LoanOverlay({
                     {selectedLoan.effective_broker_first_name ||
                     selectedLoan.broker_first_name ? (
                       <div className="flex items-center gap-2 mb-3">
-                        <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
-                          <User className="h-4 w-4 text-blue-600" />
+                        <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                          <User className="h-4 w-4 text-primary" />
                         </div>
                         <div>
                           <p className="text-sm font-medium text-gray-900">
@@ -2353,15 +2353,15 @@ export function LoanOverlay({
                 <Card className="border-gray-200 shadow-sm">
                   <CardHeader className="pb-3 border-b border-gray-100">
                     <CardTitle className="text-lg flex items-center gap-2 text-gray-900">
-                      <Users className="h-5 w-5 text-violet-600" />
+                      <Users className="h-5 w-5 text-primary" />
                       Assigned Partner
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="pt-4">
                     {selectedLoan.partner_first_name ? (
                       <div className="flex items-center gap-2 mb-3">
-                        <div className="h-8 w-8 rounded-full bg-violet-100 flex items-center justify-center">
-                          <User className="h-4 w-4 text-violet-600" />
+                        <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                          <User className="h-4 w-4 text-primary" />
                         </div>
                         <div>
                           <p className="text-sm font-medium text-gray-900">
@@ -2419,7 +2419,7 @@ export function LoanOverlay({
                 <Card className="border-gray-200 shadow-sm">
                   <CardHeader className="pb-3 border-b border-gray-100">
                     <CardTitle className="text-lg flex items-center gap-2 text-gray-900">
-                      <ArrowRightLeft className="h-5 w-5 text-blue-600" />
+                      <ArrowRightLeft className="h-5 w-5 text-primary" />
                       Pipeline Status
                     </CardTitle>
                   </CardHeader>
@@ -2504,7 +2504,7 @@ export function LoanOverlay({
                 <CardHeader className="pb-3 border-b border-gray-100">
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <CardTitle className="text-lg flex items-center gap-2 text-gray-900">
-                      <FileText className="h-5 w-5 text-blue-600" />
+                      <FileText className="h-5 w-5 text-primary" />
                       Tasks
                     </CardTitle>
                     <div className="flex items-center gap-2 flex-wrap">
@@ -2518,7 +2518,7 @@ export function LoanOverlay({
                           await dispatch(fetchLoanDetails(selectedLoan.id));
                           setIsRefreshingTasks(false);
                         }}
-                        className="h-8 w-8 p-0 text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition-colors duration-200"
+                        className="h-8 w-8 p-0 text-gray-500 hover:text-primary hover:bg-primary/10 transition-colors duration-200"
                         title="Refresh tasks"
                       >
                         <RefreshCw
@@ -2587,7 +2587,7 @@ export function LoanOverlay({
                                 {task.status === "completed" ? (
                                   <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                                 ) : task.status === "in_progress" ? (
-                                  <Clock className="h-4 w-4 text-blue-600" />
+                                  <Clock className="h-4 w-4 text-primary" />
                                 ) : task.status === "overdue" ? (
                                   <AlertCircle className="h-4 w-4 text-red-600" />
                                 ) : (
@@ -2664,9 +2664,9 @@ export function LoanOverlay({
                                     task.priority === "urgent" &&
                                       "bg-red-100 text-red-700",
                                     task.priority === "high" &&
-                                      "bg-orange-100 text-orange-700",
+                                      "bg-amber-100 text-amber-700",
                                     task.priority === "medium" &&
-                                      "bg-blue-100 text-blue-700",
+                                      "bg-primary/10 text-primary",
                                     task.priority === "low" &&
                                       "bg-gray-100 text-gray-700",
                                   )}
@@ -2715,7 +2715,7 @@ export function LoanOverlay({
                                     <Button
                                       variant="outline"
                                       size="sm"
-                                      className="h-8 text-xs gap-1 border-orange-200 text-orange-700 hover:bg-orange-50 hover:border-orange-300 hover:text-orange-800 transition-colors duration-200"
+                                      className="h-8 text-xs gap-1 border-amber-200 text-amber-700 hover:bg-amber-50 hover:border-amber-300 hover:text-amber-800 transition-colors duration-200"
                                       onClick={() =>
                                         handleOpenReopenDialog(task.id)
                                       }
@@ -2755,7 +2755,7 @@ export function LoanOverlay({
                                 ) : taskSignatures[task.id]?.sign_document ? (
                                   <div className="space-y-3">
                                     <h6 className="text-xs font-semibold text-gray-700 flex items-center gap-1">
-                                      <PenTool className="h-3 w-3 text-purple-600" />
+                                      <PenTool className="h-3 w-3 text-primary" />
                                       Signed Document
                                     </h6>
                                     <div className="bg-white p-3 rounded border border-gray-200 space-y-2">
@@ -2868,7 +2868,7 @@ export function LoanOverlay({
                                   ).length > 0 && (
                                     <div>
                                       <h6 className="text-xs font-semibold mb-2 text-gray-700 flex items-center gap-1">
-                                        <FileText className="h-3 w-3 text-blue-600" />
+                                        <FileText className="h-3 w-3 text-primary" />
                                         Form Responses
                                       </h6>
                                       <div className="space-y-2">
@@ -2900,7 +2900,7 @@ export function LoanOverlay({
                                   {taskDocuments[task.id]?.pdfs?.length > 0 && (
                                     <div>
                                       <h6 className="text-xs font-semibold mb-2 text-gray-700 flex items-center gap-1">
-                                        <File className="h-3 w-3 text-red-600" />
+                                        <File className="h-3 w-3 text-primary" />
                                         PDF Documents
                                       </h6>
                                       <div className="space-y-2">
@@ -2911,7 +2911,7 @@ export function LoanOverlay({
                                               className="flex items-center justify-between bg-white p-2 rounded border border-gray-200"
                                             >
                                               <div className="flex items-center gap-2 min-w-0">
-                                                <File className="h-3 w-3 text-red-600 shrink-0" />
+                                                <File className="h-3 w-3 text-primary shrink-0" />
                                                 <span className="text-xs text-gray-700 truncate">
                                                   {doc.filename}
                                                 </span>
@@ -2920,7 +2920,7 @@ export function LoanOverlay({
                                                 href={doc.path}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 shrink-0 ml-2"
+                                                className="text-xs text-primary hover:text-primary flex items-center gap-1 shrink-0 ml-2"
                                               >
                                                 <ExternalLink className="h-3 w-3" />
                                                 View
@@ -2938,7 +2938,7 @@ export function LoanOverlay({
                                       ?.length > 0) && (
                                     <div>
                                       <h6 className="text-xs font-semibold mb-2 text-gray-700 flex items-center gap-1">
-                                        <Image className="h-3 w-3 text-blue-600" />
+                                        <Image className="h-3 w-3 text-primary" />
                                         Images
                                       </h6>
                                       <div className="space-y-1">
@@ -2946,7 +2946,7 @@ export function LoanOverlay({
                                           ?.main && (
                                           <div className="flex items-center justify-between bg-white p-2 rounded border border-gray-200">
                                             <div className="flex items-center gap-2 min-w-0">
-                                              <Image className="h-3 w-3 text-blue-600 shrink-0" />
+                                              <Image className="h-3 w-3 text-primary shrink-0" />
                                               <span className="text-xs text-gray-700 truncate">
                                                 {taskDocuments[task.id].images
                                                   .main.filename || "Image"}
@@ -2959,7 +2959,7 @@ export function LoanOverlay({
                                               }
                                               target="_blank"
                                               rel="noopener noreferrer"
-                                              className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 shrink-0 ml-2"
+                                              className="text-xs text-primary hover:text-primary flex items-center gap-1 shrink-0 ml-2"
                                             >
                                               <ExternalLink className="h-3 w-3" />
                                               View
@@ -2975,7 +2975,7 @@ export function LoanOverlay({
                                               className="flex items-center justify-between bg-white p-2 rounded border border-gray-200"
                                             >
                                               <div className="flex items-center gap-2 min-w-0">
-                                                <Image className="h-3 w-3 text-blue-600 shrink-0" />
+                                                <Image className="h-3 w-3 text-primary shrink-0" />
                                                 <span className="text-xs text-gray-700 truncate">
                                                   {img.filename ||
                                                     `Image ${idx + 2}`}
@@ -2985,7 +2985,7 @@ export function LoanOverlay({
                                                 href={img.path}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 shrink-0 ml-2"
+                                                className="text-xs text-primary hover:text-primary flex items-center gap-1 shrink-0 ml-2"
                                               >
                                                 <ExternalLink className="h-3 w-3" />
                                                 View
@@ -3091,7 +3091,7 @@ export function LoanOverlay({
           >
             <DialogContent className="w-[calc(100%-2rem)] max-w-3xl max-h-[90vh] overflow-y-auto">
               <DialogTitle className="flex items-center gap-2">
-                <PenTool className="h-5 w-5 text-purple-600" />
+                <PenTool className="h-5 w-5 text-primary" />
                 Signed Document —{" "}
                 {
                   taskSignatures[viewSignatureTaskId].sign_document
@@ -3205,7 +3205,7 @@ export function LoanOverlay({
             <Button
               onClick={handleReopenTask}
               disabled={isSubmitting || !reopenReason.trim()}
-              className="bg-orange-600 hover:bg-orange-700 transition-colors duration-200"
+              className="bg-amber-600 hover:bg-amber-700 transition-colors duration-200"
             >
               {isSubmitting ? "Reopening..." : "Reopen Task"}
             </Button>
@@ -3284,7 +3284,7 @@ export function LoanOverlay({
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <label className="text-sm font-medium text-gray-700">
-                Comment <span className="text-red-500">*</span>
+                Comment <span className="text-primary">*</span>
               </label>
               <Textarea
                 placeholder="Example: Client provided updated documents, needs review...  OR  Task priority changed due to timeline adjustment..."
@@ -3345,7 +3345,7 @@ export function LoanOverlay({
             id="add-tasks-dialog-title"
             className="flex items-center gap-2"
           >
-            <Plus className="h-5 w-5 text-blue-600" />
+            <Plus className="h-5 w-5 text-primary" />
             Add Tasks from Templates
           </DialogTitle>
           <DialogDescription id="add-tasks-dialog-description">
@@ -3379,9 +3379,9 @@ export function LoanOverlay({
                             template.priority === "urgent" &&
                               "bg-red-100 text-red-700",
                             template.priority === "high" &&
-                              "bg-orange-100 text-orange-700",
+                              "bg-amber-100 text-amber-700",
                             template.priority === "medium" &&
-                              "bg-blue-100 text-blue-700",
+                              "bg-primary/10 text-primary",
                             template.priority === "low" &&
                               "bg-gray-100 text-gray-700",
                           )}

@@ -40,7 +40,7 @@ export function useBillingOverdue(enabled: boolean): BillingOverdueInvoice | nul
 /** Read-only access for components that don't own the polling. */
 export function useBillingOverdueValue(): BillingOverdueInvoice | null {
   const isPlatformOwner = useAppSelector(
-    (s) => s.brokerAuth.user?.role === "admin",
+    (s) => Boolean(s.brokerAuth.user?.is_platform_owner),
   );
   const overdue = useAppSelector((s) => s.billing.overdue);
   return isPlatformOwner ? overdue : null;

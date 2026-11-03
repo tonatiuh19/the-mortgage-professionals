@@ -175,14 +175,14 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
       label: "Billing",
       icon: <CreditCard className="h-4 w-4" />,
       path: "/admin/billing",
-      hidden: !isAdmin,
+      hidden: !user?.is_platform_owner,
     },
     {
       id: "email",
       label: "Email",
       icon: <Mail className="h-4 w-4" />,
       path: "/admin/email",
-      hidden: isPartner,
+      hidden: true,
     },
     {
       id: "reminder-flows",
@@ -306,6 +306,20 @@ const AdminLayout = ({ children }: AdminLayoutProps) => {
     effectiveMenuItems,
     navigate,
   ]);
+
+  // Route guard: sections hidden from this role can't be opened by URL either
+  React.useEffect(() => {
+    if (!user) return;
+    const allowedPaths = new Set(effectiveMenuItems.map((item) => item.path));
+    const isBlocked = menuItems.some(
+      (item) =>
+        item.path !== "/admin" &&
+        !allowedPaths.has(item.path) &&
+        (location.pathname === item.path ||
+          location.pathname.startsWith(item.path + "/")),
+    );
+    if (isBlocked) navigate("/admin", { replace: true });
+  }, [user, location.pathname, effectiveMenuItems, menuItems, navigate]);
 
   // Shared menu renderer used by both desktop sidebar and mobile Sheet
   const renderMenuItems = (onItemClick?: () => void) =>

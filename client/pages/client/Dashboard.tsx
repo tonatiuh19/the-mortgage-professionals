@@ -79,12 +79,12 @@ const Dashboard = () => {
 
   const getStatusColor = (status: string) => {
     const colors: { [key: string]: string } = {
-      submitted: "bg-blue-500/10 text-blue-500 border-blue-500/20",
+      submitted: "bg-primary/10 text-primary border-primary/20",
       under_review: "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
       approved: "bg-green-500/10 text-green-500 border-green-500/20",
       documents_pending:
-        "bg-orange-500/10 text-orange-500 border-orange-500/20",
-      denied: "bg-red-500/10 text-red-500 border-red-500/20",
+        "bg-amber-500/10 text-amber-500 border-amber-500/20",
+      denied: "bg-primary/10 text-primary border-primary/20",
     };
     return colors[status] || "bg-gray-500/10 text-gray-500 border-gray-500/20";
   };
@@ -170,15 +170,15 @@ const Dashboard = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
         >
-          <Card className="border-orange-500/20 bg-gradient-to-br from-orange-500/5 to-transparent hover:shadow-lg transition-shadow">
+          <Card className="border-amber-500/20 bg-gradient-to-br from-amber-500/5 to-transparent hover:shadow-lg transition-shadow">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">
                 Pending Tasks
               </CardTitle>
-              <Clock className="h-4 w-4 text-orange-500" />
+              <Clock className="h-4 w-4 text-amber-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-orange-500">
+              <div className="text-3xl font-bold text-amber-500">
                 {pendingTasks.length}
               </div>
               <p className="text-xs text-muted-foreground mt-1">
@@ -216,15 +216,15 @@ const Dashboard = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
         >
-          <Card className="border-purple-500/20 bg-gradient-to-br from-purple-500/5 to-transparent hover:shadow-lg transition-shadow">
+          <Card className="border-primary/20 bg-gradient-to-br from-primary/5 to-transparent hover:shadow-lg transition-shadow">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">
                 Overall Progress
               </CardTitle>
-              <Trophy className="h-4 w-4 text-purple-500" />
+              <Trophy className="h-4 w-4 text-primary" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-purple-500">
+              <div className="text-3xl font-bold text-primary">
                 {overallProgress.toFixed(0)}%
               </div>
               <Progress value={overallProgress} className="mt-2" />
@@ -241,7 +241,7 @@ const Dashboard = () => {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.5 }}
           >
-            <Card className="border-red-500/30 bg-gradient-to-br from-red-500/5 to-transparent">
+            <Card className="border-primary/30 bg-gradient-to-br from-primary/5 to-transparent">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-red-500">
                   <AlertCircle className="h-5 w-5" />
@@ -252,7 +252,7 @@ const Dashboard = () => {
                 {urgentTasks.slice(0, 3).map((task) => (
                   <div
                     key={task.id}
-                    className="flex items-start justify-between rounded-lg border border-red-500/20 bg-red-500/5 p-4"
+                    className="flex items-start justify-between rounded-lg border border-primary/20 bg-primary/5 p-4"
                   >
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-1">
@@ -378,7 +378,7 @@ const Dashboard = () => {
                         {task.status === "completed" ? (
                           <CheckCircle2 className="h-5 w-5 text-green-500" />
                         ) : (
-                          <Clock className="h-5 w-5 text-orange-500" />
+                          <Clock className="h-5 w-5 text-amber-500" />
                         )}
                         <div>
                           <p className="font-medium text-sm">{task.title}</p>

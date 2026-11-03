@@ -28,9 +28,9 @@ const UnderConstruction: React.FC<UnderConstructionProps> = ({
       <div className="max-w-3xl w-full text-center">
         {/* Icon Circle */}
         <div className="relative inline-flex items-center justify-center mb-8">
-          <div className="w-48 h-48 rounded-full bg-gradient-to-br from-purple-100 to-purple-50 dark:from-purple-950/20 dark:to-purple-900/10 flex items-center justify-center">
+          <div className="w-48 h-48 rounded-full bg-gradient-to-br from-primary to-primary dark:from-primary/20 dark:to-primary/10 flex items-center justify-center">
             <DisplayIcon
-              className="h-24 w-24 text-purple-500"
+              className="h-24 w-24 text-primary"
               strokeWidth={1.5}
             />
           </div>
@@ -40,7 +40,7 @@ const UnderConstruction: React.FC<UnderConstructionProps> = ({
         </div>
 
         {/* Title */}
-        <h1 className="text-4xl sm:text-5xl font-bold mb-4 bg-gradient-to-r from-purple-600 to-purple-400 bg-clip-text text-transparent">
+        <h1 className="text-4xl sm:text-5xl font-bold mb-4 bg-gradient-to-r from-primary to-primary bg-clip-text text-transparent">
           {title}
         </h1>
 
@@ -57,7 +57,7 @@ const UnderConstruction: React.FC<UnderConstructionProps> = ({
               <Badge
                 key={index}
                 variant="outline"
-                className="px-6 py-2.5 text-sm font-medium bg-purple-50/50 dark:bg-purple-950/20 border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/30 transition-colors"
+                className="px-6 py-2.5 text-sm font-medium bg-primary/50 dark:bg-primary/20 border-primary/20 dark:border-primary text-primary dark:text-primary hover:bg-primary/10 dark:hover:bg-primary/30 transition-colors"
               >
                 {feature}
               </Badge>

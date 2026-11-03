@@ -806,11 +806,11 @@ const VoiceCallPanel: React.FC<VoiceCallPanelProps> = ({
       {/* Mic preemption banner — shows when the OS has paused the browser's
           microphone (most often: an incoming cell-phone call on macOS/iOS). */}
       {micPreempted && callState === "in-call" && (
-        <div className="flex items-start gap-2 text-xs bg-red-50 border border-red-200 rounded px-3 py-2 animate-in fade-in slide-in-from-top-1 duration-200">
-          <MicOff className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+        <div className="flex items-start gap-2 text-xs bg-primary/10 border border-primary/20 rounded px-3 py-2 animate-in fade-in slide-in-from-top-1 duration-200">
+          <MicOff className="h-4 w-4 text-primary shrink-0 mt-0.5" />
           <div className="flex-1 leading-snug">
-            <p className="font-semibold text-red-700">Microphone unavailable</p>
-            <p className="text-red-600/90">
+            <p className="font-semibold text-primary">Microphone unavailable</p>
+            <p className="text-primary">
               Another app (likely a phone call) is using your mic. The caller
               can't hear you. Call will end automatically if not restored.
             </p>

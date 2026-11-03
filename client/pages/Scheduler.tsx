@@ -6,6 +6,7 @@ import {
   CalendarDays,
   Clock,
   Phone,
+  MapPin,
   Video,
   ChevronLeft,
   ChevronRight,
@@ -298,12 +299,8 @@ const SchedulerPage: React.FC = () => {
       setMeetingType("phone");
       return;
     }
-    if (publicBroker.allow_video) {
-      setMeetingType("video");
-      return;
-    }
-    if (publicBroker.allow_teams) {
-      setMeetingType("teams");
+    if (publicBroker.allow_office) {
+      setMeetingType("office");
     }
   }, [publicBroker]);
 
@@ -496,16 +493,10 @@ const SchedulerPage: React.FC = () => {
                       <span>Phone call available</span>
                     </div>
                   )}
-                  {publicBroker.allow_video && (
+                  {publicBroker.allow_office && (
                     <div className="flex items-center gap-2.5 text-sm text-foreground/80">
-                      <Video className="h-4 w-4 text-primary shrink-0" />
-                      <span>Video call available (Zoom)</span>
-                    </div>
-                  )}
-                  {publicBroker.allow_teams && (
-                    <div className="flex items-center gap-2.5 text-sm text-foreground/80">
-                      <Video className="h-4 w-4 text-primary shrink-0" />
-                      <span>Video call available (Microsoft Teams)</span>
+                      <MapPin className="h-4 w-4 text-primary shrink-0" />
+                      <span>Office visit available</span>
                     </div>
                   )}
                 </div>
@@ -565,13 +556,9 @@ const SchedulerPage: React.FC = () => {
                         {meetingType === "phone" ? (
                           <Phone className="h-4 w-4 text-primary" />
                         ) : (
-                          <Video className="h-4 w-4 text-primary" />
+                          <MapPin className="h-4 w-4 text-primary" />
                         )}
-                        {meetingType === "phone"
-                          ? "Phone call"
-                          : meetingType === "teams"
-                            ? "Teams video call"
-                            : "Zoom video call"}
+                        {meetingType === "phone" ? "Phone call" : "Office visit"}
                       </div>
                     )}
                   </motion.div>
@@ -752,20 +739,12 @@ const SchedulerPage: React.FC = () => {
                           desc: "We'll call you",
                         });
                       }
-                      if (publicBroker.allow_video) {
+                      if (publicBroker.allow_office) {
                         meetingOptions.push({
-                          type: "video",
-                          icon: Video,
-                          label: "Video Call (Zoom)",
-                          desc: "Zoom meeting",
-                        });
-                      }
-                      if (publicBroker.allow_teams) {
-                        meetingOptions.push({
-                          type: "teams",
-                          icon: Video,
-                          label: "Video Call (Teams)",
-                          desc: "Microsoft Teams meeting",
+                          type: "office",
+                          icon: MapPin,
+                          label: "Office Visit",
+                          desc: "Meet at our office",
                         });
                       }
 
@@ -823,53 +802,6 @@ const SchedulerPage: React.FC = () => {
                         </div>
                       ) : null;
                     })()}
-
-                    {/* Only phone allowed */}
-                    {publicBroker.allow_phone && !publicBroker.allow_video && (
-                      <div className="mb-6 rounded-xl border border-sky-500/20 bg-sky-500/8 p-4 flex items-center gap-3">
-                        <Phone className="h-5 w-5 text-sky-400 shrink-0" />
-                        <div>
-                          <p className="font-semibold text-foreground text-sm">
-                            Phone Call
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Your banker will call you at the scheduled time.
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Only video allowed */}
-                    {!publicBroker.allow_phone && publicBroker.allow_video && (
-                      <div className="mb-6 rounded-xl border border-green-500/20 bg-green-500/8 p-4 flex items-center gap-3">
-                        <Video className="h-5 w-5 text-green-400 shrink-0" />
-                        <div>
-                          <p className="font-semibold text-foreground text-sm">
-                            Video Call via Zoom
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            No download required — works in any browser.
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {!publicBroker.allow_phone &&
-                      !publicBroker.allow_video &&
-                      publicBroker.allow_teams && (
-                        <div className="mb-6 rounded-xl border border-green-500/20 bg-green-500/8 p-4 flex items-center gap-3">
-                          <Video className="h-5 w-5 text-green-400 shrink-0" />
-                          <div>
-                            <p className="font-semibold text-foreground text-sm">
-                              Video Call via Microsoft Teams
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              A Teams link will be sent in your confirmation
-                              email.
-                            </p>
-                          </div>
-                        </div>
-                      )}
 
                     <form onSubmit={formik.handleSubmit} className="space-y-4">
                       <div>
@@ -1063,8 +995,8 @@ const SchedulerPage: React.FC = () => {
 
                     {(bookingSuccess.teams_join_url ||
                       bookingSuccess.zoom_join_url) && (
-                      <div className="rounded-xl border border-blue-500/20 bg-blue-500/8 p-4 mb-6">
-                        <p className="text-sm font-semibold text-blue-400 mb-2 flex items-center gap-1.5">
+                      <div className="rounded-xl border border-primary/20 bg-primary/8 p-4 mb-6">
+                        <p className="text-sm font-semibold text-primary/70 mb-2 flex items-center gap-1.5">
                           <Video className="h-4 w-4" />
                           {bookingSuccess.meeting_type === "teams"
                             ? "Teams Meeting Link"

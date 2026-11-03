@@ -1426,7 +1426,7 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
                                   {task.template_id && (
                                     <Badge
                                       variant="secondary"
-                                      className="text-xs bg-blue-100 text-blue-700"
+                                      className="text-xs bg-primary/10 text-primary"
                                     >
                                       Template
                                     </Badge>
@@ -1467,7 +1467,7 @@ const NewLoanWizard: React.FC<NewLoanWizardProps> = ({
                           <ExternalLink className="h-3 w-3 mr-2" />
                           Create New Template
                         </Button>
-                        <p className="text-xs text-blue-600 dark:text-blue-400 mt-3 flex items-start gap-1.5">
+                        <p className="text-xs text-primary dark:text-primary mt-3 flex items-start gap-1.5">
                           <FileText className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
                           <span>
                             Don't worry! Your progress will be saved as a draft.

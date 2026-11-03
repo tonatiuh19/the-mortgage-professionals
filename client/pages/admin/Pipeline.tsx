@@ -262,25 +262,25 @@ const Pipeline = () => {
     {
       id: "app_sent",
       name: "App Sent",
-      color: "bg-indigo-50",
-      headerColor: "bg-indigo-100",
-      textColor: "text-indigo-700",
+      color: "bg-primary/10",
+      headerColor: "bg-primary/10",
+      textColor: "text-primary",
       description: "Application sent to client",
     },
     {
       id: "application_received",
       name: "Application Received",
-      color: "bg-blue-50",
-      headerColor: "bg-blue-100",
-      textColor: "text-blue-700",
+      color: "bg-primary/10",
+      headerColor: "bg-primary/10",
+      textColor: "text-primary",
       description: "Application received & reviewing",
     },
     {
       id: "preapproved",
       name: "Pre-Approved",
-      color: "bg-teal-50",
-      headerColor: "bg-teal-100",
-      textColor: "text-teal-700",
+      color: "bg-primary/10",
+      headerColor: "bg-primary/10",
+      textColor: "text-primary",
       description: "Client preapproved",
     },
     {
@@ -294,25 +294,25 @@ const Pipeline = () => {
     {
       id: "submitted_to_underwriting",
       name: "Submitted to Underwriting",
-      color: "bg-orange-50",
-      headerColor: "bg-orange-100",
-      textColor: "text-orange-700",
+      color: "bg-amber-50",
+      headerColor: "bg-amber-100",
+      textColor: "text-amber-700",
       description: "Submitted to underwriting",
     },
     {
       id: "approved_with_conditions",
       name: "Approved with Conditions",
-      color: "bg-purple-50",
-      headerColor: "bg-purple-100",
-      textColor: "text-purple-700",
+      color: "bg-primary/10",
+      headerColor: "bg-primary/10",
+      textColor: "text-primary",
       description: "Conditions pending",
     },
     {
       id: "clear_to_close",
       name: "Clear to Close",
-      color: "bg-indigo-50",
-      headerColor: "bg-indigo-100",
-      textColor: "text-indigo-700",
+      color: "bg-primary/10",
+      headerColor: "bg-primary/10",
+      textColor: "text-primary",
       description: "Cleared for closing",
     },
     {
@@ -435,15 +435,15 @@ const Pipeline = () => {
                 <span className="flex items-center gap-1.5">
                   <TrendingUp className="h-3.5 w-3.5 text-green-500" />
                   {loans.length} active applications
-                  <Badge className="bg-blue-50 text-blue-700 text-[10px] h-4 px-1.5">
+                  <Badge className="bg-primary/10 text-primary text-[10px] h-4 px-1.5">
                     Live
                   </Badge>
                 </span>
               ) : (
                 <span className="flex items-center gap-1.5">
-                  <Users className="h-3.5 w-3.5 text-violet-500" />
+                  <Users className="h-3.5 w-3.5 text-primary" />
                   {realtorProspects.length} realtor prospects
-                  <Badge className="bg-violet-50 text-violet-700 text-[10px] h-4 px-1.5">
+                  <Badge className="bg-primary/10 text-primary text-[10px] h-4 px-1.5">
                     Live
                   </Badge>
                 </span>
@@ -766,7 +766,7 @@ const Pipeline = () => {
                           "flex-1 space-y-3 p-3 rounded-lg border-2 min-h-[400px] transition-all duration-150",
                           dragOverColumnId === column.id &&
                             draggingFromColumn !== column.id
-                            ? "border-blue-400 bg-blue-50 scale-[1.01]"
+                            ? "border-primary bg-primary/10 scale-[1.01]"
                             : cn("border-gray-200", column.color),
                         )}
                         onDragOver={handleDragOver}
@@ -795,16 +795,16 @@ const Pipeline = () => {
                             className={cn(
                               "bg-white rounded-lg border p-3 transition-all duration-150 select-none",
                               draggingLoanId === loan.id
-                                ? "opacity-40 scale-95 border-blue-400 shadow-inner cursor-grabbing"
-                                : "border-gray-200 cursor-grab hover:shadow-md hover:border-blue-300 active:cursor-grabbing",
+                                ? "opacity-40 scale-95 border-primary shadow-inner cursor-grabbing"
+                                : "border-gray-200 cursor-grab hover:shadow-md hover:border-primary/20 active:cursor-grabbing",
                             )}
                           >
                             <div
                               className={cn(
                                 "w-full h-0.5 rounded-full mb-3",
                                 loan.priority === "urgent" && "bg-red-500",
-                                loan.priority === "high" && "bg-orange-500",
-                                loan.priority === "medium" && "bg-blue-500",
+                                loan.priority === "high" && "bg-amber-500",
+                                loan.priority === "medium" && "bg-primary",
                                 loan.priority === "low" && "bg-gray-400",
                               )}
                             />
@@ -868,7 +868,7 @@ const Pipeline = () => {
                                   </span>
                                 </div>
                                 {loan.estimated_close_date && (
-                                  <span className="text-xs text-blue-600">
+                                  <span className="text-xs text-primary">
                                     Close:{" "}
                                     {new Date(
                                       loan.estimated_close_date,

@@ -21,16 +21,16 @@ type Props = {
 };
 
 const toneBar: Record<BillingMeterTone, string> = {
-  blue: "bg-blue-500",
-  orange: "bg-orange-500",
-  purple: "bg-purple-500",
+  blue: "bg-primary",
+  orange: "bg-amber-500",
+  purple: "bg-primary",
   red: "bg-red-500",
 };
 
 const toneTrack: Record<BillingMeterTone, string> = {
-  blue: "bg-blue-500/20",
-  orange: "bg-orange-500/20",
-  purple: "bg-purple-500/20",
+  blue: "bg-primary/20",
+  orange: "bg-amber-500/20",
+  purple: "bg-primary/20",
   red: "bg-red-500/20",
 };
 
@@ -94,9 +94,9 @@ export function BillingUsageMeter({
             className={cn(
               "text-xs font-medium tabular-nums",
               pct >= 100
-                ? "text-red-600"
+                ? "text-primary"
                 : pct >= 80
-                  ? "text-orange-600"
+                  ? "text-amber-600"
                   : "text-muted-foreground",
             )}
           >
@@ -141,11 +141,11 @@ export function BillingUsageMeter({
       {stacked ? (
         <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-blue-500" />
+            <span className="h-2 w-2 rounded-full bg-primary" />
             {stacked.primaryLabel}: {formatValue(stacked.primaryValue)}
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-full bg-orange-500" />
+            <span className="h-2 w-2 rounded-full bg-amber-500" />
             {stacked.secondaryLabel}: {formatValue(stacked.secondaryValue)}
           </span>
         </div>

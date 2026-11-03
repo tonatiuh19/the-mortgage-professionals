@@ -1151,7 +1151,7 @@ const TaskWizard: React.FC<TaskWizardProps> = ({
                             <p className="text-sm font-medium text-primary dark:text-primary">
                               Each document field = one specific upload
                             </p>
-                            <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
+                            <p className="text-xs text-primary dark:text-primary mt-1">
                               E.g., "INE Front", "INE Back", "Proof of Address"
                               - clients will upload one file per field.
                             </p>

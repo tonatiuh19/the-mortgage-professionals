@@ -21,7 +21,7 @@ export function useBillingAccess() {
   } = useAppSelector((s) => s.billing);
   const sessionToken = useAppSelector((s) => s.brokerAuth.sessionToken);
   const isPlatformOwner =
-    useAppSelector((s) => s.brokerAuth.user?.role) === "admin";
+    useAppSelector((s) => Boolean(s.brokerAuth.user?.is_platform_owner));
   const accessRetryAttempted = useRef(false);
 
   useEffect(() => {

@@ -88,7 +88,7 @@ export default function BrokerShareLinkModal({
         {/* Header */}
         <DialogHeader className="px-6 pt-6 pb-4 border-b">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-red-500 to-red-700 flex items-center justify-center shadow-sm shrink-0">
+            <div className="h-10 w-10 rounded-full bg-primary flex items-center justify-center shadow-sm shrink-0">
               <Share2 className="h-5 w-5 text-white" />
             </div>
             <div>
@@ -106,8 +106,8 @@ export default function BrokerShareLinkModal({
         <div className="px-6 py-5 space-y-5">
           {/* Broker identity card */}
           <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border">
-            <div className="h-9 w-9 rounded-full bg-red-100 flex items-center justify-center shrink-0">
-              <User className="h-4 w-4 text-red-600" />
+            <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+              <User className="h-4 w-4 text-primary" />
             </div>
             <div>
               <p className="text-sm font-semibold text-gray-900">
@@ -120,8 +120,8 @@ export default function BrokerShareLinkModal({
                 className={cn(
                   "text-xs px-2 py-0.5 rounded-full font-medium",
                   broker?.role === "admin"
-                    ? "bg-purple-100 text-purple-700"
-                    : "bg-blue-100 text-blue-700",
+                    ? "bg-primary/10 text-primary"
+                    : "bg-accent/15 text-primary",
                 )}
               >
                 {broker?.role === "admin" ? "Mortgage Banker" : "Partner"}
@@ -145,7 +145,7 @@ export default function BrokerShareLinkModal({
                   exit={{ opacity: 0 }}
                   className="flex items-center justify-center py-6"
                 >
-                  <Loader2 className="h-5 w-5 animate-spin text-red-500 mr-2" />
+                  <Loader2 className="h-5 w-5 animate-spin text-primary mr-2" />
                   <span className="text-sm text-gray-500">
                     Loading share link…
                   </span>
@@ -194,9 +194,9 @@ export default function BrokerShareLinkModal({
                   </div>
 
                   {/* Info note */}
-                  <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg border border-blue-100">
-                    <AlertCircle className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
-                    <p className="text-xs text-blue-700 leading-relaxed">
+                  <div className="flex items-start gap-2 p-3 bg-secondary rounded-lg border border-border">
+                    <AlertCircle className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                    <p className="text-xs text-foreground leading-relaxed">
                       When clients submit an application through this link, it
                       will be automatically associated with{" "}
                       <strong>{brokerName}</strong>.
@@ -208,7 +208,7 @@ export default function BrokerShareLinkModal({
                   key="error"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  className="flex items-center gap-2 text-sm text-red-600 py-3"
+                  className="flex items-center gap-2 text-sm text-primary py-3"
                 >
                   <AlertCircle className="h-4 w-4 shrink-0" />
                   Could not load share link. Please try again.

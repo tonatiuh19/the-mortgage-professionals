@@ -1614,12 +1614,12 @@ const IncomeCalculator: React.FC = () => {
             <img src="${proxiedLogo}" alt="Company Logo" style="max-height:56px;max-width:180px;object-fit:contain;" />
             <div style="text-align:right;">
               <div style="font-size:20px;font-weight:800;color:#1e293b;letter-spacing:-0.5px;">Income Calculator</div>
-              <div style="font-size:14px;color:#2563eb;font-weight:600;margin-top:2px;">${activeTabLabel}</div>
+              <div style="font-size:14px;color:#135E99;font-weight:600;margin-top:2px;">${activeTabLabel}</div>
               <div style="font-size:11px;color:#94a3b8;margin-top:4px;">Fannie Mae &middot; Freddie Mac &middot; FHA &middot; VA guidelines</div>
             </div>
           </div>
           <div style="background:linear-gradient(135deg,#eff6ff 0%,#e0f2fe 100%);border-radius:12px;padding:28px;text-align:center;margin-bottom:28px;border:1px solid #bfdbfe;">
-            <div style="font-size:11px;font-weight:600;color:#2563eb;text-transform:uppercase;letter-spacing:2px;margin-bottom:8px;">${resultLabel}</div>
+            <div style="font-size:11px;font-weight:600;color:#135E99;text-transform:uppercase;letter-spacing:2px;margin-bottom:8px;">${resultLabel}</div>
             <div style="font-size:52px;font-weight:800;color:#1e40af;letter-spacing:-2px;">${monthlyStr}</div>
             <div style="font-size:15px;color:#475569;margin-top:8px;">per month &nbsp;&middot;&nbsp; <strong style="color:#1e293b;">${annualStr}</strong> per year</div>
           </div>

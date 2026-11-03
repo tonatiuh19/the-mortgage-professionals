@@ -65,7 +65,7 @@ const taskStatusConfig: Record<
   },
   in_progress: {
     label: "In Progress",
-    color: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+    color: "bg-primary/10 text-primary border-primary/20",
     icon: <RotateCcw className="h-3 w-3" />,
   },
   completed: {
@@ -75,7 +75,7 @@ const taskStatusConfig: Record<
   },
   pending_approval: {
     label: "In Review",
-    color: "bg-purple-500/10 text-purple-600 border-purple-500/20",
+    color: "bg-primary/10 text-primary border-primary/20",
     icon: <Clock className="h-3 w-3" />,
   },
   approved: {
@@ -236,16 +236,16 @@ const Documents = () => {
           {
             label: "PDFs",
             value: pdfCount,
-            color: "text-red-600",
-            bg: "bg-red-500/5 border-red-500/10",
-            icon: <FileText className="h-5 w-5 text-red-500" />,
+            color: "text-primary",
+            bg: "bg-primary/5 border-primary/10",
+            icon: <FileText className="h-5 w-5 text-primary" />,
           },
           {
             label: "Images",
             value: imageCount,
-            color: "text-blue-600",
-            bg: "bg-blue-500/5 border-blue-500/10",
-            icon: <ImageIcon className="h-5 w-5 text-blue-500" />,
+            color: "text-primary",
+            bg: "bg-primary/5 border-primary/10",
+            icon: <ImageIcon className="h-5 w-5 text-primary" />,
           },
         ].map((stat) => (
           <Card key={stat.label} className={cn("border", stat.bg)}>
@@ -438,14 +438,14 @@ const Documents = () => {
                                       className={cn(
                                         "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border",
                                         isPdf
-                                          ? "bg-red-500/10 border-red-500/20"
-                                          : "bg-blue-500/10 border-blue-500/20",
+                                          ? "bg-primary/10 border-primary/20"
+                                          : "bg-primary/10 border-primary/20",
                                       )}
                                     >
                                       {isPdf ? (
-                                        <FileText className="h-5 w-5 text-red-500" />
+                                        <FileText className="h-5 w-5 text-primary" />
                                       ) : (
-                                        <ImageIcon className="h-5 w-5 text-blue-500" />
+                                        <ImageIcon className="h-5 w-5 text-primary" />
                                       )}
                                     </div>
 
@@ -460,8 +460,8 @@ const Documents = () => {
                                           className={cn(
                                             "text-[10px] py-0 px-1.5",
                                             isPdf
-                                              ? "border-red-500/20 text-red-500"
-                                              : "border-blue-500/20 text-blue-500",
+                                              ? "border-primary/20 text-primary"
+                                              : "border-primary/20 text-primary",
                                           )}
                                         >
                                           {doc.document_type.toUpperCase()}

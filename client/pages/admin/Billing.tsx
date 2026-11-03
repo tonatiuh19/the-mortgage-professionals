@@ -95,7 +95,7 @@ const Billing = () => {
     error,
   } = useAppSelector((s) => s.billing);
 
-  const isPlatformOwner = user?.role === "admin";
+  const isPlatformOwner = Boolean(user?.is_platform_owner);
   const paymentStatus = searchParams.get("payment");
   const scrollTopUp = searchParams.get("topup") === "1";
   const packFromUrl = searchParams.get("pack");
@@ -337,7 +337,7 @@ const Billing = () => {
                     {slice.included.toLocaleString()}
                   </p>
                   {slice.reserved > 0 ? (
-                    <p className="text-[11px] text-orange-600 dark:text-orange-400">
+                    <p className="text-[11px] text-amber-600 dark:text-amber-400">
                       {slice.reserved.toLocaleString()} reserved
                     </p>
                   ) : null}
@@ -547,7 +547,7 @@ const Billing = () => {
                   <Card>
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2 text-base">
-                        <Megaphone className="h-4 w-4 text-orange-500" />
+                        <Megaphone className="h-4 w-4 text-amber-500" />
                         Broadcast economics
                       </CardTitle>
                       <CardDescription>
@@ -648,7 +648,7 @@ const Billing = () => {
                           </div>
                           <div className="flex justify-between text-xs text-muted-foreground">
                             <span>Processing fees (est.)</span>
-                            <span className="tabular-nums text-orange-700 dark:text-orange-400">
+                            <span className="tabular-nums text-amber-700 dark:text-amber-400">
                               {formatUsd(expenditure.stripeFeesUsd ?? 0)}
                             </span>
                           </div>

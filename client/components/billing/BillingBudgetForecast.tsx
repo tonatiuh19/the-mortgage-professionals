@@ -146,8 +146,8 @@ export function BillingBudgetForecast({
           />
         </div>
 
-        <div className="rounded-xl border border-orange-500/20 bg-orange-500/5 p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-orange-700 dark:text-orange-400">
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-400">
             <Megaphone className="h-4 w-4" />
             Broadcast assumptions
           </div>
@@ -245,7 +245,7 @@ export function BillingBudgetForecast({
               </div>
               <div>
                 <p className="text-muted-foreground">Processing fees (est.)</p>
-                <p className="font-medium tabular-nums text-orange-700 dark:text-orange-400">
+                <p className="font-medium tabular-nums text-amber-700 dark:text-amber-400">
                   {formatUsd(forecast.stripeFeesUsd)}
                 </p>
               </div>

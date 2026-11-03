@@ -76,7 +76,7 @@ const CATEGORY_ICON: Record<
 };
 
 const TYPE_RING: Record<NotificationType, string> = {
-  info: "bg-blue-500/10 text-blue-600 ring-blue-500/20",
+  info: "bg-primary/10 text-primary ring-primary/20",
   success: "bg-emerald-500/10 text-emerald-600 ring-emerald-500/20",
   warning: "bg-amber-500/10 text-amber-600 ring-amber-500/20",
   error: "bg-red-500/10 text-red-600 ring-red-500/20",
@@ -276,7 +276,7 @@ const NotificationBell: React.FC<NotificationBellProps> = ({
                 animate={{ scale: 1, opacity: 1 }}
                 exit={{ scale: 0, opacity: 0 }}
                 transition={{ type: "spring", stiffness: 500, damping: 18 }}
-                className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold ring-2 ring-background shadow-sm"
+                className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-primary text-white text-[10px] font-bold ring-2 ring-background shadow-sm"
               >
                 {unreadCount > 99 ? "99+" : unreadCount}
               </motion.span>

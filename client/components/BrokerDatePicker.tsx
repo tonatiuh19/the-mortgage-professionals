@@ -107,7 +107,7 @@ export function BrokerDatePicker({
             showOutsideDays={false}
             classNames={{
               selected:
-                "bg-violet-600 text-white hover:bg-violet-700 focus:bg-violet-600 hover:text-white",
+                "bg-primary text-white hover:bg-primary focus:bg-primary hover:text-white",
             }}
           />
         )}

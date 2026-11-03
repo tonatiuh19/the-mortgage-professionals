@@ -99,13 +99,13 @@ export function BillingExpendedPeriod({
           {usage.schedulerBookings.toLocaleString()} scheduler bookings
         </p>
 
-        <div className="rounded-xl border border-orange-500/25 bg-orange-500/5 p-4 space-y-4">
+        <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 space-y-4">
           <div className="flex flex-wrap items-center gap-2">
-            <Megaphone className="h-4 w-4 text-orange-600" />
-            <p className="text-sm font-semibold text-orange-800 dark:text-orange-300">
+            <Megaphone className="h-4 w-4 text-amber-600" />
+            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
               Broadcasting — highest SMS cost
             </p>
-            <Badge variant="outline" className="border-orange-500/40 text-[10px] text-orange-700">
+            <Badge variant="outline" className="border-amber-500/40 text-[10px] text-amber-700">
               Unified quota
             </Badge>
           </div>
@@ -135,7 +135,7 @@ export function BillingExpendedPeriod({
             {showInternalEconomics ? (
               <div>
                 <p className="text-muted-foreground">Broadcast COGS</p>
-                <p className="font-semibold tabular-nums text-orange-700 dark:text-orange-400">
+                <p className="font-semibold tabular-nums text-amber-700 dark:text-amber-400">
                   {formatUsd(broadcast.cogsUsd + broadcast.emailCogsUsd)}
                 </p>
               </div>
@@ -193,9 +193,9 @@ export function BillingExpendedPeriod({
           </div>
           {showInternalEconomics ? (
             <>
-              <div className="rounded-lg border border-orange-500/30 bg-orange-500/5 p-3">
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
                 <p className="text-xs text-muted-foreground">Processing fees (est.)</p>
-                <p className="font-semibold tabular-nums text-orange-700 dark:text-orange-400">
+                <p className="font-semibold tabular-nums text-amber-700 dark:text-amber-400">
                   {formatUsd(expenditure.stripeFeesUsd ?? 0)}
                 </p>
               </div>

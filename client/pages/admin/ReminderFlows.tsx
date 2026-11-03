@@ -214,36 +214,36 @@ const STEP_TYPES: StepMeta[] = [
     type: "wait",
     label: "Wait",
     icon: <Clock className="h-4 w-4" />,
-    color: "text-sky-600",
-    borderColor: "border-sky-400",
-    bgColor: "bg-sky-50",
+    color: "text-primary",
+    borderColor: "border-primary",
+    bgColor: "bg-primary/10",
     description: "Delay before next step",
   },
   {
     type: "send_notification",
     label: "Notification",
     icon: <Bell className="h-4 w-4" />,
-    color: "text-orange-600",
-    borderColor: "border-orange-400",
-    bgColor: "bg-orange-50",
+    color: "text-amber-600",
+    borderColor: "border-amber-400",
+    bgColor: "bg-amber-50",
     description: "In-app notification",
   },
   {
     type: "send_email",
     label: "Send Email",
     icon: <Mail className="h-4 w-4" />,
-    color: "text-violet-600",
-    borderColor: "border-violet-400",
-    bgColor: "bg-violet-50",
+    color: "text-primary",
+    borderColor: "border-primary",
+    bgColor: "bg-primary/10",
     description: "Email to client",
   },
   {
     type: "send_sms",
     label: "Send SMS",
     icon: <FaSms className="h-4 w-4" />,
-    color: "text-teal-600",
-    borderColor: "border-teal-400",
-    bgColor: "bg-teal-50",
+    color: "text-primary",
+    borderColor: "border-primary",
+    bgColor: "bg-primary/10",
     description: "SMS to client",
   },
   {
@@ -259,27 +259,27 @@ const STEP_TYPES: StepMeta[] = [
     type: "branch",
     label: "Branch",
     icon: <Split className="h-4 w-4" />,
-    color: "text-fuchsia-600",
-    borderColor: "border-fuchsia-400",
-    bgColor: "bg-fuchsia-50",
+    color: "text-primary",
+    borderColor: "border-primary",
+    bgColor: "bg-primary/10",
     description: "Multi-way branch (loan_type)",
   },
   {
     type: "wait_for_response",
     label: "Wait for Response",
     icon: <Hourglass className="h-4 w-4" />,
-    color: "text-indigo-600",
-    borderColor: "border-indigo-400",
-    bgColor: "bg-indigo-50",
+    color: "text-primary",
+    borderColor: "border-primary",
+    bgColor: "bg-primary/10",
     description: "Pause until client replies / timeout",
   },
   {
     type: "wait_until_date",
     label: "Wait Until Date",
     icon: <CalendarClock className="h-4 w-4" />,
-    color: "text-rose-600",
-    borderColor: "border-rose-400",
-    bgColor: "bg-rose-50",
+    color: "text-primary",
+    borderColor: "border-primary",
+    bgColor: "bg-primary/10",
     description: "Pause until a stored date",
   },
   {
@@ -382,7 +382,7 @@ function FlowNode({ data, selected }: { data: any; selected: boolean }) {
             position={Position.Bottom}
             id="no"
             style={{ left: "70%" }}
-            className="!w-3 !h-3 !bg-red-400 !border-2 !border-red-500"
+            className="!w-3 !h-3 !bg-primary !border-2 !border-primary"
           />
         </>
       )}
@@ -394,7 +394,7 @@ function FlowNode({ data, selected }: { data: any; selected: boolean }) {
             position={Position.Bottom}
             id="purchase"
             style={{ left: "20%" }}
-            className="!w-3 !h-3 !bg-blue-400 !border-2 !border-blue-600"
+            className="!w-3 !h-3 !bg-primary !border-2 !border-primary"
             title="Purchase"
           />
           <Handle
@@ -402,7 +402,7 @@ function FlowNode({ data, selected }: { data: any; selected: boolean }) {
             position={Position.Bottom}
             id="refinance"
             style={{ left: "50%" }}
-            className="!w-3 !h-3 !bg-violet-400 !border-2 !border-violet-600"
+            className="!w-3 !h-3 !bg-primary !border-2 !border-primary"
             title="Refinance"
           />
           <Handle
@@ -493,9 +493,9 @@ function connectionsToEdges(connections: any[]): Edge[] {
         : c.edge_type === "condition_no"
           ? "#ef4444"
           : c.edge_type === "loan_type_purchase"
-            ? "#3b82f6"
+            ? "#135E99"
             : c.edge_type === "loan_type_refinance"
-              ? "#8b5cf6"
+              ? "#0A2F52"
               : c.edge_type === "no_response"
                 ? "#f59e0b"
                 : "#94a3b8";
@@ -830,10 +830,10 @@ function StepConfigPanel({
             )}
             {stepType === "branch" && (
               <div className="flex flex-wrap gap-1.5 text-xs mt-1">
-                <Badge className="bg-blue-100 text-blue-700 border-blue-300">
+                <Badge className="bg-primary/10 text-primary border-primary/20">
                   Purchase
                 </Badge>
-                <Badge className="bg-violet-100 text-violet-700 border-violet-300">
+                <Badge className="bg-primary/10 text-primary border-primary/20">
                   Refinance
                 </Badge>
                 <Badge className="bg-gray-100 text-gray-700 border-gray-300">
@@ -984,14 +984,14 @@ const GUIDE_STEPS = [
   },
   {
     num: 2,
-    icon: <Link2 className="h-4 w-4 text-sky-600" />,
+    icon: <Link2 className="h-4 w-4 text-primary" />,
     title: "Connect steps together",
     desc: "Hover over a step node — a small circle handle appears at the bottom. Drag from that circle to another node's top handle to create a connection.",
     tip: "Condition nodes have two handles: Yes (green, left) and No (red, right).",
   },
   {
     num: 3,
-    icon: <Settings2 className="h-4 w-4 text-violet-600" />,
+    icon: <Settings2 className="h-4 w-4 text-primary" />,
     title: "Configure each step",
     desc: "Click any node to open its settings panel on the right. Set the message, delay, or condition logic for that step.",
     tip: "Use {{client_name}} and {{broker_name}} as dynamic variables in messages.",
@@ -1031,10 +1031,10 @@ function FlowBox({
   const colorCls: Record<string, string> = {
     default: "border-border bg-card text-foreground",
     green: "border-emerald-400 bg-emerald-50 text-emerald-800",
-    blue: "border-blue-300 bg-blue-50 text-blue-800",
-    orange: "border-orange-300 bg-orange-50 text-orange-800",
+    blue: "border-primary/20 bg-primary/10 text-primary",
+    orange: "border-amber-300 bg-amber-50 text-amber-800",
     yellow: "border-yellow-300 bg-yellow-50 text-yellow-800",
-    purple: "border-purple-300 bg-purple-50 text-purple-800",
+    purple: "border-primary/20 bg-primary/10 text-primary",
     red: "border-primary/50 bg-primary/10 text-primary",
     gray: "border-muted-foreground/30 bg-muted text-muted-foreground",
   };
@@ -1283,7 +1283,7 @@ function FlowTraceModal({ flowId, open, onClose }: FlowTraceModalProps) {
   const eventStyle = (event: string) => {
     switch (event) {
       case "started":
-        return "bg-blue-100 text-blue-700 border-blue-300";
+        return "bg-primary/10 text-primary border-primary/20";
       case "succeeded":
         return "bg-emerald-100 text-emerald-700 border-emerald-300";
       case "failed":
@@ -1291,7 +1291,7 @@ function FlowTraceModal({ flowId, open, onClose }: FlowTraceModalProps) {
       case "skipped":
         return "bg-amber-100 text-amber-700 border-amber-300";
       case "timeout":
-        return "bg-orange-100 text-orange-700 border-orange-300";
+        return "bg-amber-100 text-amber-700 border-amber-300";
       case "cancelled":
         return "bg-gray-100 text-gray-700 border-gray-300";
       default:
@@ -1538,7 +1538,7 @@ function CanvasEmptyHint({ onDismiss }: { onDismiss: () => void }) {
               {
                 icon: <Link2 className="h-5 w-5" />,
                 label: "Connect",
-                color: "text-sky-600 bg-sky-50 border-sky-200",
+                color: "text-primary bg-primary/10 border-primary/20",
               },
               {
                 icon: (
@@ -1550,7 +1550,7 @@ function CanvasEmptyHint({ onDismiss }: { onDismiss: () => void }) {
               {
                 icon: <Settings2 className="h-5 w-5" />,
                 label: "Configure",
-                color: "text-violet-600 bg-violet-50 border-violet-200",
+                color: "text-primary bg-primary/10 border-primary/20",
               },
               {
                 icon: (
@@ -1595,7 +1595,7 @@ function CanvasEmptyHint({ onDismiss }: { onDismiss: () => void }) {
               </span>
             </li>
             <li className="flex items-start gap-1.5">
-              <span className="mt-0.5 h-4 w-4 rounded-full bg-sky-100 text-sky-600 flex items-center justify-center text-[10px] font-bold shrink-0">
+              <span className="mt-0.5 h-4 w-4 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold shrink-0">
                 2
               </span>
               <span>
@@ -1607,7 +1607,7 @@ function CanvasEmptyHint({ onDismiss }: { onDismiss: () => void }) {
               </span>
             </li>
             <li className="flex items-start gap-1.5">
-              <span className="mt-0.5 h-4 w-4 rounded-full bg-violet-100 text-violet-600 flex items-center justify-center text-[10px] font-bold shrink-0">
+              <span className="mt-0.5 h-4 w-4 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold shrink-0">
                 3
               </span>
               <span>
@@ -1703,12 +1703,12 @@ function FlowCanvasInner({ flow, onBack, onSaved }: FlowCanvasProps) {
         case "purchase":
           edgeType = "loan_type_purchase";
           label = "Purchase";
-          stroke = "#3b82f6";
+          stroke = "#135E99";
           break;
         case "refinance":
           edgeType = "loan_type_refinance";
           label = "Refi";
-          stroke = "#8b5cf6";
+          stroke = "#0A2F52";
           break;
         case "default":
           edgeType = "default";
@@ -2105,12 +2105,12 @@ function FlowCanvasInner({ flow, onBack, onSaved }: FlowCanvasProps) {
               {
                 num: "2",
                 text: "Connect nodes by dragging handles",
-                color: "bg-sky-100 text-sky-600",
+                color: "bg-primary/10 text-primary",
               },
               {
                 num: "3",
                 text: "Click a node to configure it",
-                color: "bg-violet-100 text-violet-600",
+                color: "bg-primary/10 text-primary",
               },
               {
                 num: "4",
@@ -2144,11 +2144,11 @@ function FlowCanvasInner({ flow, onBack, onSaved }: FlowCanvasProps) {
                 },
                 {
                   label: "Wait 3 days",
-                  color: "bg-blue-100 text-blue-700 border-blue-300",
+                  color: "bg-primary/10 text-primary border-primary/20",
                 },
                 {
                   label: "Send Notification",
-                  color: "bg-orange-100 text-orange-700 border-orange-300",
+                  color: "bg-amber-100 text-amber-700 border-amber-300",
                 },
                 {
                   label: "Condition?",
@@ -2160,7 +2160,7 @@ function FlowCanvasInner({ flow, onBack, onSaved }: FlowCanvasProps) {
                 },
                 {
                   label: "Final Notice",
-                  color: "bg-orange-100 text-orange-700 border-orange-300",
+                  color: "bg-amber-100 text-amber-700 border-amber-300",
                 },
                 {
                   label: "End",
@@ -2565,7 +2565,7 @@ const ReminderFlows = () => {
   const executionStatusColor: Record<string, string> = {
     active: "bg-emerald-100 text-emerald-700 border-emerald-300",
     paused: "bg-amber-100 text-amber-700 border-amber-300",
-    completed: "bg-sky-100 text-sky-700 border-sky-300",
+    completed: "bg-primary/10 text-primary border-primary/20",
     cancelled: "bg-gray-100 text-gray-600 border-gray-300",
     failed: "bg-red-100 text-red-700 border-red-300",
   };

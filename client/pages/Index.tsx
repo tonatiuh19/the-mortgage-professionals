@@ -98,7 +98,7 @@ export default function Index() {
       />
 
       {/* Hero Section */}
-      <section className="relative min-h-screen flex items-center justify-center overflow-hidden bg-gradient-to-br from-[#0A2F52] via-[#1a4d7a] to-[#135E99] pt-20">
+      <section className="relative min-h-screen flex items-center justify-center overflow-hidden bg-gradient-to-br from-[#0A2F52] via-[#135E99] to-[#135E99] pt-20">
         {/* Video Background */}
         {!videoError && (
           <video
@@ -132,7 +132,7 @@ export default function Index() {
         )}
 
         {/* Video/Image Overlay */}
-        <div className="absolute inset-0 bg-gradient-to-br from-[#0A2F52]/50 via-[#1a4d7a]/40 to-[#135E99]/60 z-10" />
+        <div className="absolute inset-0 bg-gradient-to-br from-[#0A2F52]/50 via-[#135E99]/40 to-[#135E99]/60 z-10" />
 
         {/* Animated Background Elements */}
         <div className="absolute inset-0 z-20 opacity-10">
@@ -146,7 +146,7 @@ export default function Index() {
             A Smarter Way to Get Your Mortgage
           </h1>
 
-          <p className="text-xl md:text-2xl text-blue-100 mb-8 max-w-2xl mx-auto animate-fade-in font-light leading-relaxed">
+          <p className="text-xl md:text-2xl text-primary-foreground/80 mb-8 max-w-2xl mx-auto animate-fade-in font-light leading-relaxed">
             Real professionals. Clear guidance. Faster closings.
           </p>
 
@@ -167,7 +167,7 @@ export default function Index() {
           </div>
 
           {/* Trust Micro-copy */}
-          <div className="flex flex-col md:flex-row gap-6 justify-center text-sm text-blue-100 animate-slide-up">
+          <div className="flex flex-col md:flex-row gap-6 justify-center text-sm text-primary-foreground/80 animate-slide-up">
             <div className="flex items-center gap-2">
               <CheckCircle size={18} className="text-amber-400" />
               <span>Secure</span>
@@ -185,7 +185,7 @@ export default function Index() {
       </section>
 
       {/* Trust Strip Section */}
-      <section className="bg-gradient-to-r from-[#0A2F52] to-[#1a4d7a] py-12 px-4">
+      <section className="bg-gradient-to-r from-[#0A2F52] to-[#135E99] py-12 px-4">
         <div className="container mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
             {[
@@ -319,7 +319,7 @@ export default function Index() {
                 )}
 
                 <div className="relative">
-                  <div className="w-16 h-16 mx-auto mb-6 bg-gradient-to-br from-[#0A2F52] to-[#1a4d7a] rounded-full flex items-center justify-center">
+                  <div className="w-16 h-16 mx-auto mb-6 bg-gradient-to-br from-[#0A2F52] to-[#135E99] rounded-full flex items-center justify-center">
                     <span className="text-2xl font-bold text-white font-display">
                       {step.number}
                     </span>
@@ -518,12 +518,12 @@ export default function Index() {
       )}
 
       {/* Power CTA Section */}
-      <section className="py-20 px-4 bg-gradient-to-r from-[#0A2F52] via-[#1a4d7a] to-[#135E99] text-white">
+      <section className="py-20 px-4 bg-gradient-to-r from-[#0A2F52] via-[#135E99] to-[#135E99] text-white">
         <div className="container mx-auto max-w-3xl text-center">
           <h2 className="font-display text-5xl md:text-6xl font-bold mb-6">
             Ready to Take the Next Step?
           </h2>
-          <p className="text-xl md:text-2xl mb-10 text-blue-100">
+          <p className="text-xl md:text-2xl mb-10 text-primary-foreground/80">
             Your mortgage journey starts here.
           </p>
 

@@ -46,11 +46,16 @@ const ClientLayout = ({ children }: ClientLayoutProps) => {
   const client = useAppSelector(selectClient);
   const isAuthenticated = useAppSelector(selectIsClientAuthenticated);
 
+  // A saved session is still being validated after a page load; stay on this page.
+  const hasSavedSession = useAppSelector((s) =>
+    Boolean(s.clientAuth.sessionToken),
+  );
+
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!isAuthenticated && !hasSavedSession) {
       navigate("/client-login");
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, hasSavedSession, navigate]);
 
   const navItems = [
     {

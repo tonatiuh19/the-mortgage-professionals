@@ -89,20 +89,20 @@ const STAGES: Array<{
     label: "Contacted",
     description: "Made initial contact",
     icon: <Phone className="h-3.5 w-3.5" />,
-    color: "bg-blue-500",
-    gradient: "from-blue-500 to-blue-600",
-    textColor: "text-blue-700",
-    badgeBg: "bg-blue-100 text-blue-700",
+    color: "bg-primary",
+    gradient: "from-primary to-primary",
+    textColor: "text-primary",
+    badgeBg: "bg-primary/10 text-primary",
   },
   {
     id: "appt_set",
     label: "Appt Set",
     description: "Meeting scheduled",
     icon: <CheckCircle2 className="h-3.5 w-3.5" />,
-    color: "bg-violet-500",
-    gradient: "from-violet-500 to-violet-600",
-    textColor: "text-violet-700",
-    badgeBg: "bg-violet-100 text-violet-700",
+    color: "bg-primary",
+    gradient: "from-primary to-primary",
+    textColor: "text-primary",
+    badgeBg: "bg-primary/10 text-primary",
   },
   {
     id: "waiting_for_1st_deal",
@@ -129,10 +129,10 @@ const STAGES: Array<{
     label: "2nd Deal Funded",
     description: "Repeat referral partner",
     icon: <TrendingUp className="h-3.5 w-3.5" />,
-    color: "bg-teal-500",
-    gradient: "from-teal-500 to-teal-600",
-    textColor: "text-teal-700",
-    badgeBg: "bg-teal-100 text-teal-700",
+    color: "bg-primary",
+    gradient: "from-primary to-primary",
+    textColor: "text-primary",
+    badgeBg: "bg-primary/10 text-primary",
   },
   {
     id: "top_agent_whale",
@@ -390,7 +390,7 @@ export function RealtorProspectOverlay({
           <SheetHeader className="border-b border-gray-100 pb-4 mb-6">
             <div className="flex items-start gap-3">
               {/* Avatar */}
-              <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 text-sm font-bold flex-shrink-0">
+              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary text-sm font-bold flex-shrink-0">
                 {initials(prospect.contact_name)}
               </div>
               <div className="flex-1 min-w-0">
@@ -546,7 +546,7 @@ export function RealtorProspectOverlay({
             <Card className="border-gray-200 shadow-sm">
               <CardHeader className="pb-3 border-b border-gray-100">
                 <CardTitle className="text-base flex items-center gap-2 text-gray-900">
-                  <User className="h-4 w-4 text-blue-500" />
+                  <User className="h-4 w-4 text-primary" />
                   Contact Details
                 </CardTitle>
               </CardHeader>
@@ -654,7 +654,7 @@ export function RealtorProspectOverlay({
             <Card className="border-gray-200 shadow-sm">
               <CardHeader className="pb-3 border-b border-gray-100">
                 <CardTitle className="text-base flex items-center gap-2 text-gray-900">
-                  <Users className="h-4 w-4 text-indigo-500" />
+                  <Users className="h-4 w-4 text-primary" />
                   Ownership
                 </CardTitle>
               </CardHeader>
@@ -665,7 +665,7 @@ export function RealtorProspectOverlay({
                   value={
                     prospect.owner_first_name ? (
                       <div className="flex items-center gap-2">
-                        <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center text-white text-[9px] font-bold">
+                        <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center text-white text-[9px] font-bold">
                           {prospect.owner_first_name[0]}
                         </div>
                         {prospect.owner_first_name} {prospect.owner_last_name}
@@ -705,7 +705,7 @@ export function RealtorProspectOverlay({
             <Card className="border-gray-200 shadow-sm">
               <CardHeader className="pb-3 border-b border-gray-100">
                 <CardTitle className="text-base flex items-center gap-2 text-gray-900">
-                  <Send className="h-4 w-4 text-violet-500" />
+                  <Send className="h-4 w-4 text-primary" />
                   Progress Report
                 </CardTitle>
               </CardHeader>

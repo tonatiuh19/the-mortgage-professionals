@@ -466,10 +466,10 @@ export function BrokerWizard({
                               {
                                 value: "admin",
                                 label: "Admin",
-                                color: "border-purple-300 bg-purple-50",
+                                color: "border-primary/20 bg-primary/10",
                                 selectedColor:
-                                  "border-purple-500 bg-purple-50 ring-2 ring-purple-300",
-                                badgeColor: "bg-purple-100 text-purple-800",
+                                  "border-primary bg-primary/10 ring-2 ring-primary/20",
+                                badgeColor: "bg-primary/10 text-primary",
                                 desc: "Full system access. Manages all loans, clients, staff, templates, settings and reports.",
                                 sections: [
                                   "Dashboard",
@@ -488,10 +488,10 @@ export function BrokerWizard({
                               {
                                 value: "loan_officer",
                                 label: "Loan Officer",
-                                color: "border-indigo-200 bg-indigo-50/40",
+                                color: "border-primary/20 bg-primary/40",
                                 selectedColor:
-                                  "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-300",
-                                badgeColor: "bg-indigo-100 text-indigo-800",
+                                  "border-primary bg-primary/10 ring-2 ring-primary/20",
+                                badgeColor: "bg-primary/10 text-primary",
                                 desc: "Staff member with full tenant visibility. Can assign loan officers and partners to files, manage clients and generate reports.",
                                 sections: [
                                   "Dashboard",
@@ -507,10 +507,10 @@ export function BrokerWizard({
                               {
                                 value: "loan_processor",
                                 label: "Loan Processor",
-                                color: "border-cyan-200 bg-cyan-50/40",
+                                color: "border-primary/20 bg-primary/40",
                                 selectedColor:
-                                  "border-cyan-500 bg-cyan-50 ring-2 ring-cyan-300",
-                                badgeColor: "bg-cyan-100 text-cyan-800",
+                                  "border-primary bg-primary/10 ring-2 ring-primary/20",
+                                badgeColor: "bg-primary/10 text-primary",
                                 desc: "Staff member with full tenant visibility. Focuses on task processing and document management. No reports access.",
                                 sections: [
                                   "Dashboard",
@@ -525,10 +525,10 @@ export function BrokerWizard({
                               {
                                 value: "realtor",
                                 label: "Realtor",
-                                color: "border-blue-200 bg-blue-50/40",
+                                color: "border-primary/20 bg-primary/40",
                                 selectedColor:
-                                  "border-blue-500 bg-blue-50 ring-2 ring-blue-300",
-                                badgeColor: "bg-blue-100 text-blue-800",
+                                  "border-primary bg-primary/10 ring-2 ring-primary/20",
+                                badgeColor: "bg-primary/10 text-primary",
                                 desc: "Referring real estate agent. Sees only loans and clients where they are the assigned partner.",
                                 sections: [
                                   "Dashboard",
@@ -541,10 +541,10 @@ export function BrokerWizard({
                               {
                                 value: "buyers_agent",
                                 label: "Buyer's Agent",
-                                color: "border-blue-200 bg-blue-50/40",
+                                color: "border-primary/20 bg-primary/40",
                                 selectedColor:
-                                  "border-blue-500 bg-blue-50 ring-2 ring-blue-300",
-                                badgeColor: "bg-blue-100 text-blue-800",
+                                  "border-primary bg-primary/10 ring-2 ring-primary/20",
+                                badgeColor: "bg-primary/10 text-primary",
                                 desc: "Partner representing homebuyers. Sees only loans and clients where they are the assigned partner.",
                                 sections: [
                                   "Dashboard",
@@ -557,10 +557,10 @@ export function BrokerWizard({
                               {
                                 value: "listing_agent",
                                 label: "Listing Agent",
-                                color: "border-blue-200 bg-blue-50/40",
+                                color: "border-primary/20 bg-primary/40",
                                 selectedColor:
-                                  "border-blue-500 bg-blue-50 ring-2 ring-blue-300",
-                                badgeColor: "bg-blue-100 text-blue-800",
+                                  "border-primary bg-primary/10 ring-2 ring-primary/20",
+                                badgeColor: "bg-primary/10 text-primary",
                                 desc: "Partner representing home sellers. Sees only loans and clients where they are the assigned partner.",
                                 sections: [
                                   "Dashboard",
@@ -630,7 +630,7 @@ export function BrokerWizard({
                           htmlFor="created_by_broker_id"
                           className="flex items-center gap-1.5"
                         >
-                          <Building2 className="h-3.5 w-3.5 text-purple-500" />
+                          <Building2 className="h-3.5 w-3.5 text-primary" />
                           Assigned Manager
                         </Label>
                         <Select

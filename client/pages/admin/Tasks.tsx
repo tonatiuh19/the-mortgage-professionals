@@ -150,7 +150,7 @@ const Tasks = () => {
       case "completed":
         return "bg-emerald-500/10 text-emerald-500 border-emerald-500/20";
       case "in_progress":
-        return "bg-blue-500/10 text-blue-500 border-blue-500/20";
+        return "bg-primary/10 text-primary border-primary/20";
       case "pending":
         return "bg-amber-500/10 text-amber-500 border-amber-500/20";
       default:
@@ -165,7 +165,7 @@ const Tasks = () => {
       case "medium":
         return "bg-amber-500/10 text-amber-500 border-amber-500/20";
       case "low":
-        return "bg-blue-500/10 text-blue-500 border-blue-500/20";
+        return "bg-primary/10 text-primary border-primary/20";
       default:
         return "bg-gray-500/10 text-gray-500 border-gray-500/20";
     }

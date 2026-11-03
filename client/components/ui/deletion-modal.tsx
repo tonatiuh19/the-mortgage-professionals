@@ -100,7 +100,7 @@ export const DeletionModal: React.FC<DeletionModalProps> = ({
                 {details.warnings.map((warning, idx) => (
                   <div
                     key={idx}
-                    className="flex items-start gap-2 p-2 rounded-md bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-500"
+                    className="flex items-start gap-2 p-2 rounded-md bg-primary/10 border border-primary/20 text-primary dark:text-primary"
                   >
                     <AlertCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />
                     <p className="text-xs">{warning}</p>

@@ -95,8 +95,8 @@ export function ClientTimePicker({
               "text-xs rounded-lg border px-2 py-2 font-medium transition-all duration-150",
               slot.available
                 ? value === slot.time
-                  ? "bg-violet-600 text-white border-violet-600 shadow-sm"
-                  : "bg-background text-foreground border-border hover:bg-violet-50 hover:border-violet-300 hover:text-violet-700 dark:hover:bg-violet-950/40"
+                  ? "bg-primary text-white border-primary shadow-sm"
+                  : "bg-background text-foreground border-border hover:bg-primary/10 hover:border-primary/20 hover:text-primary dark:hover:bg-primary/40"
                 : "bg-muted/40 text-muted-foreground border-muted cursor-not-allowed line-through opacity-50",
             )}
           >

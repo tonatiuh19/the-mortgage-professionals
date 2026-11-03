@@ -79,7 +79,7 @@ const CHANNELS: {
     value: "email",
     label: "Email",
     icon: <Mail className="h-4 w-4" />,
-    color: "text-blue-500",
+    color: "text-primary",
   },
 ];
 

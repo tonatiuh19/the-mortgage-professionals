@@ -92,7 +92,7 @@ const Tasks = () => {
   const getPriorityColor = (priority: string) => {
     const colors = {
       urgent: "border-red-500 bg-red-500/5",
-      high: "border-orange-500 bg-orange-500/5",
+      high: "border-amber-500 bg-amber-500/5",
       medium: "border-yellow-500 bg-yellow-500/5",
       low: "border-green-500 bg-green-500/5",
     };
@@ -163,11 +163,11 @@ const Tasks = () => {
                     {isApproved ? (
                       <CheckCircle2 className="h-5 w-5 text-green-600" />
                     ) : isPendingApproval ? (
-                      <FileQuestion className="h-5 w-5 text-blue-500" />
+                      <FileQuestion className="h-5 w-5 text-primary" />
                     ) : isReopened ? (
                       <RotateCcw className="h-5 w-5 text-amber-500" />
                     ) : task.status === "in_progress" ? (
-                      <Play className="h-5 w-5 text-orange-500" />
+                      <Play className="h-5 w-5 text-amber-500" />
                     ) : (
                       <Clock className="h-5 w-5 text-primary" />
                     )}
@@ -200,7 +200,7 @@ const Tasks = () => {
                     </Badge>
                   )}
                   {isPendingApproval && !isApproved && (
-                    <Badge className="bg-blue-500 text-white">
+                    <Badge className="bg-primary text-white">
                       Pending Review
                     </Badge>
                   )}

@@ -449,7 +449,7 @@ function MessageCard({
               {isOutbound && (
                 <span className="ml-1">
                   {msg.delivery_status === "read" ? (
-                    <CheckCheck className="h-3 w-3 text-blue-400" />
+                    <CheckCheck className="h-3 w-3 text-primary/70" />
                   ) : msg.delivery_status === "delivered" ? (
                     <CheckCheck className="h-3 w-3 text-muted-foreground" />
                   ) : (

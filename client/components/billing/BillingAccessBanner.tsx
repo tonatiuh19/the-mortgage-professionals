@@ -34,9 +34,9 @@ const LEVEL_STYLES: Record<
     Icon: AlertTriangle,
   },
   soft_warn: {
-    border: "border-orange-500/30",
-    bg: "bg-orange-500/10",
-    text: "text-orange-700 dark:text-orange-400",
+    border: "border-amber-500/30",
+    bg: "bg-amber-500/10",
+    text: "text-amber-700 dark:text-amber-400",
     Icon: AlertTriangle,
   },
   subscription_grace: {
@@ -129,7 +129,7 @@ export function BillingAccessBanner({
       className={cn(
         "relative mb-3 overflow-hidden rounded-xl border px-4 py-4 sm:px-5",
         isOnboardingGrace
-          ? "border-emerald-500/30 bg-gradient-to-br from-emerald-500/12 via-teal-500/5 to-transparent"
+          ? "border-emerald-500/30 bg-gradient-to-br from-emerald-500/12 via-primary/5 to-transparent"
           : styles.border,
         !isOnboardingGrace && styles.bg,
         className,

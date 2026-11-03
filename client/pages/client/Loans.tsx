@@ -37,13 +37,13 @@ const Loans = () => {
 
   const getStatusColor = (status: string) => {
     const colors: { [key: string]: string } = {
-      submitted: "bg-blue-500/10 text-blue-500 border-blue-500/20",
+      submitted: "bg-primary/10 text-primary border-primary/20",
       under_review: "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
       documents_pending:
-        "bg-orange-500/10 text-orange-500 border-orange-500/20",
-      underwriting: "bg-purple-500/10 text-purple-500 border-purple-500/20",
+        "bg-amber-500/10 text-amber-500 border-amber-500/20",
+      underwriting: "bg-primary/10 text-primary border-primary/20",
       conditional_approval:
-        "bg-indigo-500/10 text-indigo-500 border-indigo-500/20",
+        "bg-primary/10 text-primary border-primary/20",
       approved: "bg-green-500/10 text-green-500 border-green-500/20",
       closed: "bg-gray-500/10 text-gray-500 border-gray-500/20",
       denied: "bg-red-500/10 text-red-500 border-red-500/20",
@@ -59,7 +59,7 @@ const Loans = () => {
     if (status === "denied" || status === "cancelled") {
       return <Clock className="h-5 w-5 text-red-500" />;
     }
-    return <Clock className="h-5 w-5 text-orange-500" />;
+    return <Clock className="h-5 w-5 text-amber-500" />;
   };
 
   if (loading && applications.length === 0) {

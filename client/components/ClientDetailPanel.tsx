@@ -156,23 +156,23 @@ const LOAN_STATUS_META: Record<
   draft: { label: "Draft", color: "text-slate-600", bg: "bg-slate-100" },
   app_sent: {
     label: "App Sent",
-    color: "text-indigo-700",
-    bg: "bg-indigo-100",
+    color: "text-primary",
+    bg: "bg-primary/10",
   },
   application_received: {
     label: "App Received",
-    color: "text-blue-700",
-    bg: "bg-blue-100",
+    color: "text-primary",
+    bg: "bg-primary/10",
   },
   prequalified: {
     label: "Prequalified",
-    color: "text-cyan-700",
-    bg: "bg-cyan-100",
+    color: "text-primary",
+    bg: "bg-primary/10",
   },
   preapproved: {
     label: "Pre-Approved",
-    color: "text-violet-700",
-    bg: "bg-violet-100",
+    color: "text-primary",
+    bg: "bg-primary/10",
   },
   under_contract_loan_setup: {
     label: "Under Contract",
@@ -181,8 +181,8 @@ const LOAN_STATUS_META: Record<
   },
   submitted_to_underwriting: {
     label: "Underwriting",
-    color: "text-orange-700",
-    bg: "bg-orange-100",
+    color: "text-amber-700",
+    bg: "bg-amber-100",
   },
   approved_with_conditions: {
     label: "Approved",
@@ -196,8 +196,8 @@ const LOAN_STATUS_META: Record<
   },
   docs_out: {
     label: "Docs Out",
-    color: "text-teal-700",
-    bg: "bg-teal-100",
+    color: "text-primary",
+    bg: "bg-primary/10",
   },
   loan_funded: {
     label: "Funded",
@@ -1027,7 +1027,7 @@ export default function ClientDetailPanel({
                     {client.source === "realtor" && !editing && (
                       <button
                         onClick={() => setConvertToRealtorOpen(true)}
-                        className="text-xs text-violet-600 hover:text-violet-800 flex items-center gap-1 font-medium underline underline-offset-2"
+                        className="text-xs text-primary hover:text-primary flex items-center gap-1 font-medium underline underline-offset-2"
                       >
                         <ArrowUpRight className="w-3 h-3" />
                         Convert to Partner Realtor
@@ -1082,7 +1082,7 @@ export default function ClientDetailPanel({
                                 );
                                 setScheduleDialogOpen(true);
                               }}
-                              className="h-8 text-xs bg-violet-600 hover:bg-violet-700 text-white border-0 disabled:opacity-50"
+                              className="h-8 text-xs bg-primary hover:bg-primary text-white border-0 disabled:opacity-50"
                             >
                               <CalendarPlus className="w-3.5 h-3.5 mr-1" />
                               Schedule
@@ -1161,8 +1161,8 @@ export default function ClientDetailPanel({
                         Owner / Assigned Broker
                       </h3>
                       <div className="flex items-center gap-3 bg-muted/40 rounded-xl p-3">
-                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500/20 to-violet-500/40 flex items-center justify-center shrink-0">
-                          <span className="text-sm font-bold text-violet-700">
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary/20 to-primary/40 flex items-center justify-center shrink-0">
+                          <span className="text-sm font-bold text-primary">
                             {getInitials(
                               client.assigned_broker.first_name,
                               client.assigned_broker.last_name,
@@ -1538,7 +1538,7 @@ export default function ClientDetailPanel({
                       Phone {client.phone_verified ? "Verified" : "Unverified"}
                     </span>
                     {client.referral_code && (
-                      <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-medium border bg-violet-50 text-violet-700 border-violet-200">
+                      <span className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-medium border bg-primary/10 text-primary border-primary/20">
                         <Hash className="w-3 h-3" />
                         Ref: {client.referral_code}
                       </span>
@@ -1560,8 +1560,8 @@ export default function ClientDetailPanel({
                         {
                           label: "Google",
                           href: `https://www.google.com/search?q=${encoded}`,
-                          color: "text-blue-600",
-                          bg: "bg-blue-50 hover:bg-blue-100 border-blue-100",
+                          color: "text-primary",
+                          bg: "bg-primary/10 hover:bg-primary/10 border-primary/20",
                           icon: (
                             <svg
                               viewBox="0 0 24 24"
@@ -1590,8 +1590,8 @@ export default function ClientDetailPanel({
                         {
                           label: "LinkedIn",
                           href: `https://www.linkedin.com/search/results/people/?keywords=${encoded}`,
-                          color: "text-sky-700",
-                          bg: "bg-sky-50 hover:bg-sky-100 border-sky-100",
+                          color: "text-primary",
+                          bg: "bg-primary/10 hover:bg-primary/10 border-primary/20",
                           icon: (
                             <svg
                               viewBox="0 0 24 24"
@@ -1605,8 +1605,8 @@ export default function ClientDetailPanel({
                         {
                           label: "Facebook",
                           href: `https://www.facebook.com/search/people/?q=${encoded}`,
-                          color: "text-blue-700",
-                          bg: "bg-indigo-50 hover:bg-indigo-100 border-indigo-100",
+                          color: "text-primary",
+                          bg: "bg-primary/10 hover:bg-primary/10 border-primary/20",
                           icon: (
                             <svg
                               viewBox="0 0 24 24"
@@ -1620,8 +1620,8 @@ export default function ClientDetailPanel({
                         {
                           label: "Zillow",
                           href: `https://www.zillow.com/profile/${encoded}/`,
-                          color: "text-blue-500",
-                          bg: "bg-blue-50 hover:bg-blue-100 border-blue-100",
+                          color: "text-primary",
+                          bg: "bg-primary/10 hover:bg-primary/10 border-primary/20",
                           icon: (
                             <svg
                               viewBox="0 0 24 24"
@@ -2018,7 +2018,7 @@ export default function ClientDetailPanel({
                                   {isOutbound && (
                                     <span className="text-[10px] text-muted-foreground">
                                       {msg.delivery_status === "read" ? (
-                                        <CheckCheck className="w-3 h-3 text-blue-500" />
+                                        <CheckCheck className="w-3 h-3 text-primary" />
                                       ) : msg.delivery_status ===
                                         "delivered" ? (
                                         <CheckCheck className="w-3 h-3 text-muted-foreground" />
@@ -2085,7 +2085,7 @@ export default function ClientDetailPanel({
                       dotColor = "bg-primary";
                     } else if (item.type === "loan_created") {
                       iconEl = <Building2 className="w-3 h-3" />;
-                      dotColor = "bg-violet-500";
+                      dotColor = "bg-primary";
                     } else if (item.type === "loan_status") {
                       iconEl = <CheckCircle2 className="w-3 h-3" />;
                       dotColor = "bg-green-500";
@@ -2094,7 +2094,7 @@ export default function ClientDetailPanel({
                         COMM_ICONS[item.commType ?? "sms"] ?? COMM_ICONS.sms;
                       dotColor =
                         item.direction === "inbound"
-                          ? "bg-blue-500"
+                          ? "bg-primary"
                           : "bg-slate-400";
                     }
                     return (
@@ -2155,7 +2155,7 @@ export default function ClientDetailPanel({
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CalendarPlus className="h-4 w-4 text-violet-600" />
+              <CalendarPlus className="h-4 w-4 text-primary" />
               Schedule a Meeting
             </DialogTitle>
             <DialogDescription>
@@ -2282,7 +2282,7 @@ export default function ClientDetailPanel({
             </Button>
             <Button
               size="sm"
-              className="bg-violet-600 hover:bg-violet-700 text-white"
+              className="bg-primary hover:bg-primary text-white"
               disabled={(() => {
                 if (
                   isSavingMeeting ||
@@ -2358,7 +2358,7 @@ export default function ClientDetailPanel({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <ArrowUpRight className="h-5 w-5 text-violet-500" />
+              <ArrowUpRight className="h-5 w-5 text-primary" />
               Convert to Partner Realtor
             </DialogTitle>
             <DialogDescription>
@@ -2367,7 +2367,7 @@ export default function ClientDetailPanel({
               will be re-linked.
             </DialogDescription>
           </DialogHeader>
-          <div className="rounded-lg bg-violet-50 border border-violet-200 p-3 flex items-start gap-2 text-violet-800 text-xs leading-snug">
+          <div className="rounded-lg bg-primary/10 border border-primary/20 p-3 flex items-start gap-2 text-primary text-xs leading-snug">
             <Shield className="h-4 w-4 flex-shrink-0 mt-0.5" />
             This action preserves conversation history. The client account will
             be set to inactive (not deleted) so loan history remains intact.
@@ -2383,7 +2383,7 @@ export default function ClientDetailPanel({
             <Button
               onClick={handleConvertToRealtor}
               disabled={isConverting}
-              className="bg-violet-600 hover:bg-violet-700 text-white gap-2"
+              className="bg-primary hover:bg-primary text-white gap-2"
             >
               {isConverting ? (
                 <Loader2 className="h-4 w-4 animate-spin" />

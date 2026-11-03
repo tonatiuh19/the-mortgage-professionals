@@ -232,7 +232,7 @@ const PhoneNumbersPanel: React.FC<PhoneNumbersPanelProps> = ({
           </SheetHeader>
 
           {/* How routing works */}
-          <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800 space-y-1">
+          <div className="rounded-lg bg-primary/10 border border-primary/20 p-3 text-xs text-primary space-y-1">
             <p className="font-semibold flex items-center gap-1.5">
               <Users className="h-3.5 w-3.5" />
               How inbound call routing works
@@ -426,7 +426,7 @@ const NumberCard: React.FC<NumberCardProps> = ({
               </span>
             )}
             {num.capabilities.mms && (
-              <span className="text-[10px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded font-medium">
+              <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-medium">
                 MMS
               </span>
             )}
@@ -463,14 +463,14 @@ const NumberCard: React.FC<NumberCardProps> = ({
           className={cn(
             "w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors",
             isShared
-              ? "bg-blue-50 text-blue-800"
+              ? "bg-primary/10 text-primary"
               : "hover:bg-muted/50 text-muted-foreground cursor-pointer",
           )}
         >
           <div
             className={cn(
               "h-4 w-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center",
-              isShared ? "border-blue-500 bg-blue-500" : "border-border",
+              isShared ? "border-primary bg-primary" : "border-border",
             )}
           >
             {isShared && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
@@ -478,14 +478,14 @@ const NumberCard: React.FC<NumberCardProps> = ({
           <Users
             className={cn(
               "h-4 w-4 flex-shrink-0",
-              isShared ? "text-blue-600" : "text-muted-foreground",
+              isShared ? "text-primary" : "text-muted-foreground",
             )}
           />
           <div className="min-w-0">
             <p
               className={cn(
                 "text-xs font-semibold",
-                isShared ? "text-blue-800" : "text-foreground",
+                isShared ? "text-primary" : "text-foreground",
               )}
             >
               All Mortgage Bankers
@@ -495,7 +495,7 @@ const NumberCard: React.FC<NumberCardProps> = ({
             </p>
           </div>
           {isShared && (
-            <span className="ml-auto text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium flex-shrink-0">
+            <span className="ml-auto text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium flex-shrink-0">
               Active
             </span>
           )}
@@ -507,14 +507,14 @@ const NumberCard: React.FC<NumberCardProps> = ({
         <div
           className={cn(
             "px-3 py-2.5 transition-colors",
-            !isShared ? "bg-indigo-50" : "hover:bg-muted/50",
+            !isShared ? "bg-primary/10" : "hover:bg-muted/50",
           )}
         >
           <div className="flex items-center gap-3">
             <div
               className={cn(
                 "h-4 w-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center",
-                !isShared ? "border-indigo-500 bg-indigo-500" : "border-border",
+                !isShared ? "border-primary bg-primary" : "border-border",
               )}
             >
               {!isShared && (
@@ -524,14 +524,14 @@ const NumberCard: React.FC<NumberCardProps> = ({
             <UserPlus
               className={cn(
                 "h-4 w-4 flex-shrink-0",
-                !isShared ? "text-indigo-600" : "text-muted-foreground",
+                !isShared ? "text-primary" : "text-muted-foreground",
               )}
             />
             <div className="min-w-0 flex-1">
               <p
                 className={cn(
                   "text-xs font-semibold",
-                  !isShared ? "text-indigo-800" : "text-foreground",
+                  !isShared ? "text-primary" : "text-foreground",
                 )}
               >
                 Personal Line — specific banker only
@@ -541,7 +541,7 @@ const NumberCard: React.FC<NumberCardProps> = ({
               </p>
             </div>
             {!isShared && (
-              <span className="ml-auto text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium flex-shrink-0">
+              <span className="ml-auto text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium flex-shrink-0">
                 Active
               </span>
             )}
@@ -557,7 +557,7 @@ const NumberCard: React.FC<NumberCardProps> = ({
               <SelectTrigger
                 className={cn(
                   "h-8 text-xs max-w-[240px]",
-                  !isShared ? "border-indigo-300 bg-white" : "border-border",
+                  !isShared ? "border-primary/20 bg-white" : "border-border",
                 )}
               >
                 <SelectValue placeholder="Select a banker…">
@@ -568,7 +568,7 @@ const NumberCard: React.FC<NumberCardProps> = ({
                     </span>
                   ) : num.assignedBrokerName ? (
                     <span className="flex items-center gap-1.5">
-                      <span className="h-4 w-4 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[9px] font-bold flex-shrink-0">
+                      <span className="h-4 w-4 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[9px] font-bold flex-shrink-0">
                         {num.assignedBrokerName.charAt(0)}
                       </span>
                       {num.assignedBrokerName}
@@ -584,7 +584,7 @@ const NumberCard: React.FC<NumberCardProps> = ({
                 {brokerOptions.map((b) => (
                   <SelectItem key={b.id} value={b.id.toString()}>
                     <span className="flex items-center gap-2">
-                      <span className="h-5 w-5 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[10px] font-bold flex-shrink-0">
+                      <span className="h-5 w-5 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold flex-shrink-0">
                         {b.name.charAt(0)}
                       </span>
                       {b.name}

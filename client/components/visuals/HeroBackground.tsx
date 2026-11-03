@@ -30,7 +30,7 @@ const HeroBackground = () => {
 
           <FloatingShape
             position={[-4, 2, -2]}
-            color="#3b82f6"
+            color="#135E99"
             size={1.5}
             speed={1.5}
             distort={0.4}
@@ -44,7 +44,7 @@ const HeroBackground = () => {
           />
           <FloatingShape
             position={[2, 3, -4]}
-            color="#2563eb"
+            color="#135E99"
             size={0.8}
             speed={1.2}
             distort={0.5}
@@ -60,7 +60,7 @@ const HeroBackground = () => {
                 itemSize={3}
               />
             </bufferGeometry>
-            <pointsMaterial size={0.02} color="#3b82f6" transparent opacity={0.2} sizeAttenuation />
+            <pointsMaterial size={0.02} color="#135E99" transparent opacity={0.2} sizeAttenuation />
           </points>
         </Suspense>
       </Canvas>

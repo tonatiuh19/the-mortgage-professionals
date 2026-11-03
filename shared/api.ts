@@ -676,6 +676,7 @@ export interface Broker {
   last_name: string;
   phone: string | null;
   role: BrokerRole;
+  is_platform_owner?: boolean;
   status: "active" | "inactive" | "suspended";
   email_verified: boolean;
   last_login: string | null;
@@ -2399,7 +2400,7 @@ export interface GetContactSubmissionsResponse {
 // SCHEDULER TYPES
 // =====================================================
 
-export type MeetingType = "phone" | "video" | "teams";
+export type MeetingType = "phone" | "video" | "teams" | "office";
 export type MeetingStatus =
   | "pending"
   | "confirmed"
@@ -2419,6 +2420,7 @@ export interface SchedulerSettings {
   min_booking_hours: number;
   timezone: string;
   allow_phone: boolean;
+  allow_office?: boolean;
   allow_video: boolean;
   allow_teams: boolean;
 }
@@ -2487,6 +2489,7 @@ export interface PublicSchedulerBrokerInfo {
   min_booking_hours: number;
   timezone: string;
   allow_phone: boolean;
+  allow_office?: boolean;
   allow_video: boolean;
   allow_teams: boolean;
   is_enabled: boolean;
@@ -2592,6 +2595,7 @@ export interface UpdateSchedulerSettingsRequest {
   min_booking_hours?: number;
   timezone?: string;
   allow_phone?: boolean;
+  allow_office?: boolean;
   allow_video?: boolean;
   allow_teams?: boolean;
   availability?: Array<{

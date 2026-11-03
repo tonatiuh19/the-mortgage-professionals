@@ -67,7 +67,7 @@ export default function BrokerSchedulerLinkModal({
         {/* Header */}
         <DialogHeader className="px-6 pt-6 pb-4 border-b">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-violet-500 to-violet-700 flex items-center justify-center shadow-sm shrink-0">
+            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-primary to-primary flex items-center justify-center shadow-sm shrink-0">
               <CalendarDays className="h-5 w-5 text-white" />
             </div>
             <div>
@@ -85,8 +85,8 @@ export default function BrokerSchedulerLinkModal({
         <div className="px-6 py-5 space-y-5">
           {/* Broker identity card */}
           <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border">
-            <div className="h-9 w-9 rounded-full bg-violet-100 flex items-center justify-center shrink-0">
-              <User className="h-4 w-4 text-violet-600" />
+            <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+              <User className="h-4 w-4 text-primary" />
             </div>
             <div>
               <p className="text-sm font-semibold text-gray-900">
@@ -99,8 +99,8 @@ export default function BrokerSchedulerLinkModal({
                 className={cn(
                   "text-xs px-2 py-0.5 rounded-full font-medium",
                   broker?.role === "admin"
-                    ? "bg-purple-100 text-purple-700"
-                    : "bg-blue-100 text-blue-700",
+                    ? "bg-primary/10 text-primary"
+                    : "bg-primary/10 text-primary",
                 )}
               >
                 {broker?.role === "admin" ? "Mortgage Banker" : "Partner"}
@@ -171,9 +171,9 @@ export default function BrokerSchedulerLinkModal({
                 </Button>
 
                 {/* Info note */}
-                <div className="flex items-start gap-2 p-3 bg-violet-50 rounded-lg border border-violet-100">
-                  <AlertCircle className="h-4 w-4 text-violet-500 mt-0.5 shrink-0" />
-                  <p className="text-xs text-violet-700 leading-relaxed">
+                <div className="flex items-start gap-2 p-3 bg-primary/10 rounded-lg border border-primary/20">
+                  <AlertCircle className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+                  <p className="text-xs text-primary leading-relaxed">
                     Clients who book through this link will be scheduled
                     directly with <strong>{brokerName}</strong> using their
                     personal availability and settings.

@@ -185,7 +185,7 @@ const STATUS_CONFIG: Record<
   completed: {
     label: "Completed",
     color:
-      "bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-500/15 dark:text-blue-300 dark:border-blue-500/30",
+      "bg-primary/10 text-primary border-primary/20 dark:bg-primary/15 dark:text-primary dark:border-primary/30",
     icon: CheckCircle2,
   },
   no_show: {
@@ -207,8 +207,8 @@ export const EVENT_TYPE_CONFIG: Record<
 > = {
   birthday: {
     label: "Birthday",
-    color: "bg-pink-500/20 text-pink-600 dark:text-pink-300 border-pink-500/40",
-    dotColor: "bg-pink-500",
+    color: "bg-primary/20 text-primary dark:text-primary border-primary/40",
+    dotColor: "bg-primary",
     icon: Cake,
   },
   home_anniversary: {
@@ -221,21 +221,21 @@ export const EVENT_TYPE_CONFIG: Record<
   realtor_anniversary: {
     label: "Realtor Anniversary",
     color:
-      "bg-violet-500/20 text-violet-700 dark:text-violet-300 border-violet-500/40",
-    dotColor: "bg-violet-500",
+      "bg-primary/20 text-primary dark:text-primary border-primary/40",
+    dotColor: "bg-primary",
     icon: Star,
   },
   important_date: {
     label: "Important Date",
-    color: "bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 border-cyan-500/40",
-    dotColor: "bg-cyan-500",
+    color: "bg-primary/20 text-primary dark:text-primary border-primary/40",
+    dotColor: "bg-primary",
     icon: Sparkles,
   },
   reminder: {
     label: "Reminder",
     color:
-      "bg-orange-500/20 text-orange-700 dark:text-orange-300 border-orange-500/40",
-    dotColor: "bg-orange-500",
+      "bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/40",
+    dotColor: "bg-amber-500",
     icon: Bell,
   },
   other: {
@@ -664,7 +664,7 @@ function MeetingCard({
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="inline-flex items-center gap-1 mt-2 text-xs text-blue-500 hover:text-blue-400 font-medium"
+                className="inline-flex items-center gap-1 mt-2 text-xs text-primary hover:text-primary/70 font-medium"
               >
                 <Video className="h-3 w-3" />
                 Join Meeting
@@ -944,8 +944,8 @@ function UnifiedCalendarView({
                         className={cn(
                           "w-1.5 h-1.5 rounded-sm shrink-0",
                           br.source === "o365"
-                            ? "bg-blue-400"
-                            : "bg-orange-400",
+                            ? "bg-primary"
+                            : "bg-amber-400",
                         )}
                       />
                     ))}
@@ -999,8 +999,8 @@ function UnifiedCalendarView({
                         className={cn(
                           "flex items-center gap-1 text-[10px] leading-tight rounded-sm px-1 py-0.5 truncate w-full",
                           br.source === "o365"
-                            ? "bg-blue-500/15 text-blue-400"
-                            : "bg-orange-500/15 text-orange-400",
+                            ? "bg-primary/15 text-primary/70"
+                            : "bg-amber-500/15 text-amber-400",
                         )}
                       >
                         {br.source === "o365" ? (
@@ -1039,10 +1039,10 @@ function UnifiedCalendarView({
           <span className="w-2 h-2 rounded-full bg-primary" /> Meeting
         </span>
         <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-          <span className="w-2 h-2 rounded-sm bg-blue-400" /> Outlook
+          <span className="w-2 h-2 rounded-sm bg-primary" /> Outlook
         </span>
         <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-          <span className="w-2 h-2 rounded-sm bg-orange-400" /> Blocked
+          <span className="w-2 h-2 rounded-sm bg-amber-400" /> Blocked
         </span>
         {(
           Object.entries(EVENT_TYPE_CONFIG) as [
@@ -1109,7 +1109,7 @@ function UnifiedCalendarView({
                           target="_blank"
                           rel="noopener noreferrer"
                           onClick={(e) => e.stopPropagation()}
-                          className="inline-flex items-center gap-1 text-xs text-blue-500 hover:text-blue-400 mt-0.5"
+                          className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/70 mt-0.5"
                         >
                           <Video className="h-3 w-3" />
                           Join Meeting
@@ -1189,14 +1189,14 @@ function UnifiedCalendarView({
                     className={cn(
                       "flex items-center gap-2.5 p-2.5 rounded-lg border border-border/30",
                       isO365
-                        ? "bg-blue-500/8 border-blue-500/20"
-                        : "bg-orange-500/8 border-orange-500/20",
+                        ? "bg-primary/8 border-primary/20"
+                        : "bg-amber-500/8 border-amber-500/20",
                     )}
                   >
                     <span
                       className={cn(
                         "w-2 h-2 rounded-sm shrink-0",
-                        isO365 ? "bg-blue-400" : "bg-orange-400",
+                        isO365 ? "bg-primary" : "bg-amber-400",
                       )}
                     />
                     <div className="flex-1 min-w-0">
@@ -1213,8 +1213,8 @@ function UnifiedCalendarView({
                       className={cn(
                         "inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-semibold",
                         isO365
-                          ? "bg-blue-500/15 text-blue-400 border-blue-500/30"
-                          : "bg-orange-500/15 text-orange-400 border-orange-500/30",
+                          ? "bg-primary/15 text-primary/70 border-primary/30"
+                          : "bg-amber-500/15 text-amber-400 border-amber-500/30",
                       )}
                     >
                       {isO365 ? (
@@ -1313,7 +1313,7 @@ function EditMeetingDialog({
                   href={meeting.teams_join_url || meeting.zoom_join_url || "#"}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 mt-2 text-xs text-blue-500 hover:text-blue-400 font-medium"
+                  className="inline-flex items-center gap-1.5 mt-2 text-xs text-primary hover:text-primary/70 font-medium"
                 >
                   <Video className="h-3.5 w-3.5" />
                   Join Meeting
@@ -2513,7 +2513,7 @@ function SettingsPanel() {
             key: "allow_phone",
             label: "Phone Call",
             sub: "Banker calls client at scheduled time",
-            icon: <Phone className="h-4 w-4 text-sky-400" />,
+            icon: <Phone className="h-4 w-4 text-primary/70" />,
           },
           {
             key: "allow_video",
@@ -2521,7 +2521,7 @@ function SettingsPanel() {
             sub: ZOOM_ENABLED
               ? "Creates a Zoom meeting automatically"
               : "Zoom temporarily unavailable",
-            icon: <Video className="h-4 w-4 text-blue-400" />,
+            icon: <Video className="h-4 w-4 text-primary/70" />,
           },
         ].map(({ key, label, sub, icon }, i) => {
           const isZoomRow = key === "allow_video";
@@ -2631,10 +2631,10 @@ function SettingsPanel() {
 
         {/* ── Outlook Calendar Sync ─────────────────────────────────────── */}
         {o365Connected && (
-          <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-4 mb-5 flex flex-col gap-3">
+          <div className="rounded-xl border border-primary/30 bg-primary/5 p-4 mb-5 flex flex-col gap-3">
             <div className="flex flex-col sm:flex-row sm:items-center gap-4">
               <div className="flex items-center gap-3 flex-1 min-w-0">
-                <div className="h-10 w-10 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0">
+                <div className="h-10 w-10 rounded-lg bg-primary text-white flex items-center justify-center shrink-0">
                   <Mail className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
@@ -2647,7 +2647,7 @@ function SettingsPanel() {
                   <p className="text-xs text-muted-foreground truncate">
                     {o365MailboxEmail}
                     {o365SyncedCount > 0 && (
-                      <span className="ml-2 text-blue-500 dark:text-blue-400">
+                      <span className="ml-2 text-primary dark:text-primary">
                         · {o365SyncedCount} event
                         {o365SyncedCount !== 1 ? "s" : ""} synced
                         {o365LastSyncedAt
@@ -2663,7 +2663,7 @@ function SettingsPanel() {
                 size="sm"
                 variant="outline"
                 disabled={isSyncingO365}
-                className="shrink-0 border-blue-500/40 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10"
+                className="shrink-0 border-primary/40 text-primary dark:text-primary hover:bg-primary/10"
                 onClick={async () => {
                   const result = await dispatch(syncO365Calendar());
                   if (syncO365Calendar.fulfilled.match(result)) {
@@ -2692,7 +2692,7 @@ function SettingsPanel() {
                 {isSyncingO365 ? "Syncing…" : "Sync Now"}
               </Button>
             </div>
-            <p className="text-[11px] text-blue-600/70 dark:text-blue-400/60 flex items-start gap-1.5 border-t border-blue-500/20 pt-2.5">
+            <p className="text-[11px] text-primary dark:text-primary flex items-start gap-1.5 border-t border-primary/20 pt-2.5">
               <Info className="h-3 w-3 shrink-0 mt-px" />
               <span>
                 Busy &amp; tentative events are imported as blocked slots on
@@ -2808,13 +2808,13 @@ function SettingsPanel() {
                 className={cn(
                   "flex items-center justify-between border rounded-lg px-4 py-2.5 gap-3",
                   br.source === "o365"
-                    ? "bg-blue-500/5 border-blue-500/20"
+                    ? "bg-primary/5 border-primary/20"
                     : "bg-muted/20 border-border/40",
                 )}
               >
                 <div className="flex items-start gap-2 min-w-0">
                   {br.source === "o365" ? (
-                    <Mail className="h-3.5 w-3.5 text-blue-500 mt-0.5 shrink-0" />
+                    <Mail className="h-3.5 w-3.5 text-primary mt-0.5 shrink-0" />
                   ) : (
                     <Lock className="h-3.5 w-3.5 text-primary mt-0.5 shrink-0" />
                   )}
@@ -2822,7 +2822,7 @@ function SettingsPanel() {
                     <p className="text-sm font-medium text-foreground truncate flex items-center gap-1.5">
                       {br.label || "Blocked"}
                       {br.source === "o365" && (
-                        <span className="text-[10px] font-medium bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 rounded-full px-1.5 py-px">
+                        <span className="text-[10px] font-medium bg-primary/15 text-primary dark:text-primary border border-primary/30 rounded-full px-1.5 py-px">
                           Outlook
                         </span>
                       )}
@@ -3738,7 +3738,7 @@ const AdminCalendar: React.FC = () => {
                             <td className="px-4 py-3">
                               <span className="flex items-center gap-1.5 text-foreground/80 text-xs">
                                 {m.meeting_type === "phone" ? (
-                                  <Phone className="h-3.5 w-3.5 text-sky-400" />
+                                  <Phone className="h-3.5 w-3.5 text-primary/70" />
                                 ) : (
                                   <Video className="h-3.5 w-3.5 text-green-400" />
                                 )}
@@ -3753,7 +3753,7 @@ const AdminCalendar: React.FC = () => {
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     onClick={(e) => e.stopPropagation()}
-                                    className="inline-flex items-center gap-1 text-xs text-blue-500 hover:text-blue-400 mt-0.5"
+                                    className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/70 mt-0.5"
                                   >
                                     <Video className="h-3 w-3" />
                                     Join Meeting
@@ -3868,7 +3868,7 @@ const AdminCalendar: React.FC = () => {
                       disabled={isSyncingBirthdays}
                       size="sm"
                       variant="outline"
-                      className="border-pink-500/40 text-pink-300 hover:bg-pink-500/10"
+                      className="border-primary/40 text-primary/70 hover:bg-primary/10"
                     >
                       {isSyncingBirthdays ? (
                         <Loader2 className="h-4 w-4 mr-1 animate-spin" />

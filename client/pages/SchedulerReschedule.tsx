@@ -290,7 +290,7 @@ export default function SchedulerReschedule() {
                       }
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-2 w-full h-9 bg-violet-600 text-white rounded-lg text-sm font-medium hover:bg-violet-700 transition-colors"
+                      className="flex items-center justify-center gap-2 w-full h-9 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary transition-colors"
                     >
                       {successInfo.meeting_type === "teams"
                         ? "Join Teams Call"

@@ -1383,13 +1383,34 @@ async function syncO365CalendarForBroker(
   return { synced_count: blockingEvents.length };
 }
 
-// Base URL helper — prefers explicit BASE_URL, falls back to Vercel's auto-injected
-// VERCEL_URL (no https:// prefix), then localhost for local dev
+const PRODUCTION_APP_URL = "https://www.themortgagepro.net";
+
+const isDeployedRuntime = (): boolean =>
+  Boolean(process.env.VERCEL) || process.env.NODE_ENV === "production";
+
+/** Reads a URL setting, ignoring local addresses copied into a deployed environment. */
+const readAppUrlEnv = (value: string | undefined): string | null => {
+  const url = value?.trim().replace(/\/$/, "");
+  if (!url) return null;
+  if (isDeployedRuntime() && /localhost|127\.0\.0\.1/i.test(url)) return null;
+  return url;
+};
+
+// Base URL helper — prefers explicit BASE_URL, then the production domain
+// (or the preview's own URL), then localhost for local dev
 const getBaseUrl = (): string => {
-  if (process.env.BASE_URL) return process.env.BASE_URL;
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  const configured = readAppUrlEnv(process.env.BASE_URL);
+  if (configured) return configured;
+  if (process.env.VERCEL_ENV === "preview" && process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  if (isDeployedRuntime()) return PRODUCTION_APP_URL;
   return `http://localhost:${process.env.PORT || 8080}`;
 };
+
+/** Origin for links sent to clients. */
+const getClientBaseUrl = (): string =>
+  readAppUrlEnv(process.env.CLIENT_URL) ?? getBaseUrl();
 
 // ─── Broker slug helpers ──────────────────────────────────────────────────────
 
@@ -2678,7 +2699,7 @@ async function sendClientVerificationEmail(
                   <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;">
                     <tr>
                       <td align="center">
-                        <a href="${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Go to Client Login</a>
+                        <a href="${getClientBaseUrl()}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Go to Client Login</a>
                       </td>
                     </tr>
                   </table>
@@ -2805,7 +2826,7 @@ async function sendClientLoanWelcomeEmail(
                     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:32px;">
                       <tr>
                         <td align="center">
-                          <a href="${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Log In to Your Portal</a>
+                          <a href="${getClientBaseUrl()}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Log In to Your Portal</a>
                         </td>
                       </tr>
                     </table>
@@ -2846,7 +2867,7 @@ async function sendClientManualWelcomeEmail(
 ): Promise<void> {
   try {
     console.log(`📧 Sending manual client welcome email to ${email}`);
-    const loginUrl = `${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/client-login`;
+    const loginUrl = `${getClientBaseUrl()}/client-login`;
     await sendViaResend({
       to: email,
       subject: `Welcome to The Mortgage Professionals, ${firstName}!`,
@@ -2938,7 +2959,7 @@ async function sendBrokerManualWelcomeEmail(
 ): Promise<void> {
   try {
     console.log(`📧 Sending broker welcome email to ${email}`);
-    const loginUrl = `${process.env.BASE_URL || "https://app.themortgageprofessionals.net"}/broker-login`;
+    const loginUrl = `${getBaseUrl()}/broker-login`;
     const roleLabel = getRoleLabel(role);
     await sendViaResend({
       to: email,
@@ -3043,7 +3064,7 @@ async function sendPublicApplicationWelcomeEmail(
     };
 
     const portalUrl =
-      process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app";
+      getClientBaseUrl();
 
     const mailOptions = {
       from: RESEND_FROM,
@@ -3273,7 +3294,7 @@ async function sendTaskReopenedEmail(
                     <table width="100%" cellpadding="0" cellspacing="0" border="0">
                       <tr>
                         <td align="center">
-                          <a href="${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Review Task Now</a>
+                          <a href="${getClientBaseUrl()}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Review Task Now</a>
                         </td>
                       </tr>
                     </table>
@@ -3362,7 +3383,7 @@ async function sendTaskApprovedEmail(
                     <table width="100%" cellpadding="0" cellspacing="0" border="0">
                       <tr>
                         <td align="center">
-                          <a href="${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">View My Portal</a>
+                          <a href="${getClientBaseUrl()}/client-login" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">View My Portal</a>
                         </td>
                       </tr>
                     </table>
@@ -3455,7 +3476,7 @@ async function sendNewTaskAssignedEmail(
                     <table width="100%" cellpadding="0" cellspacing="0" border="0">
                       <tr>
                         <td align="center">
-                          <a href="${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/portal" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Go to My Portal</a>
+                          <a href="${getClientBaseUrl()}/portal" style="display:inline-block;background-color:#0A2F52;color:#ffffff;text-decoration:none;padding:14px 44px;border-radius:10px;font-weight:700;font-size:15px;letter-spacing:0.3px;">Go to My Portal</a>
                         </td>
                       </tr>
                     </table>
@@ -3672,6 +3693,19 @@ const verifyBrokerSession = async (
     });
   }
 };
+
+/** Allows only the listed team roles; must run after verifyBrokerSession. */
+const requireBrokerRoles =
+  (...roles: string[]): RequestHandler =>
+  (req, res, next) => {
+    if (!roles.includes((req as any).brokerRole)) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
+    next();
+  };
+
+const requireAdmin = requireBrokerRoles("admin");
+const requireReportsAccess = requireBrokerRoles("admin", "loan_officer");
 
 // =====================================================
 // BROKER NOTIFICATION HELPER
@@ -6624,6 +6658,7 @@ const handleAdminVerifyCode: RequestHandler = async (req, res) => {
         brokerId: broker.id,
         email: broker.email,
         role: broker.role,
+        is_platform_owner: Boolean(broker.is_platform_owner),
         userType: "broker",
         jti: crypto.randomUUID(),
       },
@@ -6683,6 +6718,7 @@ const handleAdminVerifyCode: RequestHandler = async (req, res) => {
         last_name: broker.last_name,
         phone: broker.phone,
         role: broker.role,
+        is_platform_owner: Boolean(broker.is_platform_owner),
         is_active: broker.status === "active",
         avatar_url: broker.avatar_url ?? null,
         public_token: broker.public_token ?? null,
@@ -6785,6 +6821,7 @@ const handleAdminValidateSession: RequestHandler = async (req, res) => {
           last_name: broker.last_name,
           phone: broker.phone,
           role: broker.role,
+          is_platform_owner: Boolean(broker.is_platform_owner),
           is_active: broker.status === "active",
           avatar_url: broker.avatar_url ?? null,
           public_token: broker.public_token ?? null,
@@ -8219,7 +8256,7 @@ const handlePublicApply: RequestHandler = async (req, res) => {
           )[0].map((r) => r.id as number);
     const clientLabel = `${first_name} ${last_name}`.trim() || "a client";
     const alertHtml = wrapBrandedEmailBody(
-      `<p>Hi,</p><p><strong>${clientLabel}</strong> submitted application <strong>${applicationNumber}</strong>.</p><p><a href="${process.env.BASE_URL || ""}/admin/clients/${clientId}" style="color:#0A2F52;font-weight:700;">Open in admin</a></p>`,
+      `<p>Hi,</p><p><strong>${clientLabel}</strong> submitted application <strong>${applicationNumber}</strong>.</p><p><a href="${getBaseUrl()}/admin/clients/${clientId}" style="color:#0A2F52;font-weight:700;">Open in admin</a></p>`,
       { tagline: "Admin Panel" },
     );
     for (const bid of emailBrokerIds) {
@@ -13443,12 +13480,35 @@ const handleGetTaskFormFields: RequestHandler = async (req, res) => {
 /**
  * Submit task form response
  */
+/** Confirms the signed-in client owns the task's loan, or the broker's tenant owns the task. */
+async function canAccessTask(
+  req: express.Request,
+  taskId: unknown,
+): Promise<boolean> {
+  const clientId = (req as any).clientId as number | undefined;
+  const [rows] = await pool.query<RowDataPacket[]>(
+    clientId
+      ? `SELECT t.id FROM tasks t
+         INNER JOIN loan_applications la ON t.application_id = la.id
+         WHERE t.id = ? AND la.client_user_id = ? AND la.tenant_id = ? LIMIT 1`
+      : `SELECT id FROM tasks WHERE id = ? AND tenant_id = ? LIMIT 1`,
+    clientId
+      ? [taskId, clientId, MORTGAGE_TENANT_ID]
+      : [taskId, MORTGAGE_TENANT_ID],
+  );
+  return rows.length > 0;
+}
+
 const handleSubmitTaskForm: RequestHandler = async (req, res) => {
   try {
     const { taskId } = req.params;
     const { responses } = req.body;
-    const userId = (req as any).userId;
+    const userId = (req as any).userId || (req as any).clientId;
     const brokerId = (req as any).brokerId;
+
+    if (!(await canAccessTask(req, taskId))) {
+      return res.status(404).json({ success: false, error: "Task not found" });
+    }
 
     if (!responses || !Array.isArray(responses)) {
       return res.status(400).json({
@@ -13533,6 +13593,10 @@ const handleUploadTaskDocument: RequestHandler = async (req, res) => {
         success: false,
         error: "task_id, document_type, filename, and file_path are required",
       });
+    }
+
+    if (!(await canAccessTask(req, task_id))) {
+      return res.status(404).json({ success: false, error: "Task not found" });
     }
 
     const [result] = await pool.query(
@@ -17145,7 +17209,7 @@ function wrapBrandedEmailBody(
         .join("");
 
   const portalUrl =
-    process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app";
+    getClientBaseUrl();
 
   const ctaHtml = options.showPortalCta
     ? `<!-- CTA -->
@@ -25184,7 +25248,7 @@ async function resolveAllPlatformOwnerRecipients(
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT email, first_name, last_name
      FROM brokers
-     WHERE tenant_id = ? AND role = 'admin' AND status = 'active'
+     WHERE tenant_id = ? AND is_platform_owner = 1 AND status = 'active'
      ORDER BY id ASC`,
     [tenantId],
   );
@@ -25444,21 +25508,12 @@ function getPlatformPriceId(): string | null {
 }
 
 function getBillingReturnBaseUrl(): string {
-  const raw =
-    process.env.ADMIN_URL ||
-    process.env.CLIENT_URL ||
-    process.env.BASE_URL ||
-    "http://localhost:8080";
-  return raw.replace(/\/$/, "");
+  return readAppUrlEnv(process.env.ADMIN_URL) ?? getClientBaseUrl();
 }
 
 /** Admin panel origin for broker emails and deep links — never the client portal. */
 function getAdminBaseUrl(): string {
-  const adminUrl = process.env.ADMIN_URL?.trim();
-  if (adminUrl) return adminUrl.replace(/\/$/, "");
-  const base = process.env.BASE_URL?.trim().replace(/\/$/, "");
-  if (base && /admin\./i.test(base)) return base;
-  return "https://the-mortgage-professionals.vercel.app";
+  return readAppUrlEnv(process.env.ADMIN_URL) ?? getBaseUrl();
 }
 
 type BillingSubscriptionReceiptParams = {
@@ -27370,12 +27425,10 @@ function registerStripeBillingRoutes(
   onTopUpGranted?: TopUpGrantedHandler,
 ) {
   const requirePlatformOwner: RequestHandler = (req, res, next) => {
-    const brokerRole = (req as express.Request & { brokerRole?: string })
-      .brokerRole;
-    if (brokerRole !== "admin") {
+    if (!(req as any).broker?.is_platform_owner) {
       return res.status(403).json({
         success: false,
-        message: "Only admins can access billing",
+        message: "Only platform owners can access billing",
       });
     }
     next();
@@ -32390,7 +32443,7 @@ function isValidTwilioRequest(
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   if (!authToken) return process.env.NODE_ENV !== "production";
   const host = req.headers["x-forwarded-host"] || req.headers.host;
-  const base = process.env.APP_URL || `https://${host}`;
+  const base = readAppUrlEnv(process.env.APP_URL) || `https://${host}`;
   return twilio.validateRequest(
     authToken,
     (req.headers["x-twilio-signature"] as string) ?? "",
@@ -34855,12 +34908,14 @@ let twimlAppVerified = false;
 
 function getVoiceBaseUrl(): string {
   return (
-    process.env.APP_URL ||
-    process.env.TWILIO_SMS_WEBHOOK_URL?.replace(
-      /\/api\/webhooks\/inbound-sms$/,
-      "",
+    readAppUrlEnv(process.env.APP_URL) ||
+    readAppUrlEnv(
+      process.env.TWILIO_SMS_WEBHOOK_URL?.replace(
+        /\/api\/webhooks\/inbound-sms$/,
+        "",
+      ),
     ) ||
-    "https://the-mortgage-professionals.vercel.app"
+    getBaseUrl()
   );
 }
 
@@ -36317,10 +36372,7 @@ const handleVoiceIncoming: RequestHandler = async (req, res) => {
            ORDER BY id ASC LIMIT 1`,
           [MORTGAGE_TENANT_ID],
         );
-        brokerIds =
-          fallbackRows.length > 0
-            ? [fallbackRows[0].id as number]
-            : [parseInt(process.env.TWILIO_INCOMING_BROKER_ID || "1", 10)];
+        brokerIds = fallbackRows.map((r: { id: number }) => r.id);
       }
     }
 
@@ -36602,6 +36654,13 @@ const handleAssignPhoneNumber: RequestHandler = async (req, res) => {
          WHERE id = ? AND tenant_id = ?`,
         [sid, callerIdE164, brokerId, MORTGAGE_TENANT_ID],
       );
+      // A number only receives calls and texts once its webhooks point here.
+      await twilioClient.incomingPhoneNumbers(sid).update({
+        voiceUrl: `${getVoiceBaseUrl()}/api/voice/incoming`,
+        voiceMethod: "POST",
+        smsUrl: `${getVoiceBaseUrl()}/api/webhooks/inbound-sms`,
+        smsMethod: "POST",
+      });
       return res.json({ success: true, sid, brokerId, callerIdE164 });
     } else {
       // Unassign
@@ -36637,9 +36696,18 @@ const handleConfigurePhoneNumber: RequestHandler = async (req, res) => {
     const smsIncomingUrl = `${getVoiceBaseUrl()}/api/webhooks/inbound-sms`;
 
     if (sid === "all") {
-      const numbers = await twilioClient.incomingPhoneNumbers.list({
-        limit: 50,
-      });
+      // The Twilio account may hold other companies' numbers; never take those over.
+      const [assignedRows] = await pool.query<RowDataPacket[]>(
+        `SELECT twilio_phone_sid FROM brokers
+         WHERE tenant_id = ? AND twilio_phone_sid IS NOT NULL`,
+        [MORTGAGE_TENANT_ID],
+      );
+      const assignedSids = new Set(
+        assignedRows.map((r) => String(r.twilio_phone_sid)),
+      );
+      const numbers = (
+        await twilioClient.incomingPhoneNumbers.list({ limit: 50 })
+      ).filter((n) => assignedSids.has(n.sid));
       await Promise.all(
         numbers.map((n) =>
           twilioClient!.incomingPhoneNumbers(n.sid).update({
@@ -38165,7 +38233,7 @@ const handleAdminInit: RequestHandler = async (req, res) => {
     // Fetch full broker profile with broker_profiles join
     const [profileRows] = await pool.query<any[]>(
       `SELECT
-        b.id, b.email, b.first_name, b.last_name, b.phone, b.role,
+        b.id, b.email, b.first_name, b.last_name, b.phone, b.role, b.is_platform_owner,
         b.license_number, b.specializations, b.tenant_id,
         b.public_token, b.slug,
         bp.bio, bp.avatar_url, bp.office_address, bp.office_city,
@@ -40388,15 +40456,14 @@ function createServer() {
   expressApp.post("/api/crm/clients/:clientId/restore", verifyBrokerSession, handleRestoreCrmClient);
 
 
-  expressApp.get("/api/broadcasts", verifyBrokerSession, handleGetBroadcasts);
+  expressApp.get("/api/broadcasts", verifyBrokerSession, requireAdmin, handleGetBroadcasts);
   // GET /api/billing/config — quota flags + plan (platform_owner only)
   expressApp.get(
     "/api/billing/config",
     verifyBrokerSession,
     async (req, res) => {
       try {
-        const brokerRole = (req as any).brokerRole;
-        if (brokerRole !== "admin") {
+        if (!(req as any).broker?.is_platform_owner) {
           return res.status(403).json({
             success: false,
             message: "Only admins can view billing configuration",
@@ -40514,8 +40581,7 @@ function createServer() {
     verifyBrokerSession,
     async (req, res) => {
       try {
-        const brokerRole = (req as any).brokerRole;
-        if (brokerRole !== "admin") {
+        if (!(req as any).broker?.is_platform_owner) {
           return res.status(403).json({
             success: false,
             message: "Only admins can view billing usage",
@@ -40554,8 +40620,7 @@ function createServer() {
     verifyBrokerSession,
     async (req, res) => {
       try {
-        const brokerRole = (req as any).brokerRole;
-        if (brokerRole !== "admin") {
+        if (!(req as any).broker?.is_platform_owner) {
           return res.status(403).json({
             success: false,
             message: "Only admins can run billing estimates",
@@ -40644,8 +40709,7 @@ function createServer() {
     verifyBrokerSession,
     async (req, res) => {
       try {
-        const brokerRole = (req as any).brokerRole;
-        if (brokerRole !== "admin") {
+        if (!(req as any).broker?.is_platform_owner) {
           return res.status(403).json({
             success: false,
             message: "Only admins can view billing access",
@@ -40679,8 +40743,7 @@ function createServer() {
     verifyBrokerSession,
     async (req, res) => {
       try {
-        const brokerRole = (req as any).brokerRole;
-        if (brokerRole !== "admin") {
+        if (!(req as any).broker?.is_platform_owner) {
           return res.status(403).json({
             success: false,
             message: "Only admins can simulate billing access",
@@ -40739,8 +40802,7 @@ function createServer() {
     verifyBrokerSession,
     async (req, res) => {
       try {
-        const brokerRole = (req as any).brokerRole;
-        if (brokerRole !== "admin") {
+        if (!(req as any).broker?.is_platform_owner) {
           return res.status(403).json({
             success: false,
             message: "Only admins can view billing quota",
@@ -40764,8 +40826,7 @@ function createServer() {
     verifyBrokerSession,
     async (req, res) => {
       try {
-        const brokerRole = (req as any).brokerRole;
-        if (brokerRole !== "admin") {
+        if (!(req as any).broker?.is_platform_owner) {
           return res.status(403).json({
             success: false,
             message: "Only admins can view billing purchases",
@@ -40821,15 +40882,15 @@ function createServer() {
   expressApp.post("/api/documents/bulk-download", verifyBrokerSession, handleBulkDownloadTaskDocuments);
   expressApp.get("/api/clients/:clientId/open-loans", verifyBrokerSession, handleGetClientOpenLoans);
   expressApp.put("/api/clients/:clientId/reassign", verifyBrokerSession, handleReassignClient);
-  expressApp.post("/api/broadcasts/preview-audience", verifyBrokerSession, handlePreviewBroadcastAudience);
-  expressApp.post("/api/broadcasts", verifyBrokerSession, handleCreateBroadcast);
-  expressApp.get("/api/broadcasts/:id", verifyBrokerSession, handleGetBroadcast);
+  expressApp.post("/api/broadcasts/preview-audience", verifyBrokerSession, requireAdmin, handlePreviewBroadcastAudience);
+  expressApp.post("/api/broadcasts", verifyBrokerSession, requireAdmin, handleCreateBroadcast);
+  expressApp.get("/api/broadcasts/:id", verifyBrokerSession, requireAdmin, handleGetBroadcast);
   expressApp.get(
     "/api/broadcasts/:id/recipients",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleGetBroadcastRecipients,
   );
-  expressApp.post("/api/broadcasts/:id/cancel", verifyBrokerSession, handleCancelBroadcast);
+  expressApp.post("/api/broadcasts/:id/cancel", verifyBrokerSession, requireAdmin, handleCancelBroadcast);
   expressApp.get(
     "/api/cron/process-scheduled-broadcasts",
     handleProcessScheduledBroadcasts,
@@ -40956,7 +41017,7 @@ function createServer() {
   );
   expressApp.post(
     "/api/brokers/:brokerId/convert-to-client",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleConvertBrokerToClient,
   );
   expressApp.get("/api/brokers", verifyBrokerSession, handleGetBrokers);
@@ -41103,17 +41164,17 @@ function createServer() {
   );
   expressApp.post(
     "/api/email-templates",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleCreateEmailTemplate,
   );
   expressApp.put(
     "/api/email-templates/:templateId",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleUpdateEmailTemplate,
   );
   expressApp.delete(
     "/api/email-templates/:templateId",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleDeleteEmailTemplate,
   );
 
@@ -41244,17 +41305,17 @@ function createServer() {
   );
   expressApp.post(
     "/api/sms-templates",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleCreateSmsTemplate,
   );
   expressApp.put(
     "/api/sms-templates/:templateId",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleUpdateSmsTemplate,
   );
   expressApp.delete(
     "/api/sms-templates/:templateId",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleDeleteSmsTemplate,
   );
 
@@ -41266,12 +41327,12 @@ function createServer() {
   );
   expressApp.put(
     "/api/pipeline-step-templates",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleUpsertPipelineStepTemplate,
   );
   expressApp.delete(
     "/api/pipeline-step-templates/:step/:channel",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleDeletePipelineStepTemplate,
   );
 
@@ -41657,51 +41718,55 @@ function createServer() {
   expressApp.post(
     "/api/voice/fix-call-setup",
     verifyBrokerSession,
+    requireAdmin,
     handleFixCallSetup,
   );
   expressApp.get(
     "/api/voice/phone-numbers",
     verifyBrokerSession,
+    requireAdmin,
     handleGetPhoneNumbers,
   );
   expressApp.post(
     "/api/voice/phone-numbers/:sid/configure",
     verifyBrokerSession,
+    requireAdmin,
     handleConfigurePhoneNumber,
   );
   expressApp.post(
     "/api/voice/phone-numbers/:sid/assign",
     verifyBrokerSession,
+    requireAdmin,
     handleAssignPhoneNumber,
   );
 
   // Audit Logs routes
-  expressApp.get("/api/audit-logs", verifyBrokerSession, handleGetAuditLogs);
+  expressApp.get("/api/audit-logs", verifyBrokerSession, requireAdmin, handleGetAuditLogs);
   expressApp.get(
     "/api/audit-logs/stats",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleGetAuditLogStats,
   );
 
   // Reports & Analytics routes
   expressApp.get(
     "/api/reports/overview",
-    verifyBrokerSession,
+    verifyBrokerSession, requireReportsAccess,
     handleGetReportsOverview,
   );
   expressApp.get(
     "/api/reports/revenue",
-    verifyBrokerSession,
+    verifyBrokerSession, requireReportsAccess,
     handleGetRevenueReport,
   );
   expressApp.get(
     "/api/reports/performance",
-    verifyBrokerSession,
+    verifyBrokerSession, requireReportsAccess,
     handleGetPerformanceReport,
   );
   expressApp.post(
     "/api/reports/export",
-    verifyBrokerSession,
+    verifyBrokerSession, requireReportsAccess,
     handleExportReport,
   );
 
@@ -41725,8 +41790,8 @@ function createServer() {
   });
 
   // System Settings routes
-  expressApp.get("/api/settings", verifyBrokerSession, handleGetSettings);
-  expressApp.put("/api/settings", verifyBrokerSession, handleUpdateSettings);
+  expressApp.get("/api/settings", verifyBrokerSession, requireAdmin, handleGetSettings);
+  expressApp.put("/api/settings", verifyBrokerSession, requireAdmin, handleUpdateSettings);
 
   // Admin init (merged bootstrap)
   expressApp.get("/api/admin/init", verifyBrokerSession, handleAdminInit);
@@ -41780,7 +41845,7 @@ function createServer() {
   );
   expressApp.post(
     "/api/reminder-flows",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleCreateReminderFlow,
   );
   expressApp.get(
@@ -41790,17 +41855,17 @@ function createServer() {
   );
   expressApp.put(
     "/api/reminder-flows/:flowId",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleSaveReminderFlow,
   );
   expressApp.delete(
     "/api/reminder-flows/:flowId",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleDeleteReminderFlow,
   );
   expressApp.patch(
     "/api/reminder-flows/:flowId/toggle",
-    verifyBrokerSession,
+    verifyBrokerSession, requireAdmin,
     handleToggleReminderFlow,
   );
   expressApp.get(
@@ -41903,7 +41968,7 @@ function createServer() {
     meetingDate: string; // "YYYY-MM-DD"
     meetingTime: string; // "HH:MM"
     meetingEndTime: string;
-    meetingType: "phone" | "video" | "teams";
+    meetingType: "phone" | "video" | "teams" | "office";
     videoRoomUrl: string | null;
     videoHostUrl: string | null;
     brokerPhone: string | null;
@@ -41939,7 +42004,25 @@ function createServer() {
       opts.meetingType === "video" || opts.meetingType === "teams";
     const videoProviderLabel =
       opts.meetingType === "teams" ? "Microsoft Teams" : "Zoom";
-    const connectionHtml = isVideoMeeting
+    const isOfficeVisit = opts.meetingType === "office";
+    const officeAddress = await getTenantSetting(
+      pool,
+      MORTGAGE_TENANT_ID,
+      "company_address",
+      "",
+    );
+    const officeLocation =
+      officeAddress || "Our office (your mortgage banker will confirm the address)";
+    const connectionHtml = isOfficeVisit
+      ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;">
+            <tr>
+              <td style="background-color:#F5F8FA;border-left:4px solid #0A2F52;border-radius:0 8px 8px 0;padding:14px 18px;">
+                <p style="margin:0 0 4px 0;color:#1F2933;font-size:14px;font-weight:700;">📍 Office Visit</p>
+                <p style="margin:0;color:#3E4C59;font-size:13px;">${officeLocation}</p>
+              </td>
+            </tr>
+          </table>`
+      : isVideoMeeting
       ? opts.videoRoomUrl
         ? `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:18px;">
             <tr>
@@ -41968,14 +42051,18 @@ function createServer() {
             </tr>
           </table>`;
 
-    const cancelUrl = `${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/scheduler/cancel/${opts.bookingToken}`;
-    const rescheduleUrl = `${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/scheduler/reschedule/${opts.rescheduleToken}`;
+    const cancelUrl = `${getClientBaseUrl()}/scheduler/cancel/${opts.bookingToken}`;
+    const rescheduleUrl = `${getClientBaseUrl()}/scheduler/reschedule/${opts.rescheduleToken}`;
 
-    const icsLocation = isVideoMeeting
+    const icsLocation = isOfficeVisit
+      ? officeLocation
+      : isVideoMeeting
       ? opts.videoRoomUrl ||
         `${videoProviderLabel} Video Call (join link pending)`
       : "Phone Call — your mortgage banker will call you";
-    const icsDescription = isVideoMeeting
+    const icsDescription = isOfficeVisit
+      ? `Office visit with ${opts.brokerName}`
+      : isVideoMeeting
       ? opts.videoRoomUrl
         ? `Join the ${videoProviderLabel} meeting: ${opts.videoRoomUrl}`
         : `${videoProviderLabel} video call with ${opts.brokerName} (join link pending)`
@@ -42029,7 +42116,7 @@ function createServer() {
                       </td></tr>
                       <tr><td style="padding:6px 0;">
                         <span style="color:#64748B;font-size:13px;display:inline-block;width:130px;">📡 Method</span>
-                        <strong style="color:#1F2933;font-size:14px;">${isVideoMeeting ? `${videoProviderLabel} Video Call` : "Phone Call"}</strong>
+                        <strong style="color:#1F2933;font-size:14px;">${opts.meetingType === "office" ? "Office Visit" : isVideoMeeting ? `${videoProviderLabel} Video Call` : "Phone Call"}</strong>
                       </td></tr>
                     </table>
                   </td></tr>
@@ -42075,7 +42162,7 @@ function createServer() {
     meetingDate: string;
     meetingTime: string;
     meetingEndTime: string;
-    meetingType: "phone" | "video" | "teams";
+    meetingType: "phone" | "video" | "teams" | "office";
     videoRoomUrl: string | null;
     videoHostUrl: string | null;
     notes: string | null;
@@ -42105,7 +42192,7 @@ function createServer() {
       : "";
     const timeLabel = (t: string) =>
       `${formatTime(t)}${tzAbbr ? ` ${tzAbbr}` : ""}`;
-    const adminUrl = `${process.env.BASE_URL || "https://the-mortgage-professionals.vercel.app"}/admin/scheduler`;
+    const adminUrl = `${getBaseUrl()}/admin/scheduler`;
 
     const isVideoMeeting =
       opts.meetingType === "video" || opts.meetingType === "teams";
@@ -42149,7 +42236,7 @@ function createServer() {
                       </td></tr>
                       <tr><td style="padding:6px 0;">
                         <span style="color:#64748B;font-size:13px;width:140px;display:inline-block;">📡 Method</span>
-                        <strong style="color:#1F2933;font-size:14px;">${isVideoMeeting ? `${videoProviderLabel} Video Call` : "Phone Call"}</strong>
+                        <strong style="color:#1F2933;font-size:14px;">${opts.meetingType === "office" ? "Office Visit" : isVideoMeeting ? `${videoProviderLabel} Video Call` : "Phone Call"}</strong>
                       </td></tr>
                     </table>
                   </td></tr>
@@ -42205,7 +42292,7 @@ function createServer() {
       : "";
     const timeLabel = (t: string) =>
       `${formatTime(t)}${tzAbbr ? ` ${tzAbbr}` : ""}`;
-    const scheduleUrl = `${process.env.CLIENT_URL || "https://the-mortgage-professionals.vercel.app"}/scheduler`;
+    const scheduleUrl = `${getClientBaseUrl()}/scheduler`;
 
     await sendViaResend({
       from: process.env.SMTP_FROM,
@@ -42718,7 +42805,7 @@ function createServer() {
       await pool.query(
         `INSERT IGNORE INTO scheduler_settings
            (tenant_id, broker_id, meeting_title, meeting_description, slot_duration_minutes, buffer_time_minutes, advance_booking_days, min_booking_hours, timezone, allow_phone, allow_video, allow_teams)
-         VALUES (?, ?, 'Mortgage Consultation', 'Schedule a free consultation with our mortgage expert.', 30, 15, 30, 2, ?, 1, 1, 0)`,
+         VALUES (?, ?, 'Mortgage Consultation', 'Schedule a free consultation with our mortgage expert.', 30, 15, 30, 2, ?, 1, 0, 0)`,
         [
           MORTGAGE_TENANT_ID,
           brokerRow.id,
@@ -42779,6 +42866,7 @@ function createServer() {
             (brokerRow as any).timezone ||
             "America/Chicago",
           allow_phone: !!settings.allow_phone,
+          allow_office: !!settings.allow_office,
           allow_video: !!settings.allow_video,
           allow_teams: !!settings.allow_teams,
           is_enabled: !!settings.is_enabled,
@@ -42878,7 +42966,7 @@ function createServer() {
         client_phone?: string;
         meeting_date?: string;
         meeting_time?: string;
-        meeting_type?: "phone" | "video" | "teams";
+        meeting_type?: "phone" | "video" | "teams" | "office" | "office";
         notes?: string;
       };
 
@@ -42956,33 +43044,22 @@ function createServer() {
           .json({ success: false, error: "Scheduler is not available" });
       }
 
+      if (meeting_type === "video" || meeting_type === "teams") {
+        return res.status(400).json({
+          success: false,
+          error: "Only phone calls and office visits can be scheduled",
+        });
+      }
+      if (meeting_type === "office" && !settings.allow_office) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Office visits are not available" });
+      }
       if (meeting_type === "phone" && !settings.allow_phone) {
         return res
           .status(400)
           .json({ success: false, error: "Phone meetings are not available" });
       }
-      if (meeting_type === "video" && !settings.allow_video) {
-        return res
-          .status(400)
-          .json({ success: false, error: "Video meetings are not available" });
-      }
-      // Zoom temporarily disabled server-side
-      const ZOOM_TEMP_DISABLED: boolean = true;
-      if (meeting_type === "video" && ZOOM_TEMP_DISABLED) {
-        return res.status(503).json({
-          success: false,
-          error:
-            "Video (Zoom) meetings are temporarily unavailable. Please select Phone.",
-        });
-      }
-      if (meeting_type === "teams") {
-        return res.status(400).json({
-          success: false,
-          error:
-            "Teams meetings are no longer supported. Please select Phone or Video.",
-        });
-      }
-
       // Validate slot is truly available
       const allSlots = await getAvailableSlotsForDate(
         brokerId,
@@ -43015,26 +43092,6 @@ function createServer() {
       let teamsJoinUrl: string | null = null;
       let teamsHostUrl: string | null = null;
 
-      if (meeting_type === "video") {
-        const zoomMeeting = await createZoomMeeting({
-          topic: settings.meeting_title || "Mortgage Consultation",
-          startDatetime: `${meeting_date}T${meeting_time}:00`,
-          durationMinutes: settings.slot_duration_minutes,
-          timezone:
-            settings.timezone || brokerData.timezone || "America/Chicago",
-        });
-        if (zoomMeeting) {
-          zoomMeetingId = zoomMeeting.meeting_id;
-          zoomJoinUrl = zoomMeeting.join_url;
-          zoomStartUrl = zoomMeeting.start_url;
-        } else {
-          return res.status(503).json({
-            success: false,
-            error:
-              "Unable to create Zoom meeting right now. Please try again in a moment.",
-          });
-        }
-      }
       const [result] = await pool.query<ResultSetHeader>(
         `INSERT INTO scheduled_meetings
            (tenant_id, broker_id, client_name, client_email, client_phone,
@@ -43519,7 +43576,7 @@ function createServer() {
       await pool.query(
         `INSERT INTO scheduler_settings
            (tenant_id, broker_id, meeting_title, meeting_description, slot_duration_minutes, buffer_time_minutes, advance_booking_days, min_booking_hours, timezone, allow_phone, allow_video, allow_teams)
-         VALUES (?, ?, 'Mortgage Consultation', 'Schedule a free consultation with our mortgage expert.', 30, 15, 30, 2, 'America/Chicago', 1, 1, 0)
+         VALUES (?, ?, 'Mortgage Consultation', 'Schedule a free consultation with our mortgage expert.', 30, 15, 30, 2, 'America/Chicago', 1, 0, 0)
          ON DUPLICATE KEY UPDATE updated_at = updated_at`,
         [MORTGAGE_TENANT_ID, reqBrokerId],
       );
@@ -43548,6 +43605,7 @@ function createServer() {
           ...settings,
           is_enabled: !!settings.is_enabled,
           allow_phone: !!settings.allow_phone,
+          allow_office: !!settings.allow_office,
           allow_video: !!settings.allow_video,
           allow_teams: !!settings.allow_teams,
         },
@@ -43577,6 +43635,7 @@ function createServer() {
         min_booking_hours,
         timezone,
         allow_phone,
+        allow_office,
         allow_video,
         allow_teams,
         availability,
@@ -43590,6 +43649,7 @@ function createServer() {
         min_booking_hours?: number;
         timezone?: string;
         allow_phone?: boolean;
+        allow_office?: boolean;
         allow_video?: boolean;
         allow_teams?: boolean;
         availability?: Array<{
@@ -43659,6 +43719,7 @@ function createServer() {
            min_booking_hours = COALESCE(?, min_booking_hours),
            timezone = COALESCE(?, timezone),
            allow_phone = COALESCE(?, allow_phone),
+           allow_office = COALESCE(?, allow_office),
            allow_video = COALESCE(?, allow_video),
            allow_teams = COALESCE(?, allow_teams)
          WHERE broker_id = ? AND tenant_id = ?`,
@@ -43674,6 +43735,7 @@ function createServer() {
           min_booking_hours ?? null,
           timezone || null,
           allow_phone !== undefined ? (allow_phone ? 1 : 0) : null,
+          allow_office !== undefined ? (allow_office ? 1 : 0) : null,
           allow_video !== undefined ? (allow_video ? 1 : 0) : null,
           allow_teams !== undefined ? (allow_teams ? 1 : 0) : null,
           reqBrokerId,
@@ -43685,8 +43747,8 @@ function createServer() {
           `INSERT INTO scheduler_settings
              (tenant_id, broker_id, is_enabled, meeting_title, meeting_description,
               slot_duration_minutes, buffer_time_minutes, advance_booking_days,
-              min_booking_hours, timezone, allow_phone, allow_video, allow_teams)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              min_booking_hours, timezone, allow_phone, allow_office, allow_video, allow_teams)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             MORTGAGE_TENANT_ID,
             reqBrokerId,
@@ -43699,6 +43761,7 @@ function createServer() {
             min_booking_hours ?? 2,
             timezone || "America/Chicago",
             allow_phone !== undefined ? (allow_phone ? 1 : 0) : 1,
+            allow_office !== undefined ? (allow_office ? 1 : 0) : 1,
             allow_video !== undefined ? (allow_video ? 1 : 0) : 0,
             allow_teams !== undefined ? (allow_teams ? 1 : 0) : 0],
         );
@@ -43914,7 +43977,7 @@ function createServer() {
         broker_notes?: string;
         meeting_date?: string;
         meeting_time?: string;
-        meeting_type?: "phone" | "video" | "teams";
+        meeting_type?: "phone" | "video" | "teams" | "office" | "office";
         cancelled_reason?: string;
         cancelled_by?: "client" | "broker";
       };
@@ -43953,6 +44016,12 @@ function createServer() {
       if (meeting_date !== undefined) {
         updates.push("meeting_date = ?");
         updateParams.push(meeting_date);
+      }
+      if (meeting_type === "video" || meeting_type === "teams") {
+        return res.status(400).json({
+          success: false,
+          error: "Only phone calls and office visits can be scheduled",
+        });
       }
       if (meeting_type !== undefined) {
         updates.push("meeting_type = ?");
@@ -44054,7 +44123,7 @@ function createServer() {
         client_phone?: string;
         meeting_date?: string;
         meeting_time?: string;
-        meeting_type?: "phone" | "video" | "teams";
+        meeting_type?: "phone" | "video" | "teams" | "office" | "office";
         notes?: string;
         target_broker_id?: number;
       };
@@ -44111,59 +44180,18 @@ function createServer() {
 
       // Create Zoom meeting for video type
       // Zoom is temporarily disabled; Teams is no longer supported
-      const ZOOM_TEMP_DISABLED_ADMIN: boolean = true;
-      if (meeting_type === "video" && ZOOM_TEMP_DISABLED_ADMIN) {
-        return res.status(503).json({
-          success: false,
-          error:
-            "Video (Zoom) meetings are temporarily unavailable. Please select Phone.",
-        });
-      }
-      if (meeting_type === "teams") {
+      if (meeting_type === "video" || meeting_type === "teams") {
         return res.status(400).json({
           success: false,
-          error: "Teams meetings are no longer supported. Please select Phone.",
+          error: "Only phone calls and office visits can be scheduled",
         });
       }
-
       let zoomMeetingId: string | null = null;
       let zoomJoinUrl: string | null = null;
       let zoomStartUrl: string | null = null;
       let teamsMeetingId: string | null = null;
       let teamsJoinUrl: string | null = null;
       let teamsHostUrl: string | null = null;
-
-      if (meeting_type === "video") {
-        try {
-          const zoomMeeting = await createZoomMeeting({
-            topic: `Mortgage Meeting — ${client_name.trim()}`,
-            startDatetime: `${meeting_date}T${meeting_time}:00`,
-            durationMinutes: dur,
-            timezone: "America/Chicago",
-          });
-          if (zoomMeeting) {
-            zoomMeetingId = zoomMeeting.meeting_id;
-            zoomJoinUrl = zoomMeeting.join_url;
-            zoomStartUrl = zoomMeeting.start_url;
-          } else {
-            return res.status(503).json({
-              success: false,
-              error:
-                "Unable to create Zoom meeting right now. Please try again in a moment.",
-            });
-          }
-        } catch (zoomErr) {
-          console.error(
-            "Zoom meeting creation error (admin booking):",
-            zoomErr,
-          );
-          return res.status(503).json({
-            success: false,
-            error:
-              "Unable to create Zoom meeting right now. Please try again in a moment.",
-          });
-        }
-      }
 
       const bookingToken = crypto.randomUUID();
 
@@ -44314,6 +44342,7 @@ function createServer() {
                 ...settings,
                 is_enabled: !!settings.is_enabled,
                 allow_phone: !!settings.allow_phone,
+          allow_office: !!settings.allow_office,
                 allow_video: !!settings.allow_video,
                 allow_teams: !!settings.allow_teams,
               }

@@ -70,7 +70,7 @@ import { format, subDays, subMonths } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 
-const COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#ef4444", "#8b5cf6"];
+const COLORS = ["#10b981", "#135E99", "#f59e0b", "#ef4444", "#0A2F52"];
 
 const Reports = () => {
   const dispatch = useAppDispatch();
@@ -441,7 +441,7 @@ const Reports = () => {
                           yAxisId="right"
                           type="monotone"
                           dataKey="loan_count"
-                          stroke="#3b82f6"
+                          stroke="#135E99"
                           name="Loan Count"
                         />
                       </RechartsLineChart>
@@ -493,7 +493,7 @@ const Reports = () => {
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className="text-3xl font-bold text-blue-500">
+                      <div className="text-3xl font-bold text-primary">
                         {formatPercent(
                           performance.taskCompletion.completion_rate,
                         )}

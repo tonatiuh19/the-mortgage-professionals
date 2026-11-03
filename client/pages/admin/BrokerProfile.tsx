@@ -1361,8 +1361,6 @@ const BrokerProfile = () => {
               </Card>
             ) : null}
 
-            {/* Email Mailbox — hidden until O365 is configured */}
-
             {/* Notification Preferences */}
             <Card>
               <CardHeader>

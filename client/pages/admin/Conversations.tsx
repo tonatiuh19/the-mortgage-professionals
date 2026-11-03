@@ -1076,7 +1076,7 @@ const Conversations = () => {
       case "urgent":
         return "bg-red-100 text-red-700 border-red-200";
       case "high":
-        return "bg-orange-100 text-orange-700 border-orange-200";
+        return "bg-amber-100 text-amber-700 border-amber-200";
       case "normal":
         return "bg-primary/10 text-primary border-primary/20";
       case "low":
@@ -1102,7 +1102,7 @@ const Conversations = () => {
   const getChannelColor = (type: string) => {
     switch (type) {
       case "email":
-        return "text-blue-500";
+        return "text-primary";
       case "sms":
         return "text-primary";
       default:
@@ -1456,14 +1456,14 @@ const Conversations = () => {
                               className={cn(
                                 "p-2 rounded-full flex-shrink-0 mt-0.5",
                                 isMissed
-                                  ? "bg-red-100"
+                                  ? "bg-primary/10"
                                   : isInbound
                                     ? "bg-green-100"
                                     : "bg-primary/10",
                               )}
                             >
                               {isMissed ? (
-                                <PhoneMissed className="h-3.5 w-3.5 text-red-500" />
+                                <PhoneMissed className="h-3.5 w-3.5 text-primary" />
                               ) : isInbound ? (
                                 <PhoneIncoming className="h-3.5 w-3.5 text-green-600" />
                               ) : (
@@ -1491,7 +1491,7 @@ const Conversations = () => {
                                   className={cn(
                                     "text-xs font-medium",
                                     isMissed
-                                      ? "text-red-600"
+                                      ? "text-primary"
                                       : "text-muted-foreground",
                                   )}
                                 >
@@ -1509,7 +1509,7 @@ const Conversations = () => {
                                   </>
                                 )}
                                 {isMissed && (
-                                  <span className="text-xs text-red-500 font-medium">
+                                  <span className="text-xs text-primary font-medium">
                                     Missed
                                   </span>
                                 )}
@@ -1548,7 +1548,7 @@ const Conversations = () => {
                   <TooltipProvider delayDuration={400}>
                     {/* Closed-mode banner */}
                     {selectedStatus === "closed" && (
-                      <div className="flex items-center gap-2 px-3 py-2 mb-1 rounded-lg bg-blue-50 border border-blue-200 text-blue-700">
+                      <div className="flex items-center gap-2 px-3 py-2 mb-1 rounded-lg bg-primary/10 border border-primary/20 text-primary">
                         <CircleCheck className="h-3.5 w-3.5 shrink-0" />
                         <p className="text-xs flex-1 font-medium">
                           Closed conversations
@@ -1574,10 +1574,10 @@ const Conversations = () => {
                         return (
                           <div
                             key={thread.id}
-                            className="p-3 rounded-lg border border-blue-200 bg-blue-50 animate-in fade-in-0 slide-in-from-left-1"
+                            className="p-3 rounded-lg border border-primary/20 bg-primary/10 animate-in fade-in-0 slide-in-from-left-1"
                           >
                             <div className="flex items-center gap-2">
-                              <CircleCheck className="h-4 w-4 text-blue-600 shrink-0" />
+                              <CircleCheck className="h-4 w-4 text-primary shrink-0" />
                               <p className="text-xs text-foreground flex-1 min-w-0 truncate">
                                 Close conversation with{" "}
                                 <span className="font-semibold">
@@ -1589,7 +1589,7 @@ const Conversations = () => {
                             <div className="flex gap-2 mt-2">
                               <Button
                                 size="sm"
-                                className="h-7 text-xs flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                                className="h-7 text-xs flex-1 bg-primary hover:bg-primary text-white"
                                 onClick={(e) => {
                                   setConfirmDeleteId(null);
                                   handleCloseThread(thread, e);
@@ -1697,7 +1697,7 @@ const Conversations = () => {
                                               thread.conversation_id,
                                             );
                                           }}
-                                          className="p-1 rounded-md text-muted-foreground hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                                          className="p-1 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
                                         >
                                           <X className="h-3.5 w-3.5" />
                                         </button>
@@ -1773,7 +1773,7 @@ const Conversations = () => {
                                               thread.conversation_id,
                                             );
                                           }}
-                                          className="gap-2 text-sm text-blue-700 focus:text-blue-700"
+                                          className="gap-2 text-sm text-primary focus:text-primary"
                                         >
                                           <X className="h-4 w-4" />
                                           Close conversation
@@ -2930,7 +2930,7 @@ const Conversations = () => {
                             className={cn(
                               "p-3 rounded-full",
                               isMissed
-                                ? "bg-red-100"
+                                ? "bg-primary/10"
                                 : isInbound
                                   ? "bg-green-100"
                                   : "bg-primary/10",
@@ -2938,7 +2938,7 @@ const Conversations = () => {
                           >
                             {isMissed ? (
                               <PhoneMissed
-                                className={cn("h-5 w-5 text-red-500")}
+                                className={cn("h-5 w-5 text-primary")}
                               />
                             ) : isInbound ? (
                               <PhoneIncoming className="h-5 w-5 text-green-600" />
@@ -3129,7 +3129,7 @@ const Conversations = () => {
                       {currentThread.contact_broker_id && (
                         <Badge
                           variant="outline"
-                          className="text-xs bg-violet-50 text-violet-700 border-violet-200"
+                          className="text-xs bg-primary/10 text-primary border-primary/20"
                         >
                           Realtor
                         </Badge>
@@ -3206,7 +3206,7 @@ const Conversations = () => {
                         <Button
                           variant="outline"
                           size="sm"
-                          className="mt-1.5 h-7 text-xs w-full gap-1.5 hover:bg-violet-50 hover:text-violet-700 hover:border-violet-300"
+                          className="mt-1.5 h-7 text-xs w-full gap-1.5 hover:bg-primary/10 hover:text-primary hover:border-primary/20"
                           onClick={() => setScheduleDialogOpen(true)}
                         >
                           <CalendarPlus className="h-3 w-3" />
@@ -3221,8 +3221,8 @@ const Conversations = () => {
                       "@noemail.placeholder",
                     ) && (
                       <div className="flex items-start gap-3">
-                        <div className="p-1.5 bg-blue-50 rounded-md flex-shrink-0">
-                          <Mail className="h-3.5 w-3.5 text-blue-500" />
+                        <div className="p-1.5 bg-primary/10 rounded-md flex-shrink-0">
+                          <Mail className="h-3.5 w-3.5 text-primary" />
                         </div>
                         <div className="min-w-0">
                           <p className="text-xs text-muted-foreground font-medium">
@@ -3298,7 +3298,7 @@ const Conversations = () => {
                     className={cn(
                       "p-1.5 rounded-md flex-shrink-0",
                       currentThread.last_message_type === "email"
-                        ? "bg-blue-50"
+                        ? "bg-primary/10"
                         : "bg-primary/10",
                     )}
                   >
@@ -3336,7 +3336,7 @@ const Conversations = () => {
                       "text-sm",
                       currentThread.status === "active"
                         ? "bg-green-50 text-green-700 border-green-200"
-                        : "bg-blue-50 text-blue-700 border-blue-200",
+                        : "bg-primary/10 text-primary border-primary/20",
                     )}
                   >
                     {currentThread.status}
@@ -3372,7 +3372,7 @@ const Conversations = () => {
             <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
-                  <CalendarPlus className="h-4 w-4 text-violet-600" />
+                  <CalendarPlus className="h-4 w-4 text-primary" />
                   Schedule a Meeting
                 </DialogTitle>
                 <DialogDescription>
@@ -3443,7 +3443,7 @@ const Conversations = () => {
                       <ExternalLink className="h-4 w-4" />
                       Preview Booking Page
                     </Button>
-                    <div className="flex items-start gap-2 p-3 bg-violet-50 rounded-lg border border-violet-100 text-xs text-violet-700">
+                    <div className="flex items-start gap-2 p-3 bg-primary/10 rounded-lg border border-primary/20 text-xs text-primary">
                       <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                       <span>
                         Copy this link and send it to the client via SMS or

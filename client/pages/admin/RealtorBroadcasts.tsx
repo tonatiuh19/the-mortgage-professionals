@@ -81,7 +81,7 @@ const SEGMENT_OPTIONS = [
 
 const STATUS_STYLE: Record<string, string> = {
   draft: "bg-slate-100 text-slate-700",
-  scheduled: "bg-sky-100 text-sky-800",
+  scheduled: "bg-primary/10 text-primary",
   sending: "bg-amber-100 text-amber-800",
   sent: "bg-emerald-100 text-emerald-800",
   failed: "bg-red-100 text-red-800",

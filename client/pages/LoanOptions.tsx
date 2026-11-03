@@ -232,29 +232,29 @@ const BADGE_CLASSES: Record<string, string> = {
   primary: "bg-primary/10 text-primary border-primary/20",
   emerald:
     "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400",
-  sky: "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-900/20 dark:text-sky-400",
+  sky: "bg-primary/10 text-primary border-primary/20 dark:bg-primary/20 dark:text-primary",
   amber:
     "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400",
   violet:
-    "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-900/20 dark:text-violet-400",
+    "bg-primary/10 text-primary border-primary/20 dark:bg-primary/20 dark:text-primary",
   orange:
-    "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-900/20 dark:text-orange-400",
-  rose: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-400",
-  teal: "bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-900/20 dark:text-teal-400",
+    "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400",
+  rose: "bg-primary/10 text-primary border-primary/20 dark:bg-primary/20 dark:text-primary",
+  teal: "bg-primary/10 text-primary border-primary/20 dark:bg-primary/20 dark:text-primary",
 };
 
 const ICON_CLASSES: Record<string, string> = {
   primary: "bg-primary/10 text-primary",
   emerald:
     "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400",
-  sky: "bg-sky-100 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400",
+  sky: "bg-primary/10 text-primary dark:bg-primary/30 dark:text-primary",
   amber: "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
   violet:
-    "bg-violet-100 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400",
+    "bg-primary/10 text-primary dark:bg-primary/30 dark:text-primary",
   orange:
-    "bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400",
-  rose: "bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400",
-  teal: "bg-teal-100 text-teal-600 dark:bg-teal-900/30 dark:text-teal-400",
+    "bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400",
+  rose: "bg-primary/10 text-primary dark:bg-primary/30 dark:text-primary",
+  teal: "bg-primary/10 text-primary dark:bg-primary/30 dark:text-primary",
 };
 
 // ─── Component ───────────────────────────────────────────────────────────────

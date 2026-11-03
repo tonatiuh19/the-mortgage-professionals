@@ -7,9 +7,8 @@ const { hostname } = window.location;
 export const IS_DEV =
   hostname === "localhost" ||
   hostname === "127.0.0.1" ||
-  (hostname.endsWith(".vercel.app") &&
-    hostname !== "real-state-one-omega.vercel.app");
+  hostname.endsWith(".vercel.app");
 
 export const DOMAIN = IS_DEV
   ? `http://localhost:8080`
-  : `https://real-state-one-omega.vercel.app`;
+  : `https://www.themortgagepro.net`;

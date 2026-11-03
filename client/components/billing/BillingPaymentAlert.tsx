@@ -38,7 +38,7 @@ export function BillingPaymentAlert({
           "flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-sm",
           blocked
             ? "border-destructive/30 bg-destructive/10 text-destructive"
-            : "border-orange-500/30 bg-orange-500/10 text-orange-700 dark:text-orange-400",
+            : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400",
           className,
         )}
       >
@@ -68,14 +68,14 @@ export function BillingPaymentAlert({
         "relative overflow-hidden rounded-2xl border p-5 shadow-sm",
         blocked
           ? "border-destructive/40 bg-gradient-to-br from-destructive/10 via-card to-card"
-          : "border-orange-500/30 bg-gradient-to-br from-orange-500/10 via-card to-card",
+          : "border-amber-500/30 bg-gradient-to-br from-amber-500/10 via-card to-card",
         className,
       )}
     >
       <div
         className={cn(
           "pointer-events-none absolute -right-8 -top-8 h-32 w-32 rounded-full blur-3xl",
-          blocked ? "bg-destructive/20" : "bg-orange-500/20",
+          blocked ? "bg-destructive/20" : "bg-amber-500/20",
         )}
       />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -83,7 +83,7 @@ export function BillingPaymentAlert({
           <div
             className={cn(
               "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl",
-              blocked ? "bg-destructive/15 text-destructive" : "bg-orange-500/15 text-orange-600",
+              blocked ? "bg-destructive/15 text-destructive" : "bg-amber-500/15 text-amber-600",
             )}
           >
             <Icon className="h-5 w-5" />

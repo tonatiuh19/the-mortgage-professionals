@@ -17,6 +17,7 @@ interface BrokerUser {
   last_name: string;
   phone?: string;
   role: BrokerRole;
+  is_platform_owner?: boolean;
   tenant_id: number;
   status: "active" | "inactive" | "suspended";
   license_number?: string;

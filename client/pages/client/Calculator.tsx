@@ -1082,7 +1082,7 @@ const CalculatorPage = ({ hideApplyCta = false }: CalculatorPageProps) => {
                       {
                         label: "Total Cost",
                         value: fmt(calc.totalCost),
-                        icon: <CalcIcon className="h-4 w-4 text-blue-500" />,
+                        icon: <CalcIcon className="h-4 w-4 text-primary" />,
                       },
                     ].map((s) => (
                       <div

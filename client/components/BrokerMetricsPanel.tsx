@@ -242,19 +242,19 @@ function KpiCard({
     primary: "bg-primary",
     emerald: "bg-emerald-500",
     amber: "bg-amber-400",
-    sky: "bg-sky-500",
+    sky: "bg-primary",
   }[accentColor];
   const iconBg = {
     primary: "bg-primary/10 text-primary",
     emerald: "bg-emerald-500/10 text-emerald-600",
     amber: "bg-amber-400/10 text-amber-600",
-    sky: "bg-sky-500/10 text-sky-600",
+    sky: "bg-primary/10 text-primary",
   }[accentColor];
   const glowColor = {
     primary: "bg-primary",
     emerald: "bg-emerald-400",
     amber: "bg-amber-300",
-    sky: "bg-sky-400",
+    sky: "bg-primary",
   }[accentColor];
 
   return (
@@ -1276,7 +1276,7 @@ const BrokerMetricsPanel: React.FC<BrokerMetricsPanelProps> = ({
                             {
                               label: "Annual Credit Pulls",
                               value: annualMetrics.annual_credit_pulls,
-                              color: "text-sky-500",
+                              color: "text-primary",
                             },
                             {
                               label: "Annual Pre-Approvals",
@@ -1395,7 +1395,7 @@ const BrokerMetricsPanel: React.FC<BrokerMetricsPanelProps> = ({
                                     <td className="px-4 py-3 text-center font-semibold">
                                       {q.leads}
                                     </td>
-                                    <td className="px-4 py-3 text-center font-semibold text-sky-600 dark:text-sky-400">
+                                    <td className="px-4 py-3 text-center font-semibold text-primary dark:text-primary">
                                       {q.credit_pulls}
                                     </td>
                                     <td className="px-4 py-3 text-center font-semibold text-emerald-600 dark:text-emerald-400">
@@ -1492,7 +1492,7 @@ const BrokerMetricsPanel: React.FC<BrokerMetricsPanelProps> = ({
                                           </span>
                                         )}
                                       </td>
-                                      <td className="px-4 py-2.5 text-center font-semibold text-sky-600 dark:text-sky-400">
+                                      <td className="px-4 py-2.5 text-center font-semibold text-primary dark:text-primary">
                                         {s.credit_pulls || (
                                           <span className="text-muted-foreground/40">
                                             —

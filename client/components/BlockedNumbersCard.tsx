@@ -175,7 +175,7 @@ export function BlockedNumbersCard({ canEdit }: { canEdit: boolean }) {
                   className="flex flex-col gap-3 bg-card p-4 sm:flex-row sm:items-center"
                 >
                   <div className="flex min-w-0 flex-1 items-start gap-3">
-                    <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
+                    <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                       <Ban className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1 space-y-1">

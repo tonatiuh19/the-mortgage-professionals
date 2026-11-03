@@ -22,9 +22,9 @@ const LEVEL_STYLES: Record<
   { border: string; bg: string; text: string; Icon: typeof AlertTriangle }
 > = {
   soft_warn: {
-    border: "border-orange-500/35",
-    bg: "bg-gradient-to-r from-orange-500/12 via-amber-500/5 to-transparent",
-    text: "text-orange-700 dark:text-orange-300",
+    border: "border-amber-500/35",
+    bg: "bg-gradient-to-r from-amber-500/12 via-amber-500/5 to-transparent",
+    text: "text-amber-700 dark:text-amber-300",
     Icon: AlertTriangle,
   },
   subscription_grace: {
@@ -46,9 +46,9 @@ const LEVEL_STYLES: Record<
     Icon: ShieldAlert,
   },
   quota_blocked: {
-    border: "border-orange-500/35",
-    bg: "bg-orange-500/10",
-    text: "text-orange-700 dark:text-orange-400",
+    border: "border-amber-500/35",
+    bg: "bg-amber-500/10",
+    text: "text-amber-700 dark:text-amber-400",
     Icon: AlertCircle,
   },
 };
@@ -75,7 +75,7 @@ export function BillingTeamNoticeBanner({ className }: Props) {
   const dispatch = useAppDispatch();
   const user = useAppSelector((s) => s.brokerAuth.user);
   const teamNotice = useAppSelector((s) => s.billing.teamNotice);
-  const isPlatformOwner = user?.role === "admin";
+  const isPlatformOwner = Boolean(user?.is_platform_owner);
 
   useEffect(() => {
     if (!user || isPlatformOwner) return;
@@ -119,7 +119,7 @@ export function BillingTeamNoticeBanner({ className }: Props) {
           "mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background/60",
           styles.text,
           teamNotice.level === "subscription_grace" && "bg-amber-500/20",
-          teamNotice.level === "soft_warn" && "bg-orange-500/20",
+          teamNotice.level === "soft_warn" && "bg-amber-500/20",
         )}
       >
         <Icon className="h-4 w-4" />

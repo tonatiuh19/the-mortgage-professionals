@@ -45,7 +45,7 @@ const ZONE_COLORS = [
 ];
 
 const ZONE_BORDER_COLORS = [
-  "#3b82f6",
+  "#135E99",
   "#10b981",
   "#f59e0b",
   "#ef4444",
@@ -246,9 +246,9 @@ const PDFSignatureZoneEditor: React.FC<PDFSignatureZoneEditorProps> = ({
         </div>
 
         {/* Instruction hint */}
-        <Alert className="mb-3 border-blue-200 bg-blue-50/50">
-          <PenTool className="h-4 w-4 text-blue-600" />
-          <AlertDescription className="text-blue-800 text-xs">
+        <Alert className="mb-3 border-primary/20 bg-primary/50">
+          <PenTool className="h-4 w-4 text-primary" />
+          <AlertDescription className="text-primary text-xs">
             Click and drag on the document to draw a signature zone.
           </AlertDescription>
         </Alert>

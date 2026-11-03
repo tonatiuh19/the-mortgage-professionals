@@ -346,13 +346,13 @@ export default function Brokers() {
   const getRoleBadgeColor = (role: string) => {
     switch (role) {
       case "admin":
-        return "bg-purple-100 text-purple-800 hover:bg-purple-100";
+        return "bg-primary/10 text-primary hover:bg-primary/10";
       case "loan_officer":
-        return "bg-indigo-100 text-indigo-800 hover:bg-indigo-100";
+        return "bg-primary/10 text-primary hover:bg-primary/10";
       case "loan_processor":
-        return "bg-cyan-100 text-cyan-800 hover:bg-cyan-100";
+        return "bg-primary/10 text-primary hover:bg-primary/10";
       default:
-        return "bg-blue-100 text-blue-800 hover:bg-blue-100";
+        return "bg-primary/10 text-primary hover:bg-primary/10";
     }
   };
 
@@ -516,7 +516,7 @@ export default function Brokers() {
                       )}
                     </div>
                   ) : (
-                    <span className="text-sm text-gray-400">\u2014</span>
+                    <span className="text-sm text-gray-400">—</span>
                   ),
               },
               {
@@ -605,7 +605,7 @@ export default function Brokers() {
                             size="sm"
                             title="Get share link"
                             onClick={() => handleShareLinkClick(b)}
-                            className="h-8 w-8 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                            className="h-8 w-8 p-0 text-primary hover:text-primary hover:bg-primary/10"
                           >
                             <Link2 className="h-4 w-4" />
                           </Button>
@@ -678,7 +678,7 @@ export default function Brokers() {
                       size="sm"
                       title="Copy scheduler link"
                       onClick={() => handleOpenSchedulerLink(broker)}
-                      className="h-8 gap-1 text-violet-600 hover:text-violet-700 hover:bg-violet-50"
+                      className="h-8 gap-1 text-primary hover:text-primary hover:bg-primary/10"
                     >
                       <CalendarDays className="h-3.5 w-3.5" />
                     </Button>
@@ -686,7 +686,7 @@ export default function Brokers() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleShareLinkClick(broker)}
-                      className="h-8 gap-1 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                      className="h-8 gap-1 text-primary hover:text-primary hover:bg-primary/10"
                     >
                       <Link2 className="h-3.5 w-3.5" /> Link
                     </Button>

@@ -61,11 +61,11 @@ const DIMENSION_ICONS: Record<UsageDimension, React.ReactNode> = {
 };
 
 const DIMENSION_ACCENT: Record<UsageDimension, string> = {
-  sms_segments: "from-blue-500/20 to-blue-600/5 border-blue-500/30",
-  voice_minutes: "from-sky-500/20 to-sky-600/5 border-sky-500/30",
-  email_sends: "from-indigo-500/20 to-indigo-600/5 border-indigo-500/30",
+  sms_segments: "from-primary/20 to-primary/5 border-primary/30",
+  voice_minutes: "from-primary/20 to-primary/5 border-primary/30",
+  email_sends: "from-primary/20 to-primary/5 border-primary/30",
   scheduler_bookings: "from-emerald-500/20 to-emerald-600/5 border-emerald-500/30",
-  mortgi_ai_tokens: "from-purple-500/20 to-purple-600/5 border-purple-500/30",
+  mortgi_ai_tokens: "from-primary/20 to-primary/5 border-primary/30",
 };
 
 function formatPackPrice(cents: number): string {
@@ -89,8 +89,8 @@ function formatBrand(brand: string): string {
 
 function StripeDevHint() {
   return (
-    <div className="rounded-lg border border-dashed border-blue-500/30 bg-blue-500/5 p-4 text-sm">
-      <div className="mb-2 flex items-center gap-2 font-medium text-blue-700 dark:text-blue-400">
+    <div className="rounded-lg border border-dashed border-primary/30 bg-primary/5 p-4 text-sm">
+      <div className="mb-2 flex items-center gap-2 font-medium text-primary dark:text-primary">
         <Terminal className="h-4 w-4" />
         Local dev — webhook optional
       </div>
@@ -272,13 +272,13 @@ export function StripeTopUpCheckout({
         <StripeDevHint />
       ) : null}
 
-      <div className="rounded-xl border border-orange-500/25 bg-orange-500/5 p-4 space-y-3">
+      <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Megaphone className="h-4 w-4 text-orange-600 shrink-0" />
-          <p className="text-sm font-semibold text-orange-800 dark:text-orange-300">
+          <Megaphone className="h-4 w-4 text-amber-600 shrink-0" />
+          <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
             Broadcasting — unified quota
           </p>
-          <Badge variant="outline" className="border-orange-500/40 text-[10px] text-orange-700">
+          <Badge variant="outline" className="border-amber-500/40 text-[10px] text-amber-700">
             No separate top-up
           </Badge>
         </div>
@@ -304,7 +304,7 @@ export function StripeTopUpCheckout({
               type="button"
               variant="outline"
               size="sm"
-              className="h-7 text-xs border-orange-500/30"
+              className="h-7 text-xs border-amber-500/30"
               onClick={() => handleDimensionChange("sms_segments")}
             >
               Top up SMS
@@ -313,7 +313,7 @@ export function StripeTopUpCheckout({
               type="button"
               variant="outline"
               size="sm"
-              className="h-7 text-xs border-orange-500/30"
+              className="h-7 text-xs border-amber-500/30"
               onClick={() => handleDimensionChange("email_sends")}
             >
               Top up email
@@ -357,7 +357,7 @@ export function StripeTopUpCheckout({
                     {DIMENSION_ICONS[dim]}
                     {meta.title}
                     {pct != null && pct >= 80 ? (
-                      <span className="rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-medium text-orange-700 dark:text-orange-300">
+                      <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
                         {pct}%
                       </span>
                     ) : null}

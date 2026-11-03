@@ -4,6 +4,7 @@ import {
   CalendarDays,
   Clock,
   Phone,
+  MapPin,
   Video,
   Plus,
   Settings2,
@@ -123,7 +124,7 @@ const STATUS_CONFIG: Record<
   completed: {
     label: "Completed",
     color:
-      "bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-500/15 dark:text-blue-300 dark:border-blue-500/30",
+      "bg-primary/10 text-primary border-primary/20 dark:bg-primary/15 dark:text-primary dark:border-primary/30",
     icon: CheckCircle2,
   },
   no_show: {
@@ -216,6 +217,10 @@ function MeetingCard({
                 <>
                   <Phone className="h-3 w-3" /> Phone
                 </>
+              ) : meeting.meeting_type === "office" ? (
+                <>
+                  <MapPin className="h-3 w-3" /> Office Visit
+                </>
               ) : (
                 <>
                   <Video className="h-3 w-3" /> Video
@@ -268,7 +273,7 @@ function MeetingCard({
               href={meeting.teams_join_url || meeting.zoom_join_url || "#"}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              className="flex items-center gap-1.5 text-xs text-primary/70 hover:text-primary/70 transition-colors"
             >
               <ExternalLink className="h-3 w-3" />
               {meeting.meeting_type === "teams" ? "Join Teams" : "Join Zoom"}
@@ -400,7 +405,7 @@ function CalendarView({
                       m.status === "cancelled" &&
                         "bg-red-500/15 text-red-300 line-through",
                       m.status === "completed" &&
-                        "bg-blue-500/20 text-blue-300",
+                        "bg-primary/20 text-primary/70",
                       m.status === "no_show" &&
                         "bg-slate-500/20 text-muted-foreground",
                       m.status === "pending" &&
@@ -483,7 +488,7 @@ function EditMeetingDialog({
           {/* Client info */}
           <div className="rounded-xl border border-border/50 bg-muted/30 p-4">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-9 h-9 rounded-full bg-red-500/15 border border-red-500/30 flex items-center justify-center text-red-300 font-bold text-sm">
+              <div className="w-9 h-9 rounded-full bg-primary/15 border border-primary/30 flex items-center justify-center text-primary/70 font-bold text-sm">
                 {meeting.client_name[0]}
               </div>
               <div>
@@ -524,7 +529,7 @@ function EditMeetingDialog({
                     }
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-1 text-blue-400 hover:text-blue-300"
+                    className="flex items-center gap-1 text-primary/70 hover:text-primary/70"
                   >
                     <Video className="h-3 w-3" />
                     {meeting.meeting_type === "teams"
@@ -587,7 +592,7 @@ function EditMeetingDialog({
               Meeting Type
             </Label>
             <div className="grid grid-cols-2 gap-2">
-              {(["phone", "video", "teams"] as MeetingType[]).map((t) => (
+              {(["phone", "office"] as MeetingType[]).map((t) => (
                 <button
                   key={t}
                   onClick={() => setMeetingType(t)}
@@ -601,9 +606,9 @@ function EditMeetingDialog({
                   {t === "phone" ? (
                     <Phone className="h-4 w-4" />
                   ) : (
-                    <Video className="h-4 w-4" />
+                    <MapPin className="h-4 w-4" />
                   )}
-                  {t === "phone" ? "Phone" : t === "teams" ? "Teams" : "Zoom"}
+                  {t === "phone" ? "Phone" : "Office Visit"}
                 </button>
               ))}
             </div>
@@ -674,7 +679,7 @@ const createSchema = Yup.object({
   client_phone: Yup.string(),
   meeting_date: Yup.string().required("Date required"),
   meeting_time: Yup.string().required("Time required"),
-  meeting_type: Yup.string().oneOf(["phone", "video", "teams"]).required(),
+  meeting_type: Yup.string().oneOf(["phone", "office"]).required(),
   notes: Yup.string(),
 });
 
@@ -802,8 +807,8 @@ function CreateMeetingDialog({
             <Label className="text-foreground/80 text-sm mb-1.5 block">
               Method *
             </Label>
-            <div className="grid grid-cols-3 gap-2">
-              {(["phone", "video", "teams"] as MeetingType[]).map((t) => (
+            <div className="grid grid-cols-2 gap-2">
+              {(["phone", "office"] as MeetingType[]).map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -818,9 +823,9 @@ function CreateMeetingDialog({
                   {t === "phone" ? (
                     <Phone className="h-4 w-4" />
                   ) : (
-                    <Video className="h-4 w-4" />
+                    <MapPin className="h-4 w-4" />
                   )}
-                  {t === "phone" ? "Phone" : t === "teams" ? "Teams" : "Zoom"}
+                  {t === "phone" ? "Phone" : "Office Visit"}
                 </button>
               ))}
             </div>
@@ -954,8 +959,7 @@ function SettingsPanel() {
       min_booking_hours: settings?.min_booking_hours ?? 2,
       timezone: settings?.timezone ?? "America/Chicago",
       allow_phone: settings?.allow_phone ?? true,
-      allow_video: settings?.allow_video ?? true,
-      allow_teams: settings?.allow_teams ?? false,
+      allow_office: settings?.allow_office ?? true,
     },
     enableReinitialize: true,
     onSubmit: async (values) => {
@@ -1154,7 +1158,7 @@ function SettingsPanel() {
         </h3>
         <div className="flex items-center justify-between py-2">
           <div className="flex items-center gap-3">
-            <Phone className="h-4 w-4 text-sky-400" />
+            <Phone className="h-4 w-4 text-primary/70" />
             <div>
               <p className="text-foreground text-sm font-medium">Phone Call</p>
               <p className="text-xs text-muted-foreground">
@@ -1171,99 +1175,21 @@ function SettingsPanel() {
         </div>
         <div className="flex items-center justify-between py-2 border-t border-border/30">
           <div className="flex items-center gap-3">
-            <Video className="h-4 w-4 text-blue-400" />
+            <MapPin className="h-4 w-4 text-primary" />
             <div>
-              <p className="text-foreground text-sm font-medium">
-                Video Call (Zoom)
-              </p>
+              <p className="text-foreground text-sm font-medium">Office Visit</p>
               <p className="text-xs text-muted-foreground">
-                Creates a Zoom meeting automatically. Requires Zoom credentials
-                in server env.
+                Client meets the banker at the office
               </p>
             </div>
           </div>
           <Switch
-            checked={settingsFormik.values.allow_video}
+            checked={settingsFormik.values.allow_office}
             onCheckedChange={(v) =>
-              settingsFormik.setFieldValue("allow_video", v)
+              settingsFormik.setFieldValue("allow_office", v)
             }
           />
         </div>
-        <div className="flex items-center justify-between py-2 border-t border-border/30">
-          <div className="flex items-center gap-3">
-            <Video className="h-4 w-4 text-indigo-400" />
-            <div>
-              <p className="text-foreground text-sm font-medium">
-                Video Call (Teams)
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Creates a Microsoft Teams meeting automatically.
-              </p>
-            </div>
-          </div>
-          <Switch
-            checked={settingsFormik.values.allow_teams}
-            disabled={isCheckingTeamsEligibility}
-            onCheckedChange={async (v) => {
-              if (!v) {
-                settingsFormik.setFieldValue("allow_teams", false);
-                return;
-              }
-
-              if (v && !authUser?.email) {
-                toast({
-                  title: "Cannot enable Teams",
-                  description: getFriendlyTeamsError("email is missing"),
-                  variant: "destructive",
-                });
-                return;
-              }
-
-              setIsCheckingTeamsEligibility(true);
-              try {
-                const eligibility = await dispatch(
-                  fetchTeamsEligibility(),
-                ).unwrap();
-                if (!eligibility.eligible) {
-                  toast({
-                    title: "Cannot enable Teams",
-                    description: getFriendlyTeamsError(eligibility.error),
-                    variant: "destructive",
-                  });
-                  settingsFormik.setFieldValue("allow_teams", false);
-                  return;
-                }
-                setTeamsEligibilityResult(eligibility);
-                settingsFormik.setFieldValue("allow_teams", true);
-              } catch (err) {
-                const message =
-                  typeof err === "string"
-                    ? err
-                    : "Unable to validate Teams eligibility right now.";
-                toast({
-                  title: "Cannot enable Teams",
-                  description: getFriendlyTeamsError(message),
-                  variant: "destructive",
-                });
-                settingsFormik.setFieldValue("allow_teams", false);
-              } finally {
-                setIsCheckingTeamsEligibility(false);
-              }
-            }}
-          />
-        </div>
-        {settingsFormik.values.allow_teams &&
-          teamsEligibilityResult?.policyReady === false && (
-            <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-              <span className="mt-0.5 shrink-0">⏳</span>
-              <span>
-                <strong>Teams access is activating.</strong> Your account was
-                verified but the meeting policy hasn&apos;t propagated yet —
-                this typically takes up to 1 hour. Bookings will work
-                automatically once active.
-              </span>
-            </div>
-          )}
       </div>
 
       {/* Availability */}
@@ -1691,7 +1617,7 @@ const AdminScheduler: React.FC = () => {
                     )}
                   </div>
                   {slugAvailable === false && (
-                    <p className="text-xs text-red-400 mt-1">
+                    <p className="text-xs text-primary/70 mt-1">
                       That slug is already taken.
                     </p>
                   )}
@@ -1735,8 +1661,8 @@ const AdminScheduler: React.FC = () => {
             {
               label: "Completed",
               value: stats.completed,
-              color: "text-blue-300",
-              bg: "border-blue-500/20 bg-blue-500/5",
+              color: "text-primary/70",
+              bg: "border-primary/20 bg-primary/5",
             },
             {
               label: "Cancelled",
@@ -1930,7 +1856,7 @@ const AdminScheduler: React.FC = () => {
                           <td className="px-4 py-3">
                             <span className="flex items-center gap-1.5 text-foreground/80 text-xs">
                               {m.meeting_type === "phone" ? (
-                                <Phone className="h-3.5 w-3.5 text-sky-400" />
+                                <Phone className="h-3.5 w-3.5 text-primary/70" />
                               ) : (
                                 <Video className="h-3.5 w-3.5 text-green-400" />
                               )}

@@ -139,8 +139,8 @@ function renderLetterHtml(
   const logoHtml = `<img src="${effectiveLogoUrl}" alt="${letter.company_name ?? "Company"} Logo" style="max-height:64px; max-width:200px; object-fit:contain;" />`;
 
   const brokerPhotoHtml = letter.broker_photo_url
-    ? `<div style="width:72px; height:72px; border-radius:50%; overflow:hidden; border:3px solid #1a3a5c; box-sizing:border-box;"><img src="${letter.broker_photo_url}" style="width:100%; height:100%; object-fit:cover; display:block;" /></div>`
-    : `<div style="width:72px; height:72px; border-radius:50%; background:#e8edf5; border:3px solid #1a3a5c; text-align:center; line-height:72px; font-size:24px; font-weight:bold; color:#1a3a5c; box-sizing:border-box;">${(letter.broker_first_name?.[0] ?? "") + (letter.broker_last_name?.[0] ?? "")}</div>`;
+    ? `<div style="width:72px; height:72px; border-radius:50%; overflow:hidden; border:3px solid #0A2F52; box-sizing:border-box;"><img src="${letter.broker_photo_url}" style="width:100%; height:100%; object-fit:cover; display:block;" /></div>`
+    : `<div style="width:72px; height:72px; border-radius:50%; background:#F5F8FA; border:3px solid #0A2F52; text-align:center; line-height:72px; font-size:24px; font-weight:bold; color:#0A2F52; box-sizing:border-box;">${(letter.broker_first_name?.[0] ?? "") + (letter.broker_last_name?.[0] ?? "")}</div>`;
 
   const brokerLicenseHtml = letter.broker_license_number
     ? `<p style="margin:4px 0 0; font-size:13px; color:#555;">NMLS# ${letter.broker_license_number}</p>`
@@ -156,8 +156,8 @@ function renderLetterHtml(
           ? `<p style="margin:3px 0; font-size:13px; color:#555;">NMLS# ${letter.partner_license_number}</p>`
           : "";
         const partnerPhotoHtml = letter.partner_photo_url
-          ? `<div style="width:72px; height:72px; border-radius:50%; overflow:hidden; border:3px solid #1a3a5c; box-sizing:border-box;"><img src="${letter.partner_photo_url}" style="width:100%; height:100%; object-fit:cover; display:block;" /></div>`
-          : `<div style="width:72px; height:72px; border-radius:50%; background:#e8edf5; border:3px solid #1a3a5c; text-align:center; line-height:72px; font-size:24px; font-weight:bold; color:#1a3a5c; box-sizing:border-box;">${(letter.partner_first_name?.[0] ?? "") + (letter.partner_last_name?.[0] ?? "")}</div>`;
+          ? `<div style="width:72px; height:72px; border-radius:50%; overflow:hidden; border:3px solid #0A2F52; box-sizing:border-box;"><img src="${letter.partner_photo_url}" style="width:100%; height:100%; object-fit:cover; display:block;" /></div>`
+          : `<div style="width:72px; height:72px; border-radius:50%; background:#F5F8FA; border:3px solid #0A2F52; text-align:center; line-height:72px; font-size:24px; font-weight:bold; color:#0A2F52; box-sizing:border-box;">${(letter.partner_first_name?.[0] ?? "") + (letter.partner_last_name?.[0] ?? "")}</div>`;
         return `<table style="width: 100%; border-collapse: collapse;">
   <tr>
     <td style="vertical-align: top; width: 88px;">${brokerPhotoHtml}</td>
@@ -715,9 +715,9 @@ export function PreApprovalLetterModal({
                   </div>
 
                   {!isAdmin && (
-                    <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                      <AlertCircle className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
-                      <p className="text-sm text-blue-700">
+                    <div className="flex items-start gap-3 p-4 bg-primary/10 border border-primary/20 rounded-lg">
+                      <AlertCircle className="h-4 w-4 text-primary mt-0.5 flex-shrink-0" />
+                      <p className="text-sm text-primary">
                         You can create and send pre-approval letters. Only
                         Mortgage Bankers can set the maximum allowed amount.
                       </p>
@@ -1195,7 +1195,7 @@ export function PreApprovalLetterModal({
                               className={cn(
                                 "pl-7",
                                 amountExceedsMax &&
-                                  "border-red-400 focus:ring-red-200",
+                                  "border-primary focus:ring-primary/20",
                               )}
                             />
                           </div>

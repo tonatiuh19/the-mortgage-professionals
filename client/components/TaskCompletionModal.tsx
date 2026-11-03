@@ -492,7 +492,7 @@ export const TaskCompletionModal: React.FC<TaskCompletionModalProps> = ({
               {isPdf ? (
                 <FileText className="h-5 w-5 text-red-500 shrink-0" />
               ) : (
-                <Upload className="h-5 w-5 text-blue-500 shrink-0" />
+                <Upload className="h-5 w-5 text-primary shrink-0" />
               )}
               <span className="text-sm font-medium truncate min-w-0">
                 {uploaded.file.name}

@@ -107,22 +107,22 @@ const STAGES: Array<{
     label: "Contacted",
     description: "Made initial contact",
     icon: <Phone className="h-3.5 w-3.5" />,
-    color: "bg-blue-50 border-blue-200",
-    headerGradient: "from-blue-500 to-blue-600",
-    dotColor: "bg-blue-400",
-    badgeBg: "bg-blue-100",
-    badgeText: "text-blue-700",
+    color: "bg-primary/10 border-primary/20",
+    headerGradient: "from-primary to-primary",
+    dotColor: "bg-primary",
+    badgeBg: "bg-primary/10",
+    badgeText: "text-primary",
   },
   {
     id: "appt_set",
     label: "Appt Set",
     description: "Meeting scheduled",
     icon: <CheckCircle2 className="h-3.5 w-3.5" />,
-    color: "bg-violet-50 border-violet-200",
-    headerGradient: "from-violet-500 to-violet-600",
-    dotColor: "bg-violet-400",
-    badgeBg: "bg-violet-100",
-    badgeText: "text-violet-700",
+    color: "bg-primary/10 border-primary/20",
+    headerGradient: "from-primary to-primary",
+    dotColor: "bg-primary",
+    badgeBg: "bg-primary/10",
+    badgeText: "text-primary",
   },
   {
     id: "waiting_for_1st_deal",
@@ -151,11 +151,11 @@ const STAGES: Array<{
     label: "2nd Deal Funded",
     description: "Repeat referral partner",
     icon: <TrendingUp className="h-3.5 w-3.5" />,
-    color: "bg-teal-50 border-teal-200",
-    headerGradient: "from-teal-500 to-teal-600",
-    dotColor: "bg-teal-400",
-    badgeBg: "bg-teal-100",
-    badgeText: "text-teal-700",
+    color: "bg-primary/10 border-primary/20",
+    headerGradient: "from-primary to-primary",
+    dotColor: "bg-primary",
+    badgeBg: "bg-primary/10",
+    badgeText: "text-primary",
   },
   {
     id: "top_agent_whale",
@@ -375,7 +375,7 @@ function OpportunityForm({
 
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">
-                Opportunity Name <span className="text-red-500">*</span>
+                Opportunity Name <span className="text-primary">*</span>
               </Label>
               <Input
                 placeholder="Enter opportunity name"
@@ -526,13 +526,13 @@ function OpportunityForm({
                     {(form.tags ?? []).map((tag) => (
                       <span
                         key={tag}
-                        className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-xs rounded-full px-2.5 py-1 font-medium"
+                        className="inline-flex items-center gap-1 bg-primary/10 text-primary text-xs rounded-full px-2.5 py-1 font-medium"
                       >
                         {tag}
                         <button
                           type="button"
                           onClick={() => removeTag(tag)}
-                          className="hover:text-blue-900"
+                          className="hover:text-primary"
                         >
                           <X className="h-3 w-3" />
                         </button>
@@ -693,8 +693,8 @@ function ProspectCard({
       className={cn(
         "group bg-white rounded-lg border transition-all duration-150 select-none",
         isDragging
-          ? "opacity-40 scale-95 border-blue-400 shadow-inner cursor-grabbing"
-          : "border-gray-200 cursor-pointer hover:shadow-md hover:border-blue-300 active:cursor-grabbing",
+          ? "opacity-40 scale-95 border-primary shadow-inner cursor-grabbing"
+          : "border-gray-200 cursor-pointer hover:shadow-md hover:border-primary/20 active:cursor-grabbing",
       )}
     >
       {/* Thin top accent */}
@@ -710,7 +710,7 @@ function ProspectCard({
         <div className="flex items-start justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
             {/* Avatar */}
-            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 text-xs font-bold flex-shrink-0">
+            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs font-bold flex-shrink-0">
               {initials}
             </div>
             <div className="min-w-0">
@@ -817,7 +817,7 @@ function ProspectCard({
           <div className="flex items-center gap-1">
             {prospect.owner_first_name ? (
               <>
-                <div className="w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center text-white text-[9px] font-bold">
+                <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center text-white text-[9px] font-bold">
                   {prospect.owner_first_name[0]}
                 </div>
                 <span className="text-[10px] text-gray-500 truncate max-w-[80px]">
@@ -837,7 +837,7 @@ function ProspectCard({
                   "text-[9px] h-4 px-1.5 font-semibold",
                   prospect.status === "won"
                     ? "bg-emerald-100 text-emerald-700"
-                    : "bg-red-100 text-red-700",
+                    : "bg-primary/10 text-primary",
                 )}
               >
                 {prospect.status.toUpperCase()}
@@ -1060,7 +1060,7 @@ export function RealtorProspectingBoard({
       {/* Stats bar */}
       <div className="flex items-center gap-6 px-6 py-3 bg-white border-b border-gray-100">
         <div className="flex items-center gap-2">
-          <Users className="h-4 w-4 text-blue-500" />
+          <Users className="h-4 w-4 text-primary" />
           <span className="text-sm font-medium text-gray-700">
             {prospects.length}{" "}
             <span className="text-gray-400 font-normal">prospects</span>
@@ -1115,7 +1115,7 @@ export function RealtorProspectingBoard({
                     className={cn(
                       "flex-1 space-y-3 p-3 rounded-lg border-2 min-h-[400px] transition-all duration-150",
                       isDragOver
-                        ? "border-blue-400 bg-blue-50 scale-[1.01]"
+                        ? "border-primary bg-primary/10 scale-[1.01]"
                         : cn("border-gray-200", stage.color),
                     )}
                     onDragOver={handleDragOver}
