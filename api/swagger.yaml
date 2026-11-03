@@ -463,6 +463,8 @@ paths:
       tags: [billing]
       summary: GET /billing/access
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/access/simulate:
@@ -470,6 +472,8 @@ paths:
       tags: [billing]
       summary: POST /billing/access/simulate
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/config:
@@ -477,6 +481,8 @@ paths:
       tags: [billing]
       summary: GET /billing/config
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/estimate:
@@ -484,6 +490,8 @@ paths:
       tags: [billing]
       summary: POST /billing/estimate
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/purchases:
@@ -491,6 +499,8 @@ paths:
       tags: [billing]
       summary: GET /billing/purchases
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/quota:
@@ -498,6 +508,8 @@ paths:
       tags: [billing]
       summary: GET /billing/quota
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/team-notice:
@@ -505,6 +517,8 @@ paths:
       tags: [billing]
       summary: GET /billing/team-notice
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/usage:
@@ -512,6 +526,8 @@ paths:
       tags: [billing]
       summary: GET /billing/usage
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/overdue:
@@ -519,6 +535,8 @@ paths:
       tags: [billing]
       summary: GET /billing/overdue
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/overdue/pay:
@@ -526,6 +544,8 @@ paths:
       tags: [billing]
       summary: POST /billing/overdue/pay
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/overdue/payment-options:
@@ -533,6 +553,8 @@ paths:
       tags: [billing]
       summary: GET /billing/overdue/payment-options
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/charge-pack:
@@ -540,6 +562,8 @@ paths:
       tags: [billing]
       summary: POST /billing/stripe/charge-pack
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/charge-quote:
@@ -547,6 +571,8 @@ paths:
       tags: [billing]
       summary: POST /billing/stripe/charge-quote
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/checkout:
@@ -554,6 +580,8 @@ paths:
       tags: [billing]
       summary: POST /billing/stripe/checkout
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/config:
@@ -561,6 +589,8 @@ paths:
       tags: [billing]
       summary: GET /billing/stripe/config
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/confirm-payment:
@@ -568,6 +598,8 @@ paths:
       tags: [billing]
       summary: POST /billing/stripe/confirm-payment
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/confirm-payment-method:
@@ -575,6 +607,8 @@ paths:
       tags: [billing]
       summary: POST /billing/stripe/confirm-payment-method
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/confirm-subscription:
@@ -582,6 +616,8 @@ paths:
       tags: [billing]
       summary: POST /billing/stripe/confirm-subscription
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/packs:
@@ -589,6 +625,8 @@ paths:
       tags: [billing]
       summary: GET /billing/stripe/packs
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/payment-intent:
@@ -596,6 +634,8 @@ paths:
       tags: [billing]
       summary: POST /billing/stripe/payment-intent
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/payment-method:
@@ -603,6 +643,8 @@ paths:
       tags: [billing]
       summary: GET /billing/stripe/payment-method
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/payment-method-setup:
@@ -610,6 +652,8 @@ paths:
       tags: [billing]
       summary: POST /billing/stripe/payment-method-setup
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/portal:
@@ -617,6 +661,8 @@ paths:
       tags: [billing]
       summary: POST /billing/stripe/portal
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/quote:
@@ -624,6 +670,8 @@ paths:
       tags: [billing]
       summary: POST /billing/stripe/quote
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/reset-subscription-test:
@@ -631,6 +679,8 @@ paths:
       tags: [billing]
       summary: POST /billing/stripe/reset-subscription-test
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/subscription-setup:
@@ -638,6 +688,8 @@ paths:
       tags: [billing]
       summary: POST /billing/stripe/subscription-setup
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/top-up-options:
@@ -645,6 +697,8 @@ paths:
       tags: [billing]
       summary: GET /billing/stripe/top-up-options
       responses:
+        '403':
+          description: Platform owners only
         '200':
           description: Successful response
   /billing/stripe/webhook:
@@ -724,6 +778,8 @@ paths:
           schema:
             type: string
       responses:
+        '403':
+          description: Role not allowed
         '200':
           description: Successful response
   /client/meetings:
@@ -972,6 +1028,8 @@ paths:
       tags: [voice]
       summary: POST /voice/fix-call-setup
       responses:
+        '403':
+          description: Role not allowed
         '200':
           description: Successful response
   /voice/recording-check/{callSid}:
@@ -2353,6 +2411,8 @@ paths:
       security:
         - BrokerAuth: []
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Broadcast list
     post:
@@ -2361,6 +2421,8 @@ paths:
       security:
         - BrokerAuth: []
       responses:
+        '403':
+          description: Role not allowed
         "201":
           description: Broadcast created
   /broadcasts/preview-audience:
@@ -2818,6 +2880,8 @@ paths:
       security:
         - BrokerAuth: []
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Phone numbers list with assignment info
           content:
@@ -2867,6 +2931,8 @@ paths:
           schema: { type: string }
           description: Twilio IncomingPhoneNumber SID, or "all" to configure every number
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Webhook updated
           content:
@@ -2902,6 +2968,8 @@ paths:
                   nullable: true
                   description: Broker ID to assign, or null to unassign
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Assignment saved
           content:
@@ -3985,6 +4053,8 @@ paths:
                 body: { type: string }
                 category: { type: string }
       responses:
+        '403':
+          description: Role not allowed
         "201":
           description: Created
           content:
@@ -4013,6 +4083,8 @@ paths:
                 subject: { type: string }
                 body: { type: string }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Updated
           content:
@@ -4029,6 +4101,8 @@ paths:
           required: true
           schema: { type: integer }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Deleted
           content:
@@ -4070,6 +4144,8 @@ paths:
                 body: { type: string }
                 category: { type: string }
       responses:
+        '403':
+          description: Role not allowed
         "201":
           description: Created
           content:
@@ -4099,6 +4175,8 @@ paths:
             schema:
               type: object
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Updated
           content:
@@ -4120,6 +4198,8 @@ paths:
           required: true
           schema: { type: integer }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Deleted
           content:
@@ -4168,6 +4248,8 @@ paths:
                   enum: [email, sms]
                 template_id: { type: integer }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Upserted
           content:
@@ -4195,6 +4277,8 @@ paths:
           required: true
           schema: { type: string }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Deleted
           content:
@@ -4748,6 +4832,8 @@ paths:
           name: limit
           schema: { type: integer, default: 50 }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Audit logs
           content:
@@ -4766,6 +4852,8 @@ paths:
       security:
         - BrokerAuth: []
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Audit stats
           content:
@@ -4785,6 +4873,8 @@ paths:
       security:
         - BrokerAuth: []
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Overview metrics
           content:
@@ -4810,6 +4900,8 @@ paths:
           name: to
           schema: { type: string, format: date }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Revenue data
           content:
@@ -4828,6 +4920,8 @@ paths:
       security:
         - BrokerAuth: []
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Performance data
           content:
@@ -4860,6 +4954,8 @@ paths:
                 from: { type: string, format: date }
                 to: { type: string, format: date }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Export file or download URL
           content:
@@ -4879,6 +4975,8 @@ paths:
       security:
         - BrokerAuth: []
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Settings
           content:
@@ -4902,6 +5000,8 @@ paths:
               type: object
               description: Key-value settings fields to update
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Updated
           content:
@@ -4943,6 +5043,8 @@ paths:
                 trigger_event: { type: string }
                 description: { type: string }
       responses:
+        '403':
+          description: Role not allowed
         "201":
           description: Created
           content:
@@ -5031,6 +5133,8 @@ paths:
                 nodes: { type: array, items: { type: object } }
                 edges: { type: array, items: { type: object } }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Saved
           content:
@@ -5056,6 +5160,8 @@ paths:
           required: true
           schema: { type: integer }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Deleted
           content:
@@ -5074,6 +5180,8 @@ paths:
           required: true
           schema: { type: integer }
       responses:
+        '403':
+          description: Role not allowed
         "200":
           description: Toggled
           content:
