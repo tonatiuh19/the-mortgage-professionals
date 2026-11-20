@@ -1,4 +1,21 @@
 export type { BillingDenialPayload } from "./billing-denial";
+export type {
+  SmsConsentInput,
+  SmsConsentSource,
+  SmsConsentTexts,
+  PublicSmsConsentConfigResponse,
+} from "./sms-consent";
+import type { SmsConsentInput } from "./sms-consent";
+export type {
+  PublicProfileStatus,
+  PublicProfileRequirement,
+  PublicTeamMember,
+  PublicTeamResponse,
+  MyPublicProfileStatus,
+  PublicProfileReviewItem,
+  RolePublicListingSetting,
+  PublicProfileReviewAction,
+} from "./public-team";
 /**
  * Shared code between client and server
  * Useful to share types between client and server
@@ -2509,7 +2526,7 @@ export interface GetAvailableSlotsResponse {
   slots: AvailableSlot[];
 }
 
-export interface BookMeetingRequest {
+export interface BookMeetingRequest extends SmsConsentInput {
   broker_token: string; // broker's public_token
   client_name: string;
   client_email: string;

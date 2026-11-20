@@ -1,4 +1,5 @@
 import BulkImportWizard from "@/components/bulk-import/BulkImportWizard";
+import { PublicTeamManager } from "@/components/PublicTeamManager";
 import { openBulkImportWizard } from "@/store/slices/bulkImportSlice";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
@@ -400,6 +401,8 @@ export default function Brokers() {
             ) : undefined
           }
         />
+
+        {currentBroker?.is_platform_owner && <PublicTeamManager />}
 
         {/* Search Bar + Role Filter */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { PublicProfileListingCard } from "@/components/PublicProfileListingCard";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { useFormik } from "formik";
 import * as Yup from "yup";
@@ -824,6 +825,12 @@ const BrokerProfile = () => {
               </CardContent>
             </Card>
 
+            <PublicProfileListingCard
+              role={user?.role}
+              avatarUrl={user?.avatar_url}
+              licenseNumber={user?.license_number}
+            />
+
             <div className="grid gap-6 lg:grid-cols-2">
               {/* Basic Information */}
               <Card>
@@ -932,7 +939,7 @@ const BrokerProfile = () => {
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
-                      <Label htmlFor="license_number">License Number</Label>
+                      <Label htmlFor="license_number">NMLS / License Number</Label>
                       <div className="relative">
                         <BadgeCheck className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input

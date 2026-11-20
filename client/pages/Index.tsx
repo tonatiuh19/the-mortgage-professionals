@@ -17,11 +17,18 @@ import {
 } from "lucide-react";
 import Header from "../components/Header";
 import Footer from "../components/layout/Footer";
-import { useAppDispatch } from "@/store/hooks";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { fetchPublicTeam } from "@/store/slices/publicTeamSlice";
+import { TeamMemberCard } from "@/components/TeamMemberCard";
 import { submitContactForm } from "@/store/slices/contactSubmissionsSlice";
+import {
+  EMPTY_SMS_CONSENT,
+  SmsConsentCheckboxes,
+  type SmsConsentValue,
+} from "@/components/SmsConsentCheckboxes";
 import { useToast } from "@/hooks/use-toast";
 
-// Placeholder team and testimonials stay hidden until real, verified content exists.
+// Placeholder testimonials stay hidden until real, verified content exists.
 const SHOW_UNVERIFIED_COMPANY_CONTENT = false;
 
 export default function Index() {
@@ -38,6 +45,12 @@ export default function Index() {
     phone: "",
     loanType: "conventional",
   });
+  const teamMembers = useAppSelector((state) => state.publicTeam.members);
+  useEffect(() => {
+    dispatch(fetchPublicTeam());
+  }, [dispatch]);
+  const [smsConsent, setSmsConsent] =
+    useState<SmsConsentValue>(EMPTY_SMS_CONSENT);
 
   const handleFormChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
@@ -56,6 +69,8 @@ export default function Index() {
         phone: formData.phone,
         subject: `Pre-Approval Request – ${formData.loanType.toUpperCase()} Loan`,
         message: `I'm interested in a ${formData.loanType} loan and would like a free consultation. Please contact me at ${formData.phone}.`,
+        sms_consent_source: "home_lead_form",
+        ...smsConsent,
       }),
     );
     setIsSubmitting(false);
@@ -65,6 +80,7 @@ export default function Index() {
         description: `Thank you, ${formData.name}. We'll be in touch shortly.`,
       });
       setFormData({ name: "", email: "", phone: "", loanType: "conventional" });
+      setSmsConsent(EMPTY_SMS_CONSENT);
       setShowLeadForm(false);
     } else {
       toast({
@@ -392,65 +408,44 @@ export default function Index() {
         </div>
       </section>
 
-      {/* Team Preview + Social Proof (unverified placeholders) */}
+      {/* Team Preview — only platform-owner approved profiles */}
+      {teamMembers.length > 0 && (
+        <section className="py-20 px-4 bg-white">
+          <div className="container mx-auto">
+            <div className="text-center mb-12">
+              <h2 className="font-display text-4xl md:text-5xl font-bold text-[#0A2F52] mb-4">
+                Meet Your Mortgage Professionals
+              </h2>
+              <p className="text-xl text-[#6B7280] max-w-2xl mx-auto">
+                You're not dealing with a system — you're working with people
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
+              {teamMembers.slice(0, 3).map((member, idx) => (
+                <TeamMemberCard
+                  key={member.id}
+                  member={member}
+                  style={{ animationDelay: `${idx * 100}ms` }}
+                />
+              ))}
+            </div>
+            {teamMembers.length > 3 && (
+              <div className="mt-10 text-center">
+                <button
+                  onClick={() => navigate("/our-team")}
+                  className="inline-flex items-center gap-2 rounded-lg border-2 border-[#0A2F52] px-6 py-3 text-sm font-semibold uppercase tracking-wider text-[#0A2F52] transition-all duration-300 hover:bg-[#0A2F52] hover:text-white"
+                >
+                  Meet the whole team <ChevronRight size={18} />
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* Social Proof (unverified placeholders) */}
       {SHOW_UNVERIFIED_COMPANY_CONTENT && (
       <>
-      <section className="py-20 px-4 bg-white">
-        <div className="container mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="font-display text-4xl md:text-5xl font-bold text-[#0A2F52] mb-4">
-              Meet Your Mortgage Professionals
-            </h2>
-            <p className="text-xl text-[#6B7280] max-w-2xl mx-auto">
-              You're not dealing with a system — you're working with people
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-4xl mx-auto">
-            {[
-              {
-                initials: "SJ",
-                name: "Sarah Johnson",
-                role: "Senior Loan Officer",
-                quote: "Your dream home deserves expert guidance",
-              },
-              {
-                initials: "MC",
-                name: "Michael Chen",
-                role: "Mortgage Specialist",
-                quote: "We make complex mortgages simple",
-              },
-              {
-                initials: "ER",
-                name: "Emily Rodriguez",
-                role: "Customer Success Lead",
-                quote: "Your satisfaction is our success",
-              },
-            ].map((member, idx) => (
-              <div
-                key={idx}
-                onClick={() => navigate("/our-team")}
-                className="text-center group cursor-pointer animate-slide-up"
-                style={{ animationDelay: `${idx * 100}ms` }}
-              >
-                <div className="relative mb-6 overflow-hidden rounded-full w-32 h-32 mx-auto bg-gradient-to-br from-[#0A2F52] to-[#135E99] flex items-center justify-center text-white shadow-lg group-hover:shadow-2xl transition-all duration-300">
-                  <Users size={56} />
-                </div>
-                <h3 className="font-display text-xl font-bold text-[#0A2F52]">
-                  {member.name}
-                </h3>
-                <p className="text-amber-600 font-semibold mb-3">
-                  {member.role}
-                </p>
-                <p className="text-[#6B7280] italic min-h-10">
-                  "{member.quote}"
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* Social Proof Section */}
       <section
         className="py-20 px-4 bg-gradient-to-b from-[#F5F8FA] to-white"
@@ -620,6 +615,12 @@ export default function Index() {
                   <option value="nonqm">Non-QM</option>
                 </select>
               </div>
+
+              <SmsConsentCheckboxes
+                value={smsConsent}
+                onChange={setSmsConsent}
+                disabled={isSubmitting}
+              />
 
               <button
                 type="submit"

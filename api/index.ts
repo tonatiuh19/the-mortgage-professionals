@@ -4333,6 +4333,565 @@ function normalizePhoneLast10(phone: string | null | undefined): string {
   return phone.replace(/\D/g, "").slice(-10);
 }
 
+// ── Public team listing — inlined for Vercel serverless ─────────────────────
+// Source of truth: shared/public-team.ts. Keep rules in sync.
+type PublicProfileStatus = "none" | "pending" | "approved" | "rejected";
+type PublicProfileRequirement = "photo" | "nmls" | "role" | "active";
+const PUBLIC_LISTING_NMLS_REQUIRED_ROLES = ["admin", "loan_officer"];
+const DEFAULT_PUBLIC_LISTING_ROLES = ["admin", "loan_officer"];
+const PUBLIC_LISTING_ALL_ROLES = [
+  "admin",
+  "loan_officer",
+  "loan_processor",
+  "broker",
+  "realtor",
+  "buyers_agent",
+  "listing_agent",
+];
+const PUBLIC_ROLE_TITLES: Record<string, string> = {
+  admin: "Mortgage Advisor",
+  loan_officer: "Loan Officer",
+  loan_processor: "Loan Processor",
+  realtor: "Realtor",
+  buyers_agent: "Buyer's Agent",
+  listing_agent: "Listing Agent",
+  broker: "Partner",
+};
+
+function getPublicProfileMissing(input: {
+  role: string;
+  status: string;
+  avatar_url: string | null | undefined;
+  license_number: string | null | undefined;
+  roleAllowed: boolean;
+}): PublicProfileRequirement[] {
+  const missing: PublicProfileRequirement[] = [];
+  if (input.status !== "active") missing.push("active");
+  if (!input.roleAllowed) missing.push("role");
+  if (!input.avatar_url?.trim()) missing.push("photo");
+  if (
+    PUBLIC_LISTING_NMLS_REQUIRED_ROLES.includes(input.role) &&
+    !input.license_number?.trim()
+  ) {
+    missing.push("nmls");
+  }
+  return missing;
+}
+
+/** Role → allowed map for the tenant, falling back to defaults per missing row. */
+async function getPublicListingRoleMap(): Promise<Record<string, boolean>> {
+  const map: Record<string, boolean> = {};
+  for (const role of PUBLIC_LISTING_ALL_ROLES) {
+    map[role] = DEFAULT_PUBLIC_LISTING_ROLES.includes(role);
+  }
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT broker_role, is_allowed FROM broker_role_public_listing WHERE tenant_id = ?`,
+    [MORTGAGE_TENANT_ID],
+  );
+  for (const r of rows) map[r.broker_role as string] = Number(r.is_allowed) === 1;
+  return map;
+}
+
+async function getPlatformOwnerIds(): Promise<number[]> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT id FROM brokers WHERE tenant_id = ? AND is_platform_owner = 1 AND status = 'active'`,
+    [MORTGAGE_TENANT_ID],
+  );
+  return rows.map((r) => r.id as number);
+}
+
+/**
+ * A published (or pending) listing changed in a way the public can see —
+ * new photo or NMLS — so it goes back to the platform owner for review.
+ */
+async function sendPublicProfileBackToReview(
+  brokerId: number,
+  what: string,
+): Promise<void> {
+  try {
+    const [result] = await pool.query<ResultSetHeader>(
+      `UPDATE brokers
+          SET public_profile_status = 'pending',
+              public_profile_requested_at = NOW(),
+              public_profile_reviewed_at = NULL,
+              public_profile_reviewed_by = NULL
+        WHERE id = ? AND tenant_id = ? AND public_profile_status = 'approved'`,
+      [brokerId, MORTGAGE_TENANT_ID],
+    );
+    if (result.affectedRows === 0) return;
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT first_name, last_name FROM brokers WHERE id = ?`,
+      [brokerId],
+    );
+    const name = `${rows[0]?.first_name ?? ""} ${rows[0]?.last_name ?? ""}`.trim();
+    await createBrokerNotification({
+      brokerIds: await getPlatformOwnerIds(),
+      title: "Website profile needs re-approval",
+      message: `${name || "A team member"} updated their ${what}. Their Our Team card is hidden until you approve it again.`,
+      category: "system",
+      type: "warning",
+      actionUrl: "/admin/brokers?tab=website",
+    });
+  } catch (err) {
+    console.error("sendPublicProfileBackToReview error:", err);
+  }
+}
+
+const isPlatformOwnerReq = (req: Parameters<RequestHandler>[0]): boolean =>
+  Boolean((req as any).broker?.is_platform_owner);
+
+/** GET /api/public/team — approved, active, eligible, complete profiles only. */
+const handleGetPublicTeam: RequestHandler = async (_req, res) => {
+  try {
+    const roleMap = await getPublicListingRoleMap();
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT b.id, b.first_name, b.last_name, b.role, b.status, b.license_number,
+              b.public_title, b.public_display_order, b.slug, b.public_token,
+              bp.avatar_url, bp.bio, bp.years_experience
+         FROM brokers b
+         LEFT JOIN broker_profiles bp ON bp.broker_id = b.id
+        WHERE b.tenant_id = ? AND b.status = 'active'
+          AND b.public_profile_status = 'approved'
+        ORDER BY b.public_display_order ASC, b.first_name ASC, b.last_name ASC`,
+      [MORTGAGE_TENANT_ID],
+    );
+    const members = rows
+      .filter(
+        (r) =>
+          getPublicProfileMissing({
+            role: r.role,
+            status: r.status,
+            avatar_url: r.avatar_url,
+            license_number: r.license_number,
+            roleAllowed: roleMap[r.role] === true,
+          }).length === 0,
+      )
+      .map((r) => ({
+        id: r.id as number,
+        first_name: r.first_name as string,
+        last_name: r.last_name as string,
+        role: r.role as string,
+        title: (r.public_title as string | null)?.trim() || PUBLIC_ROLE_TITLES[r.role] || "Team Member",
+        nmls: (r.license_number as string | null)?.trim() || null,
+        avatar_url: r.avatar_url as string,
+        bio: (r.bio as string | null) || null,
+        years_experience: (r.years_experience as number | null) ?? null,
+        link_key: (r.slug as string | null) || (r.public_token as string),
+      }));
+    res.set("Cache-Control", "public, max-age=60");
+    return res.json({ success: true, members });
+  } catch (err) {
+    console.error("handleGetPublicTeam error:", err);
+    return res.status(500).json({ success: false, error: "Failed to load team" });
+  }
+};
+
+async function loadMyPublicProfile(brokerId: number) {
+  const roleMap = await getPublicListingRoleMap();
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT b.role, b.status, b.license_number, b.public_profile_status,
+            b.public_profile_requested_at, b.public_profile_reviewed_at,
+            b.public_profile_rejection_reason, b.public_title, bp.avatar_url
+       FROM brokers b
+       LEFT JOIN broker_profiles bp ON bp.broker_id = b.id
+      WHERE b.id = ? AND b.tenant_id = ?`,
+    [brokerId, MORTGAGE_TENANT_ID],
+  );
+  const r = rows[0];
+  if (!r) return null;
+  const roleAllowed = roleMap[r.role] === true;
+  return {
+    status: r.public_profile_status as PublicProfileStatus,
+    requested_at: r.public_profile_requested_at ?? null,
+    reviewed_at: r.public_profile_reviewed_at ?? null,
+    rejection_reason: r.public_profile_rejection_reason ?? null,
+    public_title: r.public_title ?? null,
+    role_allowed: roleAllowed,
+    missing: getPublicProfileMissing({
+      role: r.role,
+      status: r.status,
+      avatar_url: r.avatar_url,
+      license_number: r.license_number,
+      roleAllowed,
+    }),
+  };
+}
+
+/** GET /api/broker/public-profile — my website listing status + checklist. */
+const handleGetMyPublicProfile: RequestHandler = async (req, res) => {
+  try {
+    const profile = await loadMyPublicProfile((req as any).brokerId);
+    if (!profile) return res.status(404).json({ success: false, error: "Not found" });
+    return res.json({ success: true, profile });
+  } catch (err) {
+    console.error("handleGetMyPublicProfile error:", err);
+    return res.status(500).json({ success: false, error: "Failed to load website listing" });
+  }
+};
+
+/** POST /api/broker/public-profile/request — ask a platform owner to publish me. */
+const handleRequestPublicProfile: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    const rawTitle = req.body?.public_title;
+    if (rawTitle !== undefined && rawTitle !== null && typeof rawTitle !== "string") {
+      return res.status(400).json({ success: false, error: "public_title must be text" });
+    }
+    const title = typeof rawTitle === "string" ? rawTitle.trim().slice(0, 120) : null;
+    const current = await loadMyPublicProfile(brokerId);
+    if (!current) return res.status(404).json({ success: false, error: "Not found" });
+    if (current.missing.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Complete the required items before requesting a website listing",
+        missing: current.missing,
+      });
+    }
+    if (current.status === "approved" && (title ?? null) === (current.public_title ?? null)) {
+      return res.status(409).json({ success: false, error: "You are already listed on the website" });
+    }
+    await pool.query(
+      `UPDATE brokers
+          SET public_profile_status = 'pending',
+              public_profile_requested_at = NOW(),
+              public_profile_reviewed_at = NULL,
+              public_profile_reviewed_by = NULL,
+              public_profile_rejection_reason = NULL,
+              public_title = ?
+        WHERE id = ? AND tenant_id = ?`,
+      [title || null, brokerId, MORTGAGE_TENANT_ID],
+    );
+    const me = (req as any).broker;
+    await createBrokerNotification({
+      brokerIds: await getPlatformOwnerIds(),
+      title: "Website listing request",
+      message: `${me?.first_name ?? ""} ${me?.last_name ?? ""}`.trim() + " asked to appear on the Our Team page.",
+      category: "system",
+      type: "info",
+      actionUrl: "/admin/brokers?tab=website",
+    });
+    return res.json({ success: true, profile: await loadMyPublicProfile(brokerId) });
+  } catch (err) {
+    console.error("handleRequestPublicProfile error:", err);
+    return res.status(500).json({ success: false, error: "Failed to submit request" });
+  }
+};
+
+/** POST /api/broker/public-profile/withdraw — remove myself / cancel request. */
+const handleWithdrawPublicProfile: RequestHandler = async (req, res) => {
+  try {
+    const brokerId = (req as any).brokerId as number;
+    await pool.query(
+      `UPDATE brokers
+          SET public_profile_status = 'none', public_profile_rejection_reason = NULL
+        WHERE id = ? AND tenant_id = ?`,
+      [brokerId, MORTGAGE_TENANT_ID],
+    );
+    return res.json({ success: true, profile: await loadMyPublicProfile(brokerId) });
+  } catch (err) {
+    console.error("handleWithdrawPublicProfile error:", err);
+    return res.status(500).json({ success: false, error: "Failed to update listing" });
+  }
+};
+
+/** GET /api/admin/public-profiles — platform owner review list + role switches. */
+const handleListPublicProfiles: RequestHandler = async (req, res) => {
+  if (!isPlatformOwnerReq(req)) {
+    return res.status(403).json({ success: false, error: "Only platform owners can manage the website team" });
+  }
+  try {
+    const roleMap = await getPublicListingRoleMap();
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT b.id, b.first_name, b.last_name, b.email, b.role, b.status,
+              b.license_number, b.public_profile_status, b.public_title,
+              b.public_display_order, b.public_profile_requested_at,
+              b.public_profile_reviewed_at, b.public_profile_rejection_reason,
+              bp.avatar_url
+         FROM brokers b
+         LEFT JOIN broker_profiles bp ON bp.broker_id = b.id
+        WHERE b.tenant_id = ?
+        ORDER BY FIELD(b.public_profile_status, 'pending', 'approved', 'rejected', 'none'),
+                 b.public_display_order ASC, b.first_name ASC`,
+      [MORTGAGE_TENANT_ID],
+    );
+    const people = rows.map((r) => ({
+      id: r.id,
+      first_name: r.first_name,
+      last_name: r.last_name,
+      email: r.email,
+      role: r.role,
+      account_status: r.status,
+      status: r.public_profile_status,
+      public_title: r.public_title ?? null,
+      public_display_order: Number(r.public_display_order ?? 100),
+      avatar_url: r.avatar_url ?? null,
+      license_number: r.license_number ?? null,
+      requested_at: r.public_profile_requested_at ?? null,
+      reviewed_at: r.public_profile_reviewed_at ?? null,
+      rejection_reason: r.public_profile_rejection_reason ?? null,
+      missing: getPublicProfileMissing({
+        role: r.role,
+        status: r.status,
+        avatar_url: r.avatar_url,
+        license_number: r.license_number,
+        roleAllowed: roleMap[r.role] === true,
+      }),
+    }));
+    const roles = PUBLIC_LISTING_ALL_ROLES.map((role) => ({ role, is_allowed: roleMap[role] === true }));
+    return res.json({ success: true, people, roles });
+  } catch (err) {
+    console.error("handleListPublicProfiles error:", err);
+    return res.status(500).json({ success: false, error: "Failed to load website team" });
+  }
+};
+
+/** POST /api/admin/public-profiles/:brokerId/review — approve | reject | unpublish. */
+const handleReviewPublicProfile: RequestHandler = async (req, res) => {
+  if (!isPlatformOwnerReq(req)) {
+    return res.status(403).json({ success: false, error: "Only platform owners can approve website listings" });
+  }
+  try {
+    const targetId = Number(req.params.brokerId);
+    const action = req.body?.action as string;
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim().slice(0, 500) : "";
+    const titleInput = req.body?.public_title;
+    const orderInput = req.body?.public_display_order;
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ success: false, error: "Invalid broker id" });
+    }
+    if (!["approve", "reject", "unpublish"].includes(action)) {
+      return res.status(400).json({ success: false, error: "action must be approve, reject, or unpublish" });
+    }
+    if (action === "reject" && !reason) {
+      return res.status(400).json({ success: false, error: "A reason is required when rejecting" });
+    }
+    if (orderInput !== undefined && (!Number.isInteger(orderInput) || orderInput < 0 || orderInput > 10000)) {
+      return res.status(400).json({ success: false, error: "public_display_order must be a whole number 0–10000" });
+    }
+    const roleMap = await getPublicListingRoleMap();
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT b.id, b.role, b.status, b.license_number, b.public_profile_status, bp.avatar_url
+         FROM brokers b LEFT JOIN broker_profiles bp ON bp.broker_id = b.id
+        WHERE b.id = ? AND b.tenant_id = ?`,
+      [targetId, MORTGAGE_TENANT_ID],
+    );
+    const target = rows[0];
+    if (!target) return res.status(404).json({ success: false, error: "Team member not found" });
+
+    if (action === "approve") {
+      const missing = getPublicProfileMissing({
+        role: target.role,
+        status: target.status,
+        avatar_url: target.avatar_url,
+        license_number: target.license_number,
+        roleAllowed: roleMap[target.role] === true,
+      });
+      if (missing.length > 0) {
+        return res.status(400).json({ success: false, error: "This profile is missing required items", missing });
+      }
+    }
+    const nextStatus: PublicProfileStatus =
+      action === "approve" ? "approved" : action === "reject" ? "rejected" : "none";
+    const sets = [
+      "public_profile_status = ?",
+      "public_profile_reviewed_at = NOW()",
+      "public_profile_reviewed_by = ?",
+      "public_profile_rejection_reason = ?",
+    ];
+    const values: unknown[] = [nextStatus, (req as any).brokerId, action === "reject" ? reason : null];
+    if (typeof titleInput === "string") {
+      sets.push("public_title = ?");
+      values.push(titleInput.trim().slice(0, 120) || null);
+    }
+    if (orderInput !== undefined) {
+      sets.push("public_display_order = ?");
+      values.push(orderInput);
+    }
+    values.push(targetId, MORTGAGE_TENANT_ID);
+    await pool.query(`UPDATE brokers SET ${sets.join(", ")} WHERE id = ? AND tenant_id = ?`, values);
+
+    if (targetId !== (req as any).brokerId) {
+      await createBrokerNotification({
+        brokerIds: [targetId],
+        title:
+          action === "approve"
+            ? "You're on the website!"
+            : action === "reject"
+              ? "Website listing not approved"
+              : "Removed from the website",
+        message:
+          action === "approve"
+            ? "Your profile now appears on the Our Team page."
+            : action === "reject"
+              ? `Reason: ${reason}`
+              : "Your profile was removed from the Our Team page by a platform owner.",
+        category: "system",
+        type: action === "approve" ? "success" : "warning",
+        actionUrl: "/admin/profile",
+      });
+    }
+    return res.json({ success: true, status: nextStatus });
+  } catch (err) {
+    console.error("handleReviewPublicProfile error:", err);
+    return res.status(500).json({ success: false, error: "Failed to update listing" });
+  }
+};
+
+/** PUT /api/admin/public-profiles/roles — { roles: [{ role, is_allowed }] } */
+const handleUpdatePublicListingRoles: RequestHandler = async (req, res) => {
+  if (!isPlatformOwnerReq(req)) {
+    return res.status(403).json({ success: false, error: "Only platform owners can change website roles" });
+  }
+  try {
+    const input = req.body?.roles;
+    if (!Array.isArray(input) || input.length === 0) {
+      return res.status(400).json({ success: false, error: "roles must be a non-empty array" });
+    }
+    for (const item of input) {
+      if (!item || !PUBLIC_LISTING_ALL_ROLES.includes(item.role) || typeof item.is_allowed !== "boolean") {
+        return res.status(400).json({ success: false, error: "Each role needs a valid role and boolean is_allowed" });
+      }
+    }
+    for (const item of input as { role: string; is_allowed: boolean }[]) {
+      await pool.query(
+        `INSERT INTO broker_role_public_listing (tenant_id, broker_role, is_allowed, updated_by)
+         VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE is_allowed = VALUES(is_allowed), updated_by = VALUES(updated_by)`,
+        [MORTGAGE_TENANT_ID, item.role, item.is_allowed ? 1 : 0, (req as any).brokerId],
+      );
+    }
+    const roleMap = await getPublicListingRoleMap();
+    return res.json({
+      success: true,
+      roles: PUBLIC_LISTING_ALL_ROLES.map((role) => ({ role, is_allowed: roleMap[role] === true })),
+    });
+  } catch (err) {
+    console.error("handleUpdatePublicListingRoles error:", err);
+    return res.status(500).json({ success: false, error: "Failed to update roles" });
+  }
+};
+
+// ── SMS consent (A2P 10DLC / TCPA) — inlined for Vercel serverless ──────────
+// Source of truth: shared/sms-consent.ts. Keep wording + version in sync.
+const SMS_CONSENT_VERSION = "2026-11-19";
+const SMS_CONSENT_DEFAULT_BUSINESS_NAME = "The Mortgage Professionals";
+const SMS_SUPPORT_PHONE = "562-665-4132";
+type SmsConsentSource =
+  | "apply_wizard"
+  | "home_lead_form"
+  | "contact_form"
+  | "scheduler_booking";
+const SMS_CONSENT_DISCLOSURE =
+  "Message frequency varies, message & data rates may apply. Reply HELP for assistance, reply STOP to opt out.";
+
+function buildSmsConsentTexts(businessName: string = SMS_CONSENT_DEFAULT_BUSINESS_NAME): {
+  transactional: string;
+  marketing: string;
+} {
+  const name = businessName.trim() || SMS_CONSENT_DEFAULT_BUSINESS_NAME;
+  return {
+    transactional: `I consent to receive non-marketing text messages from ${name} regarding my loan application status, appointment reminders, and customer support. ${SMS_CONSENT_DISCLOSURE}`,
+    marketing: `I consent to receive marketing text messages from ${name} regarding mortgage rates, promotions, and product offers. ${SMS_CONSENT_DISCLOSURE}`,
+  };
+}
+
+function buildSmsHelpReply(
+  businessName: string = SMS_CONSENT_DEFAULT_BUSINESS_NAME,
+  supportPhone: string | null = SMS_SUPPORT_PHONE,
+): string {
+  const name = businessName.trim() || SMS_CONSENT_DEFAULT_BUSINESS_NAME;
+  const contact = supportPhone ? ` or call ${supportPhone}` : "";
+  return `${name}: For help, reply to this message${contact}. Msg frequency varies. Msg & data rates may apply. Reply STOP to opt out.`;
+}
+
+let smsConsentBusinessNameCache: { name: string; at: number } | null = null;
+async function getSmsConsentBusinessName(): Promise<string> {
+  if (
+    smsConsentBusinessNameCache &&
+    Date.now() - smsConsentBusinessNameCache.at < 5 * 60_000
+  ) {
+    return smsConsentBusinessNameCache.name;
+  }
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT name FROM tenants WHERE id = ? LIMIT 1`,
+      [MORTGAGE_TENANT_ID],
+    );
+    const name =
+      (rows[0]?.name as string | undefined)?.trim() ||
+      SMS_CONSENT_DEFAULT_BUSINESS_NAME;
+    smsConsentBusinessNameCache = { name, at: Date.now() };
+    return name;
+  } catch (err) {
+    console.error("getSmsConsentBusinessName error:", err);
+    return SMS_CONSENT_DEFAULT_BUSINESS_NAME;
+  }
+}
+
+/** Strict boolean parse: only literal true / "true" / 1 / "1" count as consent. */
+function parseSmsConsentFlag(value: unknown): boolean {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+/**
+ * Logs the checkbox state of a public form submission to sms_consents and, on
+ * marketing opt-in, marks the contact as broadcast-eligible. Never throws: a
+ * consent-logging failure must not fail the user's submission.
+ */
+async function recordSmsConsent(params: {
+  req: Parameters<RequestHandler>[0];
+  source: SmsConsentSource;
+  phone: string | null | undefined;
+  email?: string | null;
+  sourceRefId?: number | null;
+  transactional: unknown;
+  marketing: unknown;
+}): Promise<void> {
+  const last10 = normalizePhoneLast10(params.phone);
+  if (last10.length !== 10) return;
+  const transactional = parseSmsConsentFlag(params.transactional);
+  const marketing = parseSmsConsentFlag(params.marketing);
+  try {
+    const texts = buildSmsConsentTexts(await getSmsConsentBusinessName());
+    const [clientRows] = await pool.query<RowDataPacket[]>(
+      `SELECT id FROM clients
+        WHERE tenant_id = ? AND RIGHT(REGEXP_REPLACE(phone, '[^0-9]', ''), 10) = ?
+        ORDER BY id DESC LIMIT 1`,
+      [MORTGAGE_TENANT_ID, last10],
+    );
+    const referer = params.req.get("referer") || params.req.get("origin") || null;
+    await pool.query(
+      `INSERT INTO sms_consents
+         (tenant_id, phone_last10, phone_raw, email, client_id, source, source_ref_id,
+          transactional_opt_in, marketing_opt_in, transactional_text, marketing_text,
+          consent_version, page_url, ip_address, user_agent)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        MORTGAGE_TENANT_ID,
+        last10,
+        String(params.phone).trim().slice(0, 30),
+        params.email?.trim().toLowerCase().slice(0, 255) || null,
+        (clientRows[0]?.id as number | undefined) ?? null,
+        params.source,
+        params.sourceRefId ?? null,
+        transactional ? 1 : 0,
+        marketing ? 1 : 0,
+        texts.transactional,
+        texts.marketing,
+        SMS_CONSENT_VERSION,
+        referer ? referer.slice(0, 500) : null,
+        (params.req.ip ?? "").slice(0, 64) || null,
+        (params.req.get("user-agent") ?? "").slice(0, 500) || null,
+      ],
+    );
+    // Express marketing consent is the newest signal, so it clears an earlier
+    // STOP. An unchecked box is NOT an opt-out — existing flags stay as-is.
+    if (marketing) await setSmsBroadcastConsent(last10, true);
+  } catch (err) {
+    console.error(`recordSmsConsent (${params.source}) error:`, err);
+  }
+}
+
 /** Per-owner CRM feature flags — env vars only (PER_OWNER_CRM_*). */
 
 async function getPerOwnerCrmFlags(
@@ -7385,9 +7944,17 @@ const handleUpdateBrokerProfile: RequestHandler = async (req, res) => {
       brokerUpdates.push("phone = ?");
       brokerValues.push(phone || null);
     }
+    let nmlsChanged = false;
     if (license_number !== undefined) {
       brokerUpdates.push("license_number = ?");
       brokerValues.push(license_number || null);
+      const [prevNmls] = await pool.query<RowDataPacket[]>(
+        "SELECT license_number FROM brokers WHERE id = ? AND tenant_id = ?",
+        [brokerId, MORTGAGE_TENANT_ID],
+      );
+      nmlsChanged =
+        String(prevNmls[0]?.license_number ?? "").trim() !==
+        String(license_number ?? "").trim();
     }
     if (specializations !== undefined) {
       brokerUpdates.push("specializations = ?");
@@ -7405,6 +7972,7 @@ const handleUpdateBrokerProfile: RequestHandler = async (req, res) => {
         brokerValues,
       );
     }
+    if (nmlsChanged) await sendPublicProfileBackToReview(brokerId, "NMLS number");
 
     // Keep scheduler_settings.timezone in sync with the profile timezone so
     // that the public scheduler always uses the broker's current timezone.
@@ -7561,6 +8129,7 @@ const handleUpdateBrokerAvatar: RequestHandler = async (req, res) => {
         [brokerId, avatar_url],
       );
     }
+    await sendPublicProfileBackToReview(brokerId, "profile photo");
 
     res.json({ success: true, avatar_url });
   } catch (error) {
@@ -8265,6 +8834,16 @@ const handlePublicApply: RequestHandler = async (req, res) => {
     );
 
     await connection.commit();
+
+    await recordSmsConsent({
+      req,
+      source: "apply_wizard",
+      phone,
+      email,
+      sourceRefId: applicationId,
+      transactional: req.body?.sms_consent_transactional,
+      marketing: req.body?.sms_consent_marketing,
+    });
 
     // Notify the assigned broker(s) about the new self-service application.
     // Falls back to all admins only when no broker can be resolved (e.g., no
@@ -12033,9 +12612,17 @@ const handleUpdateBroker: RequestHandler = async (req, res) => {
       updates.push("status = ?");
       values.push(status);
     }
+    let nmlsChanged = false;
     if (license_number !== undefined) {
       updates.push("license_number = ?");
       values.push(license_number || null);
+      const [prevNmls] = await pool.query<RowDataPacket[]>(
+        "SELECT license_number FROM brokers WHERE id = ? AND tenant_id = ?",
+        [targetBrokerId, MORTGAGE_TENANT_ID],
+      );
+      nmlsChanged =
+        String(prevNmls[0]?.license_number ?? "").trim() !==
+        String(license_number ?? "").trim();
     }
     if (specializations !== undefined) {
       updates.push("specializations = ?");
@@ -12060,6 +12647,9 @@ const handleUpdateBroker: RequestHandler = async (req, res) => {
       `UPDATE brokers SET ${updates.join(", ")} WHERE id = ? AND tenant_id = ?`,
       values,
     );
+    if (nmlsChanged) {
+      await sendPublicProfileBackToReview(Number(targetBrokerId), "NMLS number");
+    }
 
     const [updatedBroker] = (await pool.query(
       "SELECT id, email, first_name, last_name, phone, role, status, license_number, specializations, email_verified, last_login, created_by_broker_id, created_at FROM brokers WHERE id = ? AND tenant_id = ?",
@@ -12579,6 +13169,7 @@ const handleUpdateBrokerAvatarByAdmin: RequestHandler = async (req, res) => {
         [targetId, avatar_url],
       );
     }
+    await sendPublicProfileBackToReview(Number(targetId), "profile photo");
 
     res.json({ success: true, avatar_url });
   } catch (error) {
@@ -32666,6 +33257,15 @@ const handleInboundSMS: RequestHandler = async (req, res) => {
     const fromPhone = fromRaw.replace(/[^\d+]/g, "");
     const inboundKeyword = body.trim().toUpperCase();
     const fromLast10ForConsent = normalizePhoneLast10(fromPhone);
+    if (["HELP", "INFO"].includes(inboundKeyword)) {
+      const helpReply = buildSmsHelpReply(await getSmsConsentBusinessName());
+      res.set("Content-Type", "text/xml");
+      return res
+        .status(200)
+        .send(
+          `<Response><Message>${helpReply.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</Message></Response>`,
+        );
+    }
     if (["START", "UNSTOP"].includes(inboundKeyword)) {
       await setSmsBroadcastConsent(fromLast10ForConsent, true);
       res.set("Content-Type", "text/xml");
@@ -43324,6 +43924,17 @@ function createServer() {
         console.error("Scheduler auto-create client error:", clientErr);
       }
 
+      // After auto-create so the consent row links to the new client.
+      await recordSmsConsent({
+        req,
+        source: "scheduler_booking",
+        phone: client_phone,
+        email: client_email,
+        sourceRefId: result.insertId,
+        transactional: req.body?.sms_consent_transactional,
+        marketing: req.body?.sms_consent_marketing,
+      });
+
       return res.json({
         success: true,
         meeting_id: result.insertId,
@@ -45380,7 +45991,7 @@ function createServer() {
           .json({ success: false, error: "Invalid email address" });
       }
 
-      await pool.execute(
+      const [contactInsert] = await pool.execute<ResultSetHeader>(
         `INSERT INTO contact_submissions (tenant_id, name, email, phone, subject, message)
          VALUES (?, ?, ?, ?, ?, ?)`,
         [
@@ -45391,6 +46002,20 @@ function createServer() {
           subject.trim().slice(0, 255),
           message.trim()],
       );
+
+      const consentSource: SmsConsentSource =
+        req.body?.sms_consent_source === "home_lead_form"
+          ? "home_lead_form"
+          : "contact_form";
+      await recordSmsConsent({
+        req,
+        source: consentSource,
+        phone,
+        email,
+        sourceRefId: contactInsert.insertId,
+        transactional: req.body?.sms_consent_transactional,
+        marketing: req.body?.sms_consent_marketing,
+      });
 
       return res.status(201).json({
         success: true,
@@ -45466,6 +46091,27 @@ function createServer() {
         .json({ success: false, error: "Internal server error" });
     }
   };
+
+  // Public "Our Team" listing (platform-owner approved)
+  expressApp.get("/api/public/team", handleGetPublicTeam);
+  expressApp.get("/api/broker/public-profile", verifyBrokerSession, handleGetMyPublicProfile);
+  expressApp.post("/api/broker/public-profile/request", verifyBrokerSession, handleRequestPublicProfile);
+  expressApp.post("/api/broker/public-profile/withdraw", verifyBrokerSession, handleWithdrawPublicProfile);
+  expressApp.get("/api/admin/public-profiles", verifyBrokerSession, handleListPublicProfiles);
+  expressApp.put("/api/admin/public-profiles/roles", verifyBrokerSession, handleUpdatePublicListingRoles);
+  expressApp.post("/api/admin/public-profiles/:brokerId/review", verifyBrokerSession, handleReviewPublicProfile);
+
+  // GET /api/public/sms-consent — tenant-branded opt-in checkbox wording
+  expressApp.get("/api/public/sms-consent", async (_req, res) => {
+    const businessName = await getSmsConsentBusinessName();
+    res.set("Cache-Control", "public, max-age=300");
+    return res.json({
+      success: true,
+      business_name: businessName,
+      version: SMS_CONSENT_VERSION,
+      texts: buildSmsConsentTexts(businessName),
+    });
+  });
 
   expressApp.post(
     "/api/contact",

@@ -20,6 +20,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { MetaHelmet } from "@/components/MetaHelmet";
+import {
+  EMPTY_SMS_CONSENT,
+  SmsConsentCheckboxes,
+} from "@/components/SmsConsentCheckboxes";
 import { cn } from "@/lib/utils";
 import { Link } from "react-router-dom";
 
@@ -57,6 +61,7 @@ const Contact: React.FC = () => {
       phone: "",
       subject: "",
       message: "",
+      ...EMPTY_SMS_CONSENT,
     },
     validationSchema,
     onSubmit: async (values, { setSubmitting, resetForm }) => {
@@ -68,6 +73,9 @@ const Contact: React.FC = () => {
           phone: values.phone?.trim() || null,
           subject: values.subject.trim(),
           message: values.message.trim(),
+          sms_consent_source: "contact_form",
+          sms_consent_transactional: values.sms_consent_transactional,
+          sms_consent_marketing: values.sms_consent_marketing,
         }),
       );
       if (submitContactForm.fulfilled.match(result)) {
@@ -332,6 +340,19 @@ const Contact: React.FC = () => {
                             </p>
                           )}
                         </div>
+
+                        <SmsConsentCheckboxes
+                          value={{
+                            sms_consent_transactional:
+                              formik.values.sms_consent_transactional,
+                            sms_consent_marketing:
+                              formik.values.sms_consent_marketing,
+                          }}
+                          onChange={(next) =>
+                            formik.setValues({ ...formik.values, ...next })
+                          }
+                          disabled={formik.isSubmitting}
+                        />
 
                         {/* Submit error */}
                         {submitError && (

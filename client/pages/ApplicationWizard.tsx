@@ -51,6 +51,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
+import { SmsConsentCheckboxes } from "@/components/SmsConsentCheckboxes";
 import { cn } from "@/lib/utils";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
@@ -156,6 +157,8 @@ const initialValues = {
   address_state: "",
   address_zip: "",
   citizenship_status: "",
+  sms_consent_transactional: false,
+  sms_consent_marketing: false,
   loan_type: "purchase",
   property_value: "",
   down_payment: "",
@@ -366,6 +369,8 @@ const ApplicationWizard = () => {
       address_state: "CA",
       address_zip: "90001",
       citizenship_status: "us_citizen",
+      sms_consent_transactional: false,
+      sms_consent_marketing: false,
       loan_type: "purchase",
       property_value: "550000",
       down_payment: "110000",
@@ -411,6 +416,8 @@ const ApplicationWizard = () => {
           address_state: values.address_state,
           address_zip: values.address_zip,
           citizenship_status: values.citizenship_status,
+          sms_consent_transactional: values.sms_consent_transactional === true,
+          sms_consent_marketing: values.sms_consent_marketing === true,
           loan_type: values.loan_type,
           property_value: values.property_value,
           down_payment: values.down_payment,
@@ -1574,6 +1581,20 @@ const ApplicationWizard = () => {
                                 formik.touched.citizenship_status
                                   ? formik.errors.citizenship_status
                                   : undefined
+                              }
+                            />
+                          </div>
+                          <div className="md:col-span-2">
+                            <SmsConsentCheckboxes
+                              value={{
+                                sms_consent_transactional:
+                                  formik.values.sms_consent_transactional ===
+                                  true,
+                                sms_consent_marketing:
+                                  formik.values.sms_consent_marketing === true,
+                              }}
+                              onChange={(next) =>
+                                formik.setValues({ ...formik.values, ...next })
                               }
                             />
                           </div>

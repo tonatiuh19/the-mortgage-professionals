@@ -19,7 +19,9 @@
     "typecheck": "tsc",
     "check:api-inline": "tsx scripts/check-api-inline.ts",
     "validate:all": "npm run check:api-inline && npm run typecheck && npm test && npm run build",
-    "deploy:prod": "tsx scripts/deploy-prod.ts"
+    "deploy:prod": "tsx scripts/deploy-prod.ts",
+    "deploy:dry-run": "tsx scripts/deploy-prod.ts --dry-run",
+    "deploy:stamp-version": "tsx scripts/deploy-prod.ts --stamp-only"
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.11.2",

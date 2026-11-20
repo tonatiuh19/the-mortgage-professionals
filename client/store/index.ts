@@ -26,6 +26,8 @@ import calculatorSavesReducer from "./slices/calculatorSavesSlice";
 import bulkImportReducer from "./slices/bulkImportSlice";
 import adminSectionControlsReducer from "./slices/adminSectionControlsSlice";
 import contactSubmissionsReducer from "./slices/contactSubmissionsSlice";
+import smsConsentReducer from "./slices/smsConsentSlice";
+import publicTeamReducer from "./slices/publicTeamSlice";
 import schedulerReducer from "./slices/schedulerSlice";
 import calendarEventsReducer from "./slices/calendarEventsSlice";
 import clientDetailReducer from "./slices/clientDetailSlice";
@@ -68,6 +70,8 @@ export const store = configureStore({
     billing: billingReducer,
     roleSectionPermissions: roleSectionPermissionsReducer,
     contactSubmissions: contactSubmissionsReducer,
+    smsConsent: smsConsentReducer,
+    publicTeam: publicTeamReducer,
     scheduler: schedulerReducer,
     calendarEvents: calendarEventsReducer,
     voice: voiceReducer,

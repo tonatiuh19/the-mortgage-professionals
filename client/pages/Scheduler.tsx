@@ -31,6 +31,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  EMPTY_SMS_CONSENT,
+  SmsConsentCheckboxes,
+} from "@/components/SmsConsentCheckboxes";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
@@ -337,6 +341,7 @@ const SchedulerPage: React.FC = () => {
       client_email: prefill?.client_email ?? "",
       client_phone: prefill?.client_phone ?? "",
       notes: "",
+      ...EMPTY_SMS_CONSENT,
     },
     validationSchema: bookingSchema,
     onSubmit: (values) => {
@@ -351,6 +356,8 @@ const SchedulerPage: React.FC = () => {
           meeting_time: selectedTime,
           meeting_type: meetingType,
           notes: values.notes || undefined,
+          sms_consent_transactional: values.sms_consent_transactional,
+          sms_consent_marketing: values.sms_consent_marketing,
         }),
       );
     },
@@ -891,6 +898,19 @@ const SchedulerPage: React.FC = () => {
                           </p>
                         )}
                       </div>
+
+                      <SmsConsentCheckboxes
+                        value={{
+                          sms_consent_transactional:
+                            formik.values.sms_consent_transactional,
+                          sms_consent_marketing:
+                            formik.values.sms_consent_marketing,
+                        }}
+                        onChange={(next) =>
+                          formik.setValues({ ...formik.values, ...next })
+                        }
+                        disabled={isBooking}
+                      />
 
                       {publicError && (
                         <div className="rounded-xl bg-red-500/10 border border-red-500/30 px-4 py-3 flex items-center gap-2 text-red-300 text-sm">

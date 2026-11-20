@@ -1,27 +1,26 @@
-import React from "react";
+import React, { useEffect } from "react";
+import { Link } from "react-router-dom";
+import { Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { MetaHelmet } from "@/components/MetaHelmet";
-
-const teamMembers = [
-  {
-    name: "Raul Oseguera",
-    role: "Branch Manager / Sr. Mortgage Advisor",
-    nmls: "NMLS#260026",
-  },
-  {
-    name: "Yuri Picazo",
-    role: "Production Manager / Sr. Loan Officer",
-    nmls: "NMLS#645946",
-  },
-  { name: "Jennifer Benitez", role: "Loan Officer", nmls: "NMLS#1788437" },
-  { name: "Yesenia Rodriguez", role: "Loan Officer", nmls: "NMLS#1463246" },
-  { name: "Karla Rivas", role: "Loan Officer", nmls: "NMLS#1998739" },
-  { name: "Armando Fernandez", role: "Loan Officer", nmls: "NMLS#2161748" },
-  { name: "Arthur Pacheco", role: "Loan Officer", nmls: "NMLS#2129887" },
-];
+import {
+  TeamMemberCard,
+  TeamMemberCardSkeleton,
+} from "@/components/TeamMemberCard";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { fetchPublicTeam } from "@/store/slices/publicTeamSlice";
 
 const OurTeam: React.FC = () => {
+  const dispatch = useAppDispatch();
+  const { members, membersStatus } = useAppSelector((state) => state.publicTeam);
+
+  useEffect(() => {
+    dispatch(fetchPublicTeam());
+  }, [dispatch]);
+
+  const loading = membersStatus === "idle" || membersStatus === "loading";
+
   return (
     <div className="flex flex-col">
       <MetaHelmet
@@ -47,21 +46,46 @@ const OurTeam: React.FC = () => {
       </section>
 
       <section className="py-12 md:py-16">
-        <div className="container grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {teamMembers.map((member) => (
-            <Card key={member.name} className="border-border/60">
-              <CardContent className="p-5">
-                <h2 className="text-lg font-bold">{member.name}</h2>
-                <p className="mt-1 text-sm font-medium text-primary">
-                  {member.role}
-                </p>
-                <p className="mt-2 text-xs uppercase tracking-wide text-muted-foreground">
-                  {member.nmls}
-                </p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        {loading ? (
+          <div className="container grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <TeamMemberCardSkeleton key={i} />
+            ))}
+          </div>
+        ) : members.length > 0 ? (
+          <div className="container grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {members.map((member, i) => (
+              <TeamMemberCard
+                key={member.id}
+                member={member}
+                style={{ animationDelay: `${Math.min(i, 8) * 70}ms` }}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="container max-w-xl">
+            <div className="flex flex-col items-center rounded-2xl border border-dashed border-border bg-muted/30 px-6 py-12 text-center">
+              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <Users className="h-7 w-7" />
+              </span>
+              <h2 className="mt-4 text-xl font-bold">
+                Team profiles are coming soon
+              </h2>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Our licensed mortgage professionals are ready to help today.
+                Reach out and we&apos;ll connect you with the right advisor.
+              </p>
+              <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+                <Button asChild>
+                  <Link to="/contact-us">Talk to an expert</Link>
+                </Button>
+                <Button asChild variant="outline">
+                  <Link to="/apply">Apply online</Link>
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );

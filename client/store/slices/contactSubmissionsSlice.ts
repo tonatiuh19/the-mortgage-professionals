@@ -1,7 +1,12 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
 import type { RootState } from "../index";
-import type { ContactSubmission, PaginationInfo } from "@shared/api";
+import type {
+  ContactSubmission,
+  PaginationInfo,
+  SmsConsentInput,
+  SmsConsentSource,
+} from "@shared/api";
 
 interface FetchContactParams {
   page?: number;
@@ -46,7 +51,9 @@ export const fetchContactSubmissions = createAsyncThunk(
   },
 );
 
-interface SubmitContactPayload {
+interface SubmitContactPayload extends SmsConsentInput {
+  /** Which public form sent it; defaults to contact_form on the server. */
+  sms_consent_source?: Extract<SmsConsentSource, "home_lead_form" | "contact_form">;
   name: string;
   email: string;
   phone: string | null;

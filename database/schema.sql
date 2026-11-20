@@ -2675,6 +2675,71 @@ CREATE TABLE IF NOT EXISTS sms_opt_outs (
   UNIQUE KEY uq_tenant_phone (tenant_id, phone_last10)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS sms_consents (
+  id                  INT           NOT NULL AUTO_INCREMENT,
+  tenant_id           INT           NOT NULL,
+  phone_last10        VARCHAR(10)   NOT NULL,
+  phone_raw           VARCHAR(30)   NULL,
+  email               VARCHAR(255)  NULL,
+  client_id           INT           NULL COMMENT 'clients.id when the submission created/matched a client',
+  source              VARCHAR(40)   NOT NULL COMMENT 'apply_wizard | home_lead_form | contact_form | scheduler_booking',
+  source_ref_id       INT           NULL COMMENT 'Row id in the source table (application, contact submission, meeting)',
+  transactional_opt_in TINYINT(1)   NOT NULL DEFAULT 0,
+  marketing_opt_in    TINYINT(1)    NOT NULL DEFAULT 0,
+  transactional_text  TEXT          NOT NULL COMMENT 'Exact checkbox wording shown',
+  marketing_text      TEXT          NOT NULL COMMENT 'Exact checkbox wording shown',
+  consent_version     VARCHAR(20)   NOT NULL,
+  page_url            VARCHAR(500)  NULL,
+  ip_address          VARCHAR(64)   NULL,
+  user_agent          VARCHAR(500)  NULL,
+  created_at          DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_sms_consents_phone (tenant_id, phone_last10, created_at),
+  KEY idx_sms_consents_client (client_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Immutable log of SMS opt-in checkbox state per public form submission';
+
+-- Public "Our Team" listing: per-person approval by a platform owner and
+-- per-role eligibility controlled by the platform owner.
+
+ALTER TABLE brokers
+  ADD COLUMN IF NOT EXISTS public_profile_status ENUM('none','pending','approved','rejected') NOT NULL DEFAULT 'none'
+    COMMENT 'Website listing approval: none → pending (requested) → approved | rejected',
+  ADD COLUMN IF NOT EXISTS public_profile_requested_at DATETIME NULL,
+  ADD COLUMN IF NOT EXISTS public_profile_reviewed_at DATETIME NULL,
+  ADD COLUMN IF NOT EXISTS public_profile_reviewed_by INT NULL COMMENT 'brokers.id of the platform owner who reviewed',
+  ADD COLUMN IF NOT EXISTS public_profile_rejection_reason VARCHAR(500) NULL,
+  ADD COLUMN IF NOT EXISTS public_title VARCHAR(120) NULL COMMENT 'Optional public job title, e.g. Branch Manager / Sr. Mortgage Advisor',
+  ADD COLUMN IF NOT EXISTS public_display_order INT NOT NULL DEFAULT 100 COMMENT 'Lower shows first on the Our Team page';
+
+CREATE INDEX idx_brokers_public_profile ON brokers (tenant_id, public_profile_status);
+
+CREATE TABLE IF NOT EXISTS broker_role_public_listing (
+  id          INT         NOT NULL AUTO_INCREMENT,
+  tenant_id   INT         NOT NULL,
+  broker_role VARCHAR(32) NOT NULL,
+  is_allowed  TINYINT(1)  NOT NULL DEFAULT 0,
+  updated_by  INT         NULL,
+  updated_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_role_public_listing (tenant_id, broker_role)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Platform-owner switch: which roles may appear on the public Our Team page';
+
+-- Defaults: licensed, customer-facing roles on; everyone else off.
+INSERT IGNORE INTO broker_role_public_listing (tenant_id, broker_role, is_allowed)
+SELECT t.id, r.role, r.allowed
+FROM tenants t
+CROSS JOIN (
+  SELECT 'admin' AS role, 1 AS allowed UNION ALL
+  SELECT 'loan_officer', 1 UNION ALL
+  SELECT 'loan_processor', 0 UNION ALL
+  SELECT 'broker', 0 UNION ALL
+  SELECT 'realtor', 0 UNION ALL
+  SELECT 'buyers_agent', 0 UNION ALL
+  SELECT 'listing_agent', 0
+) r;
+
 CREATE TABLE IF NOT EXISTS broker_role_section_permissions (
   id          INT          NOT NULL AUTO_INCREMENT,
   tenant_id   INT          NOT NULL,

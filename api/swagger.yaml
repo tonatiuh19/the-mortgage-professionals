@@ -2183,6 +2183,12 @@ paths:
                 property_value: { type: number }
                 property_address: { type: string }
                 citizenship_status: { type: string }
+                sms_consent_transactional:
+                  type: boolean
+                  description: Optional SMS opt-in (non-marketing). Logged to `sms_consents` with exact wording, IP and user agent.
+                sms_consent_marketing:
+                  type: boolean
+                  description: Optional SMS opt-in (marketing). When true, also sets `sms_blast_opted_in = 1` for matching clients/brokers and clears a prior STOP.
                 broker_token:
                   type: string
                   description: Optional — pre-assigns a specific broker's share link token
@@ -5391,6 +5397,12 @@ paths:
                   type: string
                   enum: [phone, video, teams]
                 notes: { type: string }
+                sms_consent_transactional:
+                  type: boolean
+                  description: Optional SMS opt-in (non-marketing). Logged to `sms_consents` with exact wording, IP and user agent.
+                sms_consent_marketing:
+                  type: boolean
+                  description: Optional SMS opt-in (marketing). When true, also sets `sms_blast_opted_in = 1` for matching clients/brokers and clears a prior STOP.
       responses:
         "200":
           description: Meeting booked
@@ -6144,6 +6156,216 @@ paths:
           description: Admin only
 
   # ── Contact ───────────────────────────────────────────────────────────────────
+  /public/team:
+    get:
+      tags: [Public]
+      summary: Approved team members for the Our Team page
+      description: |
+        Returns only brokers that are active, approved by a platform owner
+        (`public_profile_status = approved`), in a role the owner allows
+        (`broker_role_public_listing`), with a profile photo, and with an NMLS
+        number when the role is Admin or Loan Officer. Ordered by
+        `public_display_order`. No auth. Cached for 60 seconds.
+      responses:
+        "200":
+          description: Team members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  members:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer }
+                        first_name: { type: string }
+                        last_name: { type: string }
+                        role: { type: string }
+                        title: { type: string }
+                        nmls: { type: string, nullable: true }
+                        avatar_url: { type: string }
+                        bio: { type: string, nullable: true }
+                        years_experience: { type: integer, nullable: true }
+                        link_key:
+                          type: string
+                          description: Slug (or public token) for /apply/{key} and /scheduler/{key}
+
+  /broker/public-profile:
+    get:
+      tags: [Public Team]
+      summary: My website listing status and readiness checklist
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: Listing status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  profile:
+                    type: object
+                    properties:
+                      status: { type: string, enum: [none, pending, approved, rejected] }
+                      requested_at: { type: string, format: date-time, nullable: true }
+                      reviewed_at: { type: string, format: date-time, nullable: true }
+                      rejection_reason: { type: string, nullable: true }
+                      public_title: { type: string, nullable: true }
+                      role_allowed: { type: boolean }
+                      missing:
+                        type: array
+                        items: { type: string, enum: [photo, nmls, role, active] }
+
+  /broker/public-profile/request:
+    post:
+      tags: [Public Team]
+      summary: Ask a platform owner to list me on the website
+      description: |
+        Sets status to `pending` and notifies every active platform owner.
+        Rejected with 400 (and a `missing` list) until the photo, NMLS (Admin/LO),
+        allowed role and active account requirements are all met.
+      security:
+        - BrokerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                public_title: { type: string, maxLength: 120 }
+      responses:
+        "200": { description: Request submitted }
+        "400": { description: Requirements not met }
+        "409": { description: Already listed }
+
+  /broker/public-profile/withdraw:
+    post:
+      tags: [Public Team]
+      summary: Cancel my request or remove me from the website
+      security:
+        - BrokerAuth: []
+      responses:
+        "200": { description: Listing set to none }
+
+  /admin/public-profiles:
+    get:
+      tags: [Public Team]
+      summary: Platform owner review list and role switches
+      description: Platform owners only (403 otherwise). Pending requests first.
+      security:
+        - BrokerAuth: []
+      responses:
+        "200":
+          description: People and role settings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  people: { type: array, items: { type: object } }
+                  roles:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        role: { type: string }
+                        is_allowed: { type: boolean }
+        "403": { description: Not a platform owner }
+
+  /admin/public-profiles/roles:
+    put:
+      tags: [Public Team]
+      summary: Choose which roles may appear on the website
+      description: Platform owners only.
+      security:
+        - BrokerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [roles]
+              properties:
+                roles:
+                  type: array
+                  items:
+                    type: object
+                    required: [role, is_allowed]
+                    properties:
+                      role:
+                        type: string
+                        enum: [admin, loan_officer, loan_processor, broker, realtor, buyers_agent, listing_agent]
+                      is_allowed: { type: boolean }
+      responses:
+        "200": { description: Saved roles }
+        "400": { description: Invalid role list }
+        "403": { description: Not a platform owner }
+
+  /admin/public-profiles/{brokerId}/review:
+    post:
+      tags: [Public Team]
+      summary: Approve, decline, or remove a website listing
+      description: |
+        Platform owners only. `approve` re-checks every requirement; `reject`
+        needs a `reason`. The team member is notified. Later photo or NMLS
+        changes automatically send an approved listing back to `pending`.
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: brokerId
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [approve, reject, unpublish] }
+                reason: { type: string, maxLength: 500 }
+                public_title: { type: string, maxLength: 120 }
+                public_display_order: { type: integer, minimum: 0, maximum: 10000 }
+      responses:
+        "200": { description: Updated }
+        "400": { description: Invalid action, missing reason, or requirements not met }
+        "403": { description: Not a platform owner }
+        "404": { description: Team member not found }
+
+  /public/sms-consent:
+    get:
+      tags: [Public]
+      summary: SMS opt-in checkbox wording (A2P 10DLC)
+      description: |
+        Returns the tenant-branded consent text shown next to the optional SMS
+        checkboxes on public forms. The same text is stored in `sms_consents`
+        when a form is submitted. No auth required. Cached for 5 minutes.
+      responses:
+        "200":
+          description: Consent configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  business_name: { type: string, example: The Mortgage Professionals }
+                  version: { type: string, example: "2026-11-19" }
+                  texts:
+                    type: object
+                    properties:
+                      transactional: { type: string }
+                      marketing: { type: string }
+
   /contact:
     post:
       tags: [Contact]
@@ -6161,6 +6383,16 @@ paths:
                 phone: { type: string }
                 subject: { type: string }
                 message: { type: string }
+                sms_consent_transactional:
+                  type: boolean
+                  description: Optional SMS opt-in (non-marketing). Logged to `sms_consents` with exact wording, IP and user agent.
+                sms_consent_marketing:
+                  type: boolean
+                  description: Optional SMS opt-in (marketing). When true, also sets `sms_blast_opted_in = 1` for matching clients/brokers and clears a prior STOP.
+                sms_consent_source:
+                  type: string
+                  enum: [contact_form, home_lead_form]
+                  description: Which public form sent it (defaults to `contact_form`)
       responses:
         "201":
           description: Message received
@@ -6281,6 +6513,10 @@ paths:
 
         Protected by optional `INBOUND_WEBHOOK_SECRET` header.
         Returns an empty TwiML `<Response>` so Twilio does not auto-reply.
+
+        Compliance keywords are answered directly with TwiML:
+        `HELP`/`INFO` → help message with support phone; `STOP` family →
+        unsubscribe confirmation; `START`/`UNSTOP` → resubscribe confirmation.
       requestBody:
         required: true
         content:

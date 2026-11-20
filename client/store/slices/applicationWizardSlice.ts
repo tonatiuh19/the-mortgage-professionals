@@ -12,6 +12,7 @@ import type {
   SendShareLinkEmailRequest,
   SendShareLinkEmailResponse,
 } from "@shared/api";
+import type { SmsConsentInput } from "@shared/api";
 import type { RootState } from "../index";
 
 const DRAFT_KEY = "tmp_wizard_draft";
@@ -24,7 +25,7 @@ export interface WizardDraft {
   draftApplicationId?: number;
 }
 
-export interface PublicApplicationPayload {
+export interface PublicApplicationPayload extends SmsConsentInput {
   // Step 1 – Identity
   first_name: string;
   middle_name?: string;
