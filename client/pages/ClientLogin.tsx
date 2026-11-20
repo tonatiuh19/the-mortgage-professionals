@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { LegalLinks } from "@/components/LegalLinks";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -764,6 +765,10 @@ const ClientLogin = () => {
               </motion.form>
             )}
           </AnimatePresence>
+          <LegalLinks
+            className="mt-8 w-full text-xs text-muted-foreground"
+            linkClassName="hover:text-primary"
+          />
         </motion.div>
       </div>
     </div>

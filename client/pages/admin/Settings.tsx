@@ -42,6 +42,8 @@ import { cn } from "@/lib/utils";
 import { logger } from "@/lib/logger";
 import { PHONE_DELIVERY_ENABLED } from "@/lib/channelAvailability";
 import { isAdminRole } from "@shared/api";
+import { Scale } from "lucide-react";
+import { LegalPagesManager } from "@/components/legal/LegalPagesManager";
 
 // ─── Animation variants ───────────────────────────────────────────────────────
 
@@ -499,9 +501,21 @@ const Settings = () => {
                 <BlockedNumbersCard canEdit={isAdmin} />
               </SettingsSection>
 
-              {isAdmin && (
+              {user?.is_platform_owner && (
                 <SettingsSection
                   index={4}
+                  icon={Scale}
+                  title="Legal Pages"
+                  description="Privacy Policy and Terms & Conditions shown on the website and linked from every SMS consent box. Edits stay in a draft until you publish."
+                  accent="bg-primary/5"
+                >
+                  <LegalPagesManager />
+                </SettingsSection>
+              )}
+
+              {isAdmin && (
+                <SettingsSection
+                  index={5}
                   icon={FileCheck2}
                   title="Role Visibility"
                   description="Choose which sidebar sections each role can see. Admins always see everything."

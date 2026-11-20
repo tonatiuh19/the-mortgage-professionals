@@ -4771,6 +4771,340 @@ const handleUpdatePublicListingRoles: RequestHandler = async (req, res) => {
   }
 };
 
+// ── Legal pages (Privacy Policy / Terms) — inlined for Vercel serverless ────
+// Source of truth: shared/legal.ts. Keep placeholder rules in sync.
+type LegalDocKey = "privacy" | "terms";
+const LEGAL_DOC_KEYS: LegalDocKey[] = ["privacy", "terms"];
+const LEGAL_DOC_META: Record<LegalDocKey, { title: string; path: string }> = {
+  privacy: { title: "Privacy Policy", path: "/privacy-policy" },
+  terms: { title: "Terms & Conditions", path: "/terms-and-conditions" },
+};
+const LEGAL_MAX_MARKDOWN = 200_000;
+const LEGAL_DETAIL_FIELDS = [
+  "company_name",
+  "company_short_name",
+  "nmls",
+  "address_line1",
+  "address_line2",
+  "phone",
+  "email",
+  "website",
+] as const;
+type LegalCompanyDetails = Record<(typeof LEGAL_DETAIL_FIELDS)[number], string | null>;
+
+function formatLegalDate(isoDate: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate);
+  if (!m) return isoDate;
+  const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  return `${months[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}`;
+}
+function legalUrl(website: string | null | undefined, path: string): string {
+  const base = (website || "").trim().replace(/\/+$/, "");
+  return base ? `${base}${path}` : path;
+}
+function fillLegalPlaceholders(markdown: string, details: LegalCompanyDetails, effectiveDate: string): string {
+  const values: Record<string, string> = {
+    company_name: details.company_name ?? "",
+    company_short_name: details.company_short_name ?? "",
+    nmls: details.nmls ?? "",
+    address_line1: details.address_line1 ?? "",
+    address_line2: details.address_line2 ?? "",
+    phone: details.phone ?? "",
+    email: details.email ?? "",
+    website: details.website ?? "",
+    effective_date: formatLegalDate(effectiveDate),
+    privacy_url: legalUrl(details.website, LEGAL_DOC_META.privacy.path),
+    terms_url: legalUrl(details.website, LEGAL_DOC_META.terms.path),
+  };
+  return markdown.replace(/\{\{\s*([a-z0-9_]+)\s*\}\}/g, (whole, key: string) =>
+    Object.prototype.hasOwnProperty.call(values, key) ? values[key] : whole,
+  );
+}
+
+/** "YYYY-MM-DD" (queries DATE_FORMAT the column, so no Date/timezone shift happens). */
+function toIsoDate(value: unknown): string {
+  if (value instanceof Date) {
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, "0");
+    const d = String(value.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  return String(value ?? "").slice(0, 10);
+}
+
+async function getLegalCompanyDetails(): Promise<LegalCompanyDetails> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT ${LEGAL_DETAIL_FIELDS.join(", ")} FROM legal_company_details WHERE tenant_id = ?`,
+    [MORTGAGE_TENANT_ID],
+  );
+  const r = rows[0] ?? {};
+  const out = {} as LegalCompanyDetails;
+  for (const f of LEGAL_DETAIL_FIELDS) out[f] = (r[f] as string | null | undefined) ?? null;
+  if (!out.company_name) out.company_name = SMS_CONSENT_DEFAULT_BUSINESS_NAME;
+  if (!out.company_short_name) out.company_short_name = out.company_name;
+  return out;
+}
+
+/** Live version numbers, used to stamp SMS consent records. */
+async function getLiveLegalVersions(): Promise<{ privacy: number | null; terms: number | null }> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT doc_key, published_version FROM legal_documents WHERE tenant_id = ?`,
+    [MORTGAGE_TENANT_ID],
+  );
+  const map = new Map(rows.map((r) => [String(r.doc_key), (r.published_version as number | null) ?? null]));
+  return { privacy: map.get("privacy") ?? null, terms: map.get("terms") ?? null };
+}
+
+const parseLegalDocKey = (value: unknown): LegalDocKey | null =>
+  LEGAL_DOC_KEYS.includes(value as LegalDocKey) ? (value as LegalDocKey) : null;
+
+/** GET /api/public/legal/:docKey — the live version with placeholders filled. */
+const handleGetPublicLegalDoc: RequestHandler = async (req, res) => {
+  const docKey = parseLegalDocKey(req.params.docKey);
+  if (!docKey) return res.status(404).json({ success: false, error: "Unknown document" });
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT v.version, v.markdown, DATE_FORMAT(v.effective_date, '%Y-%m-%d') AS effective_date
+         FROM legal_documents d
+         JOIN legal_document_versions v
+           ON v.tenant_id = d.tenant_id AND v.doc_key = d.doc_key AND v.version = d.published_version
+        WHERE d.tenant_id = ? AND d.doc_key = ?`,
+      [MORTGAGE_TENANT_ID, docKey],
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: "Not published yet" });
+    const effective = toIsoDate(rows[0].effective_date);
+    res.set("Cache-Control", "public, max-age=60");
+    return res.json({
+      success: true,
+      doc_key: docKey,
+      title: LEGAL_DOC_META[docKey].title,
+      version: rows[0].version,
+      effective_date: effective,
+      markdown: fillLegalPlaceholders(String(rows[0].markdown), await getLegalCompanyDetails(), effective),
+    });
+  } catch (err) {
+    console.error("handleGetPublicLegalDoc error:", err);
+    return res.status(500).json({ success: false, error: "Failed to load document" });
+  }
+};
+
+const requireOwner = (req: Parameters<RequestHandler>[0], res: Parameters<RequestHandler>[1]): boolean => {
+  if (isPlatformOwnerReq(req)) return true;
+  res.status(403).json({ success: false, error: "Only platform owners can edit legal pages" });
+  return false;
+};
+
+async function loadAdminLegal() {
+  const details = await getLegalCompanyDetails();
+  const [docs] = await pool.query<RowDataPacket[]>(
+    `SELECT d.doc_key, d.published_version, d.draft_markdown, d.draft_updated_at,
+            CONCAT_WS(' ', db.first_name, db.last_name) AS draft_updated_by_name,
+            v.markdown AS published_markdown, DATE_FORMAT(v.effective_date, '%Y-%m-%d') AS published_effective_date
+       FROM legal_documents d
+       LEFT JOIN brokers db ON db.id = d.draft_updated_by
+       LEFT JOIN legal_document_versions v
+         ON v.tenant_id = d.tenant_id AND v.doc_key = d.doc_key AND v.version = d.published_version
+      WHERE d.tenant_id = ?`,
+    [MORTGAGE_TENANT_ID],
+  );
+  const [versions] = await pool.query<RowDataPacket[]>(
+    `SELECT v.doc_key, v.version, DATE_FORMAT(v.effective_date, '%Y-%m-%d') AS effective_date, v.change_note, v.published_at,
+            CONCAT_WS(' ', b.first_name, b.last_name) AS published_by_name
+       FROM legal_document_versions v
+       LEFT JOIN brokers b ON b.id = v.published_by
+      WHERE v.tenant_id = ?
+      ORDER BY v.version DESC`,
+    [MORTGAGE_TENANT_ID],
+  );
+  return {
+    details,
+    docs: LEGAL_DOC_KEYS.map((key) => {
+      const d = docs.find((r) => r.doc_key === key);
+      return {
+        doc_key: key,
+        published_version: (d?.published_version as number | null) ?? null,
+        published_markdown: (d?.published_markdown as string | null) ?? "",
+        published_effective_date: d?.published_effective_date ? toIsoDate(d.published_effective_date) : null,
+        draft_markdown: (d?.draft_markdown as string | null) ?? null,
+        draft_updated_at: d?.draft_updated_at ?? null,
+        draft_updated_by_name: (d?.draft_updated_by_name as string | null) || null,
+        versions: versions
+          .filter((v) => v.doc_key === key)
+          .map((v) => ({
+            version: v.version as number,
+            effective_date: toIsoDate(v.effective_date),
+            change_note: (v.change_note as string | null) ?? null,
+            published_at: v.published_at,
+            published_by_name: (v.published_by_name as string | null) || null,
+          })),
+      };
+    }),
+  };
+}
+
+/** GET /api/admin/legal — company details, drafts, live text and history. */
+const handleGetAdminLegal: RequestHandler = async (req, res) => {
+  if (!requireOwner(req, res)) return;
+  try {
+    return res.json({ success: true, ...(await loadAdminLegal()) });
+  } catch (err) {
+    console.error("handleGetAdminLegal error:", err);
+    return res.status(500).json({ success: false, error: "Failed to load legal pages" });
+  }
+};
+
+/** PUT /api/admin/legal/details — company details used by every {{placeholder}}. */
+const handleUpdateLegalDetails: RequestHandler = async (req, res) => {
+  if (!requireOwner(req, res)) return;
+  try {
+    const body = req.body ?? {};
+    const clean: Record<string, string | null> = {};
+    const limits: Record<string, number> = { nmls: 40, phone: 40, website: 300 };
+    for (const f of LEGAL_DETAIL_FIELDS) {
+      const v = body[f];
+      if (v !== undefined && v !== null && typeof v !== "string") {
+        return res.status(400).json({ success: false, error: `${f} must be text` });
+      }
+      const t = typeof v === "string" ? v.trim() : "";
+      if (t.length > (limits[f] ?? 200)) return res.status(400).json({ success: false, error: `${f} is too long` });
+      clean[f] = t || null;
+    }
+    if (!clean.company_name) return res.status(400).json({ success: false, error: "Company legal name is required" });
+    if (!clean.company_short_name) clean.company_short_name = clean.company_name;
+    if (clean.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean.email)) {
+      return res.status(400).json({ success: false, error: "Enter a valid email" });
+    }
+    if (clean.website && !/^https?:\/\/[^\s]+\.[^\s]+$/i.test(clean.website)) {
+      return res.status(400).json({ success: false, error: "Website must start with http:// or https://" });
+    }
+    if (clean.phone && clean.phone.replace(/\D/g, "").length < 10) {
+      return res.status(400).json({ success: false, error: "Enter a full phone number" });
+    }
+    const cols = [...LEGAL_DETAIL_FIELDS];
+    await pool.query(
+      `INSERT INTO legal_company_details (tenant_id, ${cols.join(", ")}, updated_by)
+       VALUES (?, ${cols.map(() => "?").join(", ")}, ?)
+       ON DUPLICATE KEY UPDATE ${cols.map((c) => `${c} = VALUES(${c})`).join(", ")}, updated_by = VALUES(updated_by)`,
+      [MORTGAGE_TENANT_ID, ...cols.map((c) => clean[c]), (req as any).brokerId],
+    );
+    return res.json({ success: true, ...(await loadAdminLegal()) });
+  } catch (err) {
+    console.error("handleUpdateLegalDetails error:", err);
+    return res.status(500).json({ success: false, error: "Failed to save company details" });
+  }
+};
+
+/** PUT /api/admin/legal/:docKey/draft — autosave. */
+const handleSaveLegalDraft: RequestHandler = async (req, res) => {
+  if (!requireOwner(req, res)) return;
+  const docKey = parseLegalDocKey(req.params.docKey);
+  if (!docKey) return res.status(404).json({ success: false, error: "Unknown document" });
+  const markdown = req.body?.markdown;
+  if (typeof markdown !== "string") return res.status(400).json({ success: false, error: "markdown must be text" });
+  if (markdown.length > LEGAL_MAX_MARKDOWN) return res.status(413).json({ success: false, error: "Document is too long" });
+  try {
+    await pool.query(
+      `INSERT INTO legal_documents (tenant_id, doc_key, draft_markdown, draft_updated_at, draft_updated_by)
+       VALUES (?, ?, ?, NOW(), ?)
+       ON DUPLICATE KEY UPDATE draft_markdown = VALUES(draft_markdown),
+         draft_updated_at = NOW(), draft_updated_by = VALUES(draft_updated_by)`,
+      [MORTGAGE_TENANT_ID, docKey, markdown, (req as any).brokerId],
+    );
+    return res.json({ success: true, saved_at: new Date().toISOString() });
+  } catch (err) {
+    console.error("handleSaveLegalDraft error:", err);
+    return res.status(500).json({ success: false, error: "Failed to save draft" });
+  }
+};
+
+/** DELETE /api/admin/legal/:docKey/draft — throw away unpublished edits. */
+const handleDiscardLegalDraft: RequestHandler = async (req, res) => {
+  if (!requireOwner(req, res)) return;
+  const docKey = parseLegalDocKey(req.params.docKey);
+  if (!docKey) return res.status(404).json({ success: false, error: "Unknown document" });
+  try {
+    await pool.query(
+      `UPDATE legal_documents SET draft_markdown = NULL, draft_updated_at = NULL, draft_updated_by = NULL
+        WHERE tenant_id = ? AND doc_key = ?`,
+      [MORTGAGE_TENANT_ID, docKey],
+    );
+    return res.json({ success: true, ...(await loadAdminLegal()) });
+  } catch (err) {
+    console.error("handleDiscardLegalDraft error:", err);
+    return res.status(500).json({ success: false, error: "Failed to discard draft" });
+  }
+};
+
+/** POST /api/admin/legal/:docKey/publish — draft → new live version. */
+const handlePublishLegalDoc: RequestHandler = async (req, res) => {
+  if (!requireOwner(req, res)) return;
+  const docKey = parseLegalDocKey(req.params.docKey);
+  if (!docKey) return res.status(404).json({ success: false, error: "Unknown document" });
+  const effectiveDate = String(req.body?.effective_date ?? "");
+  const changeNote = typeof req.body?.change_note === "string" ? req.body.change_note.trim().slice(0, 300) : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate) || Number.isNaN(Date.parse(effectiveDate))) {
+    return res.status(400).json({ success: false, error: "effective_date must be YYYY-MM-DD" });
+  }
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [docRows] = await conn.query<RowDataPacket[]>(
+      `SELECT draft_markdown FROM legal_documents WHERE tenant_id = ? AND doc_key = ? FOR UPDATE`,
+      [MORTGAGE_TENANT_ID, docKey],
+    );
+    const draft = docRows[0]?.draft_markdown as string | null | undefined;
+    if (!draft || !draft.trim()) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, error: "There are no unpublished changes to publish" });
+    }
+    const [maxRows] = await conn.query<RowDataPacket[]>(
+      `SELECT COALESCE(MAX(version), 0) AS v FROM legal_document_versions WHERE tenant_id = ? AND doc_key = ?`,
+      [MORTGAGE_TENANT_ID, docKey],
+    );
+    const next = Number(maxRows[0].v) + 1;
+    await conn.query(
+      `INSERT INTO legal_document_versions (tenant_id, doc_key, version, markdown, effective_date, change_note, published_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [MORTGAGE_TENANT_ID, docKey, next, draft, effectiveDate, changeNote || null, (req as any).brokerId],
+    );
+    await conn.query(
+      `UPDATE legal_documents
+          SET published_version = ?, draft_markdown = NULL, draft_updated_at = NULL, draft_updated_by = NULL
+        WHERE tenant_id = ? AND doc_key = ?`,
+      [next, MORTGAGE_TENANT_ID, docKey],
+    );
+    await conn.commit();
+    return res.json({ success: true, version: next, ...(await loadAdminLegal()) });
+  } catch (err) {
+    await conn.rollback().catch(() => undefined);
+    console.error("handlePublishLegalDoc error:", err);
+    return res.status(500).json({ success: false, error: "Failed to publish" });
+  } finally {
+    conn.release();
+  }
+};
+
+/** GET /api/admin/legal/:docKey/versions/:version — raw source of an old version. */
+const handleGetLegalVersion: RequestHandler = async (req, res) => {
+  if (!requireOwner(req, res)) return;
+  const docKey = parseLegalDocKey(req.params.docKey);
+  const version = Number(req.params.version);
+  if (!docKey || !Number.isInteger(version) || version < 1) {
+    return res.status(404).json({ success: false, error: "Version not found" });
+  }
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT markdown, DATE_FORMAT(effective_date, '%Y-%m-%d') AS effective_date FROM legal_document_versions WHERE tenant_id = ? AND doc_key = ? AND version = ?`,
+      [MORTGAGE_TENANT_ID, docKey, version],
+    );
+    if (!rows[0]) return res.status(404).json({ success: false, error: "Version not found" });
+    return res.json({ success: true, version, markdown: rows[0].markdown, effective_date: toIsoDate(rows[0].effective_date) });
+  } catch (err) {
+    console.error("handleGetLegalVersion error:", err);
+    return res.status(500).json({ success: false, error: "Failed to load version" });
+  }
+};
+
 // ── SMS consent (A2P 10DLC / TCPA) — inlined for Vercel serverless ──────────
 // Source of truth: shared/sms-consent.ts. Keep wording + version in sync.
 const SMS_CONSENT_VERSION = "2026-11-19";
@@ -4860,12 +5194,13 @@ async function recordSmsConsent(params: {
       [MORTGAGE_TENANT_ID, last10],
     );
     const referer = params.req.get("referer") || params.req.get("origin") || null;
+    const legalVersions = await getLiveLegalVersions().catch(() => ({ privacy: null, terms: null }));
     await pool.query(
       `INSERT INTO sms_consents
          (tenant_id, phone_last10, phone_raw, email, client_id, source, source_ref_id,
           transactional_opt_in, marketing_opt_in, transactional_text, marketing_text,
-          consent_version, page_url, ip_address, user_agent)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          consent_version, page_url, ip_address, user_agent, privacy_version, terms_version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         MORTGAGE_TENANT_ID,
         last10,
@@ -4882,6 +5217,8 @@ async function recordSmsConsent(params: {
         referer ? referer.slice(0, 500) : null,
         (params.req.ip ?? "").slice(0, 64) || null,
         (params.req.get("user-agent") ?? "").slice(0, 500) || null,
+        legalVersions.privacy,
+        legalVersions.terms,
       ],
     );
     // Express marketing consent is the newest signal, so it clears an earlier
@@ -33258,7 +33595,11 @@ const handleInboundSMS: RequestHandler = async (req, res) => {
     const inboundKeyword = body.trim().toUpperCase();
     const fromLast10ForConsent = normalizePhoneLast10(fromPhone);
     if (["HELP", "INFO"].includes(inboundKeyword)) {
-      const helpReply = buildSmsHelpReply(await getSmsConsentBusinessName());
+      const legalDetails = await getLegalCompanyDetails().catch(() => null);
+      const helpReply = buildSmsHelpReply(
+        await getSmsConsentBusinessName(),
+        legalDetails?.phone || SMS_SUPPORT_PHONE,
+      );
       res.set("Content-Type", "text/xml");
       return res
         .status(200)
@@ -46091,6 +46432,15 @@ function createServer() {
         .json({ success: false, error: "Internal server error" });
     }
   };
+
+  // Legal pages (Privacy Policy / Terms) — editable by platform owners
+  expressApp.get("/api/public/legal/:docKey", handleGetPublicLegalDoc);
+  expressApp.get("/api/admin/legal", verifyBrokerSession, handleGetAdminLegal);
+  expressApp.put("/api/admin/legal/details", verifyBrokerSession, handleUpdateLegalDetails);
+  expressApp.put("/api/admin/legal/:docKey/draft", verifyBrokerSession, handleSaveLegalDraft);
+  expressApp.delete("/api/admin/legal/:docKey/draft", verifyBrokerSession, handleDiscardLegalDraft);
+  expressApp.post("/api/admin/legal/:docKey/publish", verifyBrokerSession, handlePublishLegalDoc);
+  expressApp.get("/api/admin/legal/:docKey/versions/:version", verifyBrokerSession, handleGetLegalVersion);
 
   // Public "Our Team" listing (platform-owner approved)
   expressApp.get("/api/public/team", handleGetPublicTeam);

@@ -6156,6 +6156,146 @@ paths:
           description: Admin only
 
   # ── Contact ───────────────────────────────────────────────────────────────────
+  /public/legal/{docKey}:
+    get:
+      tags: [Public]
+      summary: Published Privacy Policy or Terms & Conditions (Markdown)
+      description: |
+        Returns the live version with `{{placeholders}}` already filled from the
+        company details. Raw HTML is never rendered by the client. Cached 60 s.
+      parameters:
+        - in: path
+          name: docKey
+          required: true
+          schema: { type: string, enum: [privacy, terms] }
+      responses:
+        "200":
+          description: Live document
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  doc_key: { type: string, enum: [privacy, terms] }
+                  title: { type: string }
+                  version: { type: integer }
+                  effective_date: { type: string, format: date }
+                  markdown: { type: string }
+        "404": { description: Unknown document or nothing published }
+
+  /admin/legal:
+    get:
+      tags: [Legal Pages]
+      summary: Company details, drafts, live text and version history
+      description: Platform owners only.
+      security:
+        - BrokerAuth: []
+      responses:
+        "200": { description: Legal pages for the editor }
+        "403": { description: Not a platform owner }
+
+  /admin/legal/details:
+    put:
+      tags: [Legal Pages]
+      summary: Save company details used by every placeholder
+      description: |
+        Platform owners only. Fields: company_name (required), company_short_name,
+        nmls, address_line1, address_line2, phone (≥10 digits; also used in the
+        SMS HELP reply), email, website (http/https).
+      security:
+        - BrokerAuth: []
+      responses:
+        "200": { description: Saved; returns the same shape as GET /admin/legal }
+        "400": { description: Validation error }
+        "403": { description: Not a platform owner }
+
+  /admin/legal/{docKey}/draft:
+    put:
+      tags: [Legal Pages]
+      summary: Autosave the draft (not visible to the public)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: docKey
+          required: true
+          schema: { type: string, enum: [privacy, terms] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [markdown]
+              properties:
+                markdown: { type: string, maxLength: 200000 }
+      responses:
+        "200": { description: Draft saved }
+        "400": { description: markdown missing }
+        "403": { description: Not a platform owner }
+        "413": { description: Document too long }
+    delete:
+      tags: [Legal Pages]
+      summary: Discard the draft (editor returns to the live version)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: docKey
+          required: true
+          schema: { type: string, enum: [privacy, terms] }
+      responses:
+        "200": { description: Draft discarded }
+
+  /admin/legal/{docKey}/publish:
+    post:
+      tags: [Legal Pages]
+      summary: Publish the draft as a new version
+      description: |
+        Creates the next immutable version, makes it live and clears the draft.
+        New SMS consent records store the live Privacy/Terms version numbers.
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: docKey
+          required: true
+          schema: { type: string, enum: [privacy, terms] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [effective_date]
+              properties:
+                effective_date: { type: string, format: date }
+                change_note: { type: string, maxLength: 300 }
+      responses:
+        "200": { description: Published; returns version and GET /admin/legal shape }
+        "400": { description: No draft or invalid date }
+        "403": { description: Not a platform owner }
+
+  /admin/legal/{docKey}/versions/{version}:
+    get:
+      tags: [Legal Pages]
+      summary: Source Markdown of a published version (view / restore into draft)
+      security:
+        - BrokerAuth: []
+      parameters:
+        - in: path
+          name: docKey
+          required: true
+          schema: { type: string, enum: [privacy, terms] }
+        - in: path
+          name: version
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200": { description: Version source }
+        "404": { description: Version not found }
+
   /public/team:
     get:
       tags: [Public]

@@ -1,4 +1,5 @@
 import React from "react";
+import { LegalLinks } from "@/components/LegalLinks";
 import { Link } from "react-router-dom";
 import {
   Mail,
@@ -137,9 +138,12 @@ const Footer = () => {
           </div>
         </div>
         <div className="mt-12 border-t pt-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-muted-foreground">
-          <p>
-            © {new Date().getFullYear()} The Mortgage Professionals. All rights reserved.
-          </p>
+          <div className="flex flex-col items-center gap-2 sm:flex-row sm:gap-4">
+            <p>
+              © {new Date().getFullYear()} The Mortgage Professionals. All rights reserved.
+            </p>
+            <LegalLinks className="text-xs" linkClassName="hover:text-primary" />
+          </div>
           <Link
             to="/broker-login"
             className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background px-3 py-1 text-xs font-medium text-muted-foreground hover:border-primary/40 hover:text-primary hover:bg-primary/5 transition-all"

@@ -42,9 +42,14 @@ const ScrollToHash = () => {
 // admin.* → only /admin and /broker-login are accessible
 // portal.* → only /portal, /client-login, /wizard, /apply are accessible
 // Wraps children so the redirect happens in the same render pass — no useEffect delay.
+// Legal pages must open from every subdomain (SMS consent, login and portal links point here).
+const isLegalPath = (pathname: string) =>
+  /^\/(privacy-policy|terms-and-conditions|terms)\/?$/.test(pathname);
+
 const SubdomainGate = ({ children }: { children: React.ReactNode }) => {
   const { pathname } = useLocation();
   const subdomain = window.location.hostname.split(".")[0];
+  if (isLegalPath(pathname)) return <>{children}</>;
 
   if (subdomain === "admin") {
     const allowed =

@@ -1,4 +1,5 @@
 import React, { useEffect } from "react";
+import { LegalLinks } from "@/components/LegalLinks";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -263,6 +264,10 @@ const ClientLayout = ({ children }: ClientLayoutProps) => {
 
       {/* Main Content */}
       <main className="container py-8">{children}</main>
+
+      <footer className="container border-t py-6 text-center text-xs text-muted-foreground">
+        <LegalLinks linkClassName="hover:text-primary" />
+      </footer>
 
       {/* Logout Confirmation Dialog */}
       <AlertDialog open={showLogoutConfirm} onOpenChange={setShowLogoutConfirm}>

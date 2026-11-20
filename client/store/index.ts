@@ -28,6 +28,7 @@ import adminSectionControlsReducer from "./slices/adminSectionControlsSlice";
 import contactSubmissionsReducer from "./slices/contactSubmissionsSlice";
 import smsConsentReducer from "./slices/smsConsentSlice";
 import publicTeamReducer from "./slices/publicTeamSlice";
+import legalReducer from "./slices/legalSlice";
 import schedulerReducer from "./slices/schedulerSlice";
 import calendarEventsReducer from "./slices/calendarEventsSlice";
 import clientDetailReducer from "./slices/clientDetailSlice";
@@ -72,6 +73,7 @@ export const store = configureStore({
     contactSubmissions: contactSubmissionsReducer,
     smsConsent: smsConsentReducer,
     publicTeam: publicTeamReducer,
+    legal: legalReducer,
     scheduler: schedulerReducer,
     calendarEvents: calendarEventsReducer,
     voice: voiceReducer,

@@ -42,6 +42,9 @@ const REQUIRED_TABLES = [
   "sms_consents",
   "broker_role_section_permissions",
   "broker_role_public_listing",
+  "legal_company_details",
+  "legal_documents",
+  "legal_document_versions",
   "tenant_subscription",
   "tenant_usage_period",
   "tenant_usage_ledger",
@@ -54,6 +57,7 @@ const REQUIRED_COLUMNS: Array<[table: string, column: string]> = [
   ["brokers", "public_profile_status"],
   ["brokers", "sms_blast_opted_in"],
   ["clients", "sms_blast_opted_in"],
+  ["sms_consents", "terms_version"],
 ];
 
 /** Env vars features need at runtime that nothing else catches before deploy (a missing one = 500/503). */

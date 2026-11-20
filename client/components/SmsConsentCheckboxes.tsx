@@ -1,5 +1,5 @@
 import { useEffect, useId } from "react";
-import { Link } from "react-router-dom";
+import { LegalLinks } from "@/components/LegalLinks";
 import { MessageSquareText } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
@@ -106,21 +106,11 @@ export function SmsConsentCheckboxes({
 
       <p
         className={cn(
-          "pt-1 text-center text-xs",
-          dark ? "text-white/70" : "text-muted-foreground",
+          "pt-1 text-center text-xs font-medium",
+          dark ? "text-white/80" : "text-primary",
         )}
       >
-        <Link
-          to="/privacy-policy"
-          target="_blank"
-          rel="noopener noreferrer"
-          className={cn(
-            "font-medium underline underline-offset-2 transition-colors",
-            dark ? "hover:text-white" : "text-primary hover:text-primary/80",
-          )}
-        >
-          Privacy Policy
-        </Link>
+        <LegalLinks newTab linkClassName={dark ? "hover:text-white" : "hover:text-primary/80"} />
       </p>
     </fieldset>
   );

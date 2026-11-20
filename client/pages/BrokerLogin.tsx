@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { LegalLinks } from "@/components/LegalLinks";
 import { motion } from "framer-motion";
 import {
   Mail,
@@ -536,6 +537,10 @@ export default function BrokerLogin() {
                 </Button>
               </form>
             )}
+            <LegalLinks
+              className="mt-8 w-full text-xs text-muted-foreground"
+              linkClassName="hover:text-primary"
+            />
           </motion.div>
         </div>
       </div>

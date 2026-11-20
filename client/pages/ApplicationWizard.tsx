@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { LegalAgreementNote } from "@/components/LegalLinks";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useFormik } from "formik";
@@ -2377,6 +2378,12 @@ const ApplicationWizard = () => {
                         </Button>
                       </div>
                     </div>
+                    {currentStep === 5 && (
+                      <LegalAgreementNote
+                        action="submitting your application and creating your client account"
+                        className="mt-4"
+                      />
+                    )}
                   </motion.div>
                 </AnimatePresence>
               </main>

@@ -2726,6 +2726,58 @@ CREATE TABLE IF NOT EXISTS broker_role_public_listing (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Platform-owner switch: which roles may appear on the public Our Team page';
 
+-- Editable legal pages (Privacy Policy, Terms & Conditions) — Markdown, draft → publish,
+-- full version history, and shared company details used as {{placeholders}}.
+
+CREATE TABLE IF NOT EXISTS legal_company_details (
+  tenant_id           INT          NOT NULL,
+  company_name        VARCHAR(200) NOT NULL,
+  company_short_name  VARCHAR(200) NOT NULL,
+  nmls                VARCHAR(40)  NULL,
+  address_line1       VARCHAR(200) NULL,
+  address_line2       VARCHAR(200) NULL,
+  phone               VARCHAR(40)  NULL COMMENT 'Also quoted in the SMS HELP auto-reply',
+  email               VARCHAR(200) NULL,
+  website             VARCHAR(300) NULL,
+  updated_by          INT          NULL,
+  updated_at          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Company details substituted into legal pages ({{company_name}}, {{phone}}, …)';
+
+CREATE TABLE IF NOT EXISTS legal_documents (
+  id                  INT          NOT NULL AUTO_INCREMENT,
+  tenant_id           INT          NOT NULL,
+  doc_key             VARCHAR(20)  NOT NULL COMMENT 'privacy | terms',
+  draft_markdown      MEDIUMTEXT   NULL COMMENT 'Unpublished edits; NULL = no draft',
+  draft_updated_at    DATETIME     NULL,
+  draft_updated_by    INT          NULL,
+  published_version   INT          NULL COMMENT 'legal_document_versions.version currently live',
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_legal_doc (tenant_id, doc_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS legal_document_versions (
+  id                  INT          NOT NULL AUTO_INCREMENT,
+  tenant_id           INT          NOT NULL,
+  doc_key             VARCHAR(20)  NOT NULL,
+  version             INT          NOT NULL,
+  markdown            MEDIUMTEXT   NOT NULL COMMENT 'Source with {{placeholders}} (rendered at read time)',
+  effective_date      DATE         NOT NULL,
+  change_note         VARCHAR(300) NULL,
+  published_by        INT          NULL,
+  published_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_legal_doc_version (tenant_id, doc_key, version)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Immutable published versions of legal pages';
+
+ALTER TABLE sms_consents
+  ADD COLUMN IF NOT EXISTS privacy_version INT NULL COMMENT 'Privacy Policy version live when consent was given',
+  ADD COLUMN IF NOT EXISTS terms_version INT NULL COMMENT 'Terms & Conditions version live when consent was given';
+
+-- Seed data: see database/migrations/20261120_100000_legal_documents.sql
+
 -- Defaults: licensed, customer-facing roles on; everyone else off.
 INSERT IGNORE INTO broker_role_public_listing (tenant_id, broker_role, is_allowed)
 SELECT t.id, r.role, r.allowed

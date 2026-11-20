@@ -39,6 +39,7 @@ import ConventionalLoan from "./pages/ConventionalLoan";
 import FHALoan from "./pages/FHALoan";
 import VALoan from "./pages/VALoan";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
+import TermsAndConditions from "./pages/TermsAndConditions";
 import FAQ from "./pages/FAQ";
 import LoanOptions from "./pages/LoanOptions";
 import SchedulerPage from "./pages/Scheduler";
@@ -206,6 +207,17 @@ const AppRoutes = () => (
         </AppLayout>
       }
     />
+    {["/terms-and-conditions", "/terms"].map((path) => (
+      <Route
+        key={path}
+        path={path}
+        element={
+          <AppLayout showHeader={true} showFooter={true}>
+            <TermsAndConditions />
+          </AppLayout>
+        }
+      />
+    ))}
     <Route
       path="/faq"
       element={

@@ -124,3 +124,12 @@
     white-space: pre;
   }
 }
+
+/* Legal page editor: {{placeholder}} fields shown as chips */
+.legal-field-chip {
+  @apply rounded-md border border-primary/30 bg-primary/10 px-1 py-0.5 font-mono text-[0.85em] font-semibold text-primary;
+}
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  @apply pointer-events-none float-left h-0 text-muted-foreground;
+}
