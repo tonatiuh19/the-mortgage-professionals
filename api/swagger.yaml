@@ -920,6 +920,8 @@ paths:
       tags: [email]
       summary: POST /email/send
       responses:
+        "402":
+          description: 'Billing paused (restricted/suspended after the grace period, or monthly quota reached). Staff get a short "Sending is paused" message; platform owners get the billing headline/detail. Body: BillingDenialPayload (billing_action_required, billing_access_level, quota_exceeded, suggested_pack_id).'
         '200':
           description: Successful response
   /email/threads/{conversationId}/action:
@@ -2449,6 +2451,8 @@ paths:
       security:
         - BrokerAuth: []
       responses:
+        "402":
+          description: 'Billing paused (restricted/suspended after the grace period, or monthly quota reached). Staff get a short "Sending is paused" message; platform owners get the billing headline/detail. Body: BillingDenialPayload (billing_action_required, billing_access_level, quota_exceeded, suggested_pack_id).'
         '403':
           description: Role not allowed
         "201":
@@ -4406,6 +4410,8 @@ paths:
                     description: "Required for email communication_type",
                   }
       responses:
+        "402":
+          description: 'Billing paused (restricted/suspended after the grace period, or monthly quota reached). Staff get a short "Sending is paused" message; platform owners get the billing headline/detail. Body: BillingDenialPayload (billing_action_required, billing_access_level, quota_exceeded, suggested_pack_id).'
         "200":
           description: Sent
           content:
@@ -5433,7 +5439,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "503":
-          description: Video meeting requested but provider meeting could not be created
+          description: 'Video meeting requested but provider meeting could not be created — or online booking paused by billing (the message tells the client to call the office, using the phone from Legal Pages company details).'
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -5719,6 +5725,8 @@ paths:
                   type: integer
                   description: Assign to a specific broker (admin only)
       responses:
+        "402":
+          description: 'Billing paused (restricted/suspended after the grace period, or monthly quota reached). Staff get a short "Sending is paused" message; platform owners get the billing headline/detail. Body: BillingDenialPayload (billing_action_required, billing_access_level, quota_exceeded, suggested_pack_id).'
         "200":
           description: Created
           content:

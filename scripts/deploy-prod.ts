@@ -34,7 +34,7 @@ import {
 } from "./releaseNotes";
 
 const PROD_HEALTH_URL =
-  process.env.PROD_HEALTH_URL ?? "https://the-mortgage-professionals.vercel.app/api/health";
+  process.env.PROD_HEALTH_URL ?? "https://www.themortgageprofessionals.net/api/health";
 
 /** Tables the deployed code queries; a missing one means a migration was not applied. */
 const REQUIRED_TABLES = [

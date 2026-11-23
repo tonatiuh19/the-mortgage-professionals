@@ -6527,6 +6527,10 @@ function resolveBroadcastMergeTags(
 async function sendBroadcastAsync(broadcastId: number): Promise<void> {
   let sentCount = 0;
   let failedCount = 0;
+  // Billing usage, recorded once in `finally` (per-recipient writes would add 3+ queries each).
+  let billedEmails = 0;
+  let billedSmsSegments = 0;
+  let billedSmsUnitsPerMessage = 1;
   try {
     // Bulk Messaging is behind BROADCAST_BULK_MESSAGING_ENABLED (default off).
     // TMP MVP uses Twilio Messages API; when bulk is enabled we still send via
@@ -6591,6 +6595,34 @@ async function sendBroadcastAsync(broadcastId: number): Promise<void> {
       [broadcastId, MORTGAGE_TENANT_ID],
     );
 
+    billedSmsUnitsPerMessage = broadcastSmsQuotaUnits(smsBody);
+    // Billing gate at send time (also covers scheduled broadcasts started by cron).
+    const pendingEmails =
+      broadcast.channel === "sms" ? 0 : recipientRows.filter((r) => r.email_status === "pending" && r.recipient_email).length;
+    const pendingSms =
+      broadcast.channel === "email" ? 0 : recipientRows.filter((r) => r.sms_status === "pending" && r.recipient_phone).length;
+    const billingGate = await billingPrecheckBroadcast(
+      { sms_segments: pendingSms * billedSmsUnitsPerMessage, email_sends: pendingEmails },
+      broadcastId,
+    );
+    if (!billingGate.allowed) {
+      console.warn(`[Broadcast #${broadcastId}] paused by billing: ${quotaDenialError(billingGate)}`);
+      await pool.query(
+        `UPDATE realtor_broadcasts SET status = 'failed', completed_at = NOW(), updated_at = NOW()
+          WHERE id = ? AND tenant_id = ?`,
+        [broadcastId, MORTGAGE_TENANT_ID],
+      );
+      await createBrokerNotification({
+        brokerIds: Number(broadcast.created_by),
+        title: `Broadcast "${String(broadcast.title || "")}" was not sent`,
+        message: BILLING_PAUSED_STAFF_MESSAGE,
+        category: "system",
+        type: "error",
+        actionUrl: "/admin/broadcasts",
+      });
+      return;
+    }
+
     for (const recipient of recipientRows) {
       const [[cancelCheck]] = await pool.query<RowDataPacket[]>(
         `SELECT is_cancelled FROM realtor_broadcasts WHERE id = ? LIMIT 1`,
@@ -6644,6 +6676,7 @@ async function sendBroadcastAsync(broadcastId: number): Promise<void> {
               [sent.messageId || null, recipient.id],
             );
             sentCount++;
+            billedEmails++;
           } catch (err: any) {
             await pool.query(
               `UPDATE realtor_broadcast_recipients
@@ -6727,6 +6760,7 @@ async function sendBroadcastAsync(broadcastId: number): Promise<void> {
               [message.sid || null, recipient.id],
             );
             sentCount++;
+            billedSmsSegments += billedSmsUnitsPerMessage;
           } catch (err: any) {
             await pool.query(
               `UPDATE realtor_broadcast_recipients
@@ -6811,6 +6845,10 @@ async function sendBroadcastAsync(broadcastId: number): Promise<void> {
     } catch {
       /* non-fatal */
     }
+  } finally {
+    const ctx: BillingSendContext = { source: "broadcast", refType: "broadcast", refId: broadcastId };
+    await billingRecord("email_sends", billedEmails, ctx);
+    await billingRecord("sms_segments", billedSmsSegments, ctx);
   }
 }
 
@@ -6936,6 +6974,14 @@ const handleCreateBroadcast: RequestHandler = async (req, res) => {
           ).length
         : 0;
     const segsPerMsg = body_sms ? Math.max(1, estimateSmsSegments(body_sms).segmentCount) : 1;
+
+    if (!isDraft) {
+      const gate = await billingPrecheckBroadcast(
+        estimateBroadcastUnits({ channel, smsBody: body_sms ?? "", emailRecipientCount: emailUnits, smsRecipientCount: smsUnits }),
+        null,
+      );
+      if (!gate.allowed) return res.status(402).json(billingDenialForRequest(req, gate));
+    }
 
     const [broadcastInsert] = await pool.query<ResultSetHeader>(
       `INSERT INTO realtor_broadcasts
@@ -18497,6 +18543,35 @@ async function executeFlowSendStep(
     // "sent from" indicator in the conversations UI).
     let sharedFromNumber: string | undefined;
 
+    // Billing: loan-lifecycle flows are client service (exempt, still counted);
+    // realtor-prospecting / manual / no-activity drips are gated like marketing.
+    const flowBilling = await (async (): Promise<{ ctx: BillingSendContext; dim: UsageDimension | null; units: number }> => {
+      const [flowRows] = await pool.query<RowDataPacket[]>(
+        `SELECT trigger_event, flow_category FROM reminder_flows WHERE id = ? LIMIT 1`,
+        [execution.flow_id],
+      );
+      const flow = flowRows[0];
+      const exempt =
+        flow?.flow_category !== "realtor_prospecting" &&
+        BILLING_EXEMPT_FLOW_EVENTS.has(String(flow?.trigger_event ?? ""));
+      const ctx: BillingSendContext = { source: "reminder_flow", refType: "flow_execution", refId: execution.id, exempt };
+      if (step.step_type === "send_email") return { ctx, dim: "email_sends", units: 1 };
+      if (step.step_type === "send_sms") return { ctx, dim: "sms_segments", units: smsSegmentsFromBody(body) };
+      return { ctx, dim: null, units: 0 };
+    })();
+    if (flowBilling.dim) {
+      const gate = await billingPrecheck(flowBilling.dim, flowBilling.units, flowBilling.ctx);
+      if (!gate.allowed) {
+        console.warn(`⏸️  executeFlowSendStep: exec #${execution.id} step [${step.step_key}] — paused by billing`);
+        await logFlowStepTrace(execution, step, "skipped", {
+          channel: flowBilling.dim === "email_sends" ? "email" : "sms",
+          error_message: `billing: ${quotaDenialError(gate)}`,
+          completed_at: new Date(),
+        });
+        return;
+      }
+    }
+
     if (step.step_type === "send_email") {
       if (!clientEmail) {
         console.error(
@@ -18633,6 +18708,7 @@ async function executeFlowSendStep(
       console.log(
         `✅ executeFlowSendStep: exec #${execution.id} step [${step.step_key}/${step.step_type}] sent | ext_id=${sendResult.external_id ?? "n/a"}`,
       );
+      if (flowBilling.dim) await billingRecord(flowBilling.dim, flowBilling.units, flowBilling.ctx);
       await logFlowStepTrace(execution, step, "succeeded", {
         channel:
           step.step_type === "send_email"
@@ -20241,6 +20317,13 @@ const handleEmailSend: RequestHandler = async (req, res) => {
         .json({ success: false, message: "recipient_email is required" });
     }
 
+    // Billing gate — Resend sends cost the platform; Office365 mailboxes don't.
+    const emailBillingCtx: BillingSendContext = { source: "email_compose", refType: "client", refId: client_id ?? null };
+    if (!mailbox_id) {
+      const gate = await billingPrecheck("email_sends", 1, emailBillingCtx);
+      if (!gate.allowed) return res.status(402).json(billingDenialForRequest(req, gate));
+    }
+
     // ── Resolve conversation ID ───────────────────────────────────────────────
     let finalConvId: string = conversation_id?.trim() || "";
     if (!finalConvId) {
@@ -20396,6 +20479,7 @@ const handleEmailSend: RequestHandler = async (req, res) => {
     console.log(
       `[emailSend] send result: success=${sendResult.success} error=${sendResult.error ?? "none"} in ${Date.now() - t0}ms`,
     );
+    if (sendResult.success && !mailbox_id) await billingRecord("email_sends", 1, emailBillingCtx);
 
     // ── Update communication record with result ───────────────────────────────
     if (sendResult.success) {
@@ -24566,10 +24650,12 @@ function currentCalendarMonthStart(): string {
 /** Normalize mysql2 DATE (Date object or string) to `YYYY-MM-DD` for SQL DATE columns. */
 function toSqlDate(value: unknown): string | null {
   if (value == null) return null;
+  // The pool runs with timezone "+00:00", so DATE columns arrive as UTC midnight:
+  // read them with UTC getters or a non-UTC host (local dev) shifts them a day back.
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    const y = value.getFullYear();
-    const m = String(value.getMonth() + 1).padStart(2, "0");
-    const d = String(value.getDate()).padStart(2, "0");
+    const y = value.getUTCFullYear();
+    const m = String(value.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(value.getUTCDate()).padStart(2, "0");
     return `${y}-${m}-${d}`;
   }
   const s = String(value).trim();
@@ -24577,7 +24663,7 @@ function toSqlDate(value: unknown): string | null {
   const parsed = Date.parse(s);
   if (!Number.isNaN(parsed)) {
     const d = new Date(parsed);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
   }
   return null;
 }
@@ -25803,6 +25889,148 @@ function createQuotaService(pool: Pool) {
 }
 
 type QuotaService = ReturnType<typeof createQuotaService>;
+
+// ── Billing send gates (ported from real-state's quota wiring) ───────────────
+// Opt-in per call site: a send is gated only when its caller passes a
+// BillingSendContext. Login codes, STOP/HELP replies, inbound messages and
+// system notices never pass one, so they are never blocked.
+// `exempt: true` = client-service messages (appointments, loan-status flows,
+// document requests): never blocked, but still counted so usage is real.
+
+let quotaServiceSingleton: QuotaService | null = null;
+/** Lazily created so module-level send helpers and the Express app share one instance. */
+function getQuotaService(): QuotaService {
+  if (!quotaServiceSingleton) quotaServiceSingleton = createQuotaService(pool);
+  return quotaServiceSingleton;
+}
+
+type BillingSendContext = {
+  source: string;
+  refType?: string;
+  refId?: string | number | null;
+  exempt?: boolean;
+};
+
+/** Loan-lifecycle reminder flows are client service, not marketing → exempt. */
+const BILLING_EXEMPT_FLOW_EVENTS = new Set([
+  "application_received",
+  "prequalified",
+  "preapproved",
+  "under_contract_loan_setup",
+  "submitted_to_underwriting",
+  "approved_with_conditions",
+  "clear_to_close",
+  "docs_out",
+  "loan_funded",
+  "task_pending",
+  "task_in_progress",
+  "task_overdue",
+]);
+
+const ALLOWED_RESULT: QuotaResult = { allowed: true, mode: "off", recorded: false };
+
+/** Before a paid send: allowed unless the billing ladder or quota blocks it. Never throws. */
+async function billingPrecheck(
+  dimension: UsageDimension,
+  units: number,
+  ctx: BillingSendContext,
+): Promise<QuotaResult> {
+  if (ctx.exempt || units <= 0) return ALLOWED_RESULT;
+  try {
+    const result = await getQuotaService().precheck(MORTGAGE_TENANT_ID, {
+      dimension,
+      units,
+      source: ctx.source,
+      refType: ctx.refType,
+      refId: ctx.refId == null ? undefined : String(ctx.refId),
+    });
+    if (!result.allowed) void alertOwnersBillingBlocked(dimension, ctx.source);
+    return result;
+  } catch (err) {
+    // A billing lookup failure must never stop the business from working.
+    console.error(`billingPrecheck(${dimension}/${ctx.source}) error:`, err);
+    return ALLOWED_RESULT;
+  }
+}
+
+/** After a successful send: count usage (exempt sends count too). Never throws. */
+async function billingRecord(
+  dimension: UsageDimension,
+  units: number,
+  ctx: BillingSendContext,
+): Promise<void> {
+  if (units <= 0) return;
+  try {
+    await getQuotaService().recordConsumption(MORTGAGE_TENANT_ID, {
+      dimension,
+      units,
+      source: ctx.source,
+      refType: ctx.refType,
+      refId: ctx.refId == null ? undefined : String(ctx.refId),
+      metadata: ctx.exempt ? { exempt: true } : undefined,
+    });
+  } catch (err) {
+    console.error(`billingRecord(${dimension}/${ctx.source}) error:`, err);
+  }
+}
+
+/** Broadcasts: check every channel's estimated units before any message goes out. */
+async function billingPrecheckBroadcast(
+  units: { sms_segments: number; email_sends: number },
+  broadcastId: number | null,
+): Promise<QuotaResult> {
+  const ctx: BillingSendContext = { source: "broadcast", refType: "broadcast", refId: broadcastId };
+  if (units.sms_segments > 0) {
+    const sms = await billingPrecheck("sms_segments", units.sms_segments, ctx);
+    if (!sms.allowed) return sms;
+  }
+  if (units.email_sends > 0) {
+    const email = await billingPrecheck("email_sends", units.email_sends, ctx);
+    if (!email.allowed) return email;
+  }
+  return ALLOWED_RESULT;
+}
+
+const BILLING_PAUSED_STAFF_MESSAGE =
+  "Sending is paused — billing needs attention. Your admin has been notified.";
+
+/**
+ * 402 body for a blocked send. Platform owners get the billing headline/detail;
+ * everyone else gets a short, price-free message.
+ */
+function billingDenialForRequest(req: Parameters<RequestHandler>[0], result: QuotaResult) {
+  const payload = quotaDenialPayload(result) as Record<string, unknown>;
+  if ((req as any).broker?.is_platform_owner) return payload;
+  return { ...payload, error: BILLING_PAUSED_STAFF_MESSAGE, message: BILLING_PAUSED_STAFF_MESSAGE };
+}
+
+/** One in-app alert per day to platform owners when anything gets blocked. */
+async function alertOwnersBillingBlocked(dimension: UsageDimension, source: string): Promise<void> {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const [rows] = await pool.query<RowDataPacket[]>(
+      `SELECT setting_value FROM system_settings WHERE setting_key = 'billing_block_alert_date' LIMIT 1`,
+    );
+    if (rows[0]?.setting_value === today) return; // already alerted today
+    await pool.query(
+      `INSERT INTO system_settings (tenant_id, setting_key, setting_value, setting_type, description)
+       VALUES (?, 'billing_block_alert_date', ?, 'string', 'Last day platform owners were alerted about blocked sends')
+       ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`,
+      [MORTGAGE_TENANT_ID, today],
+    );
+    const label = dimension.replace(/_/g, " ");
+    await createBrokerNotification({
+      brokerIds: await getPlatformOwnerIds(),
+      title: "Sends are paused — billing needs attention",
+      message: `Your team just had ${label} blocked (${source.replace(/_/g, " ")}). Open Billing to activate the subscription or add capacity.`,
+      category: "system",
+      type: "error",
+      actionUrl: "/admin/billing",
+    });
+  } catch (err) {
+    console.error("alertOwnersBillingBlocked error:", err);
+  }
+}
 
 type SubscriptionRow = {
   status: string;
@@ -28521,6 +28749,20 @@ function registerStripeBillingRoutes(
     statusCode = 500,
   ) => {
     logBillingPaymentError(context, detail);
+    // A declined card is the customer's to fix (another card), not an outage:
+    // say so with 402 instead of "try again later".
+    const stripeErr = detail as { type?: string; code?: string; decline_code?: string } | null;
+    if (stripeErr?.type === "StripeCardError" || stripeErr?.code === "card_declined") {
+      const insufficient = stripeErr.decline_code === "insufficient_funds";
+      return res.status(402).json({
+        success: false,
+        code: "card_declined",
+        decline_code: stripeErr.decline_code ?? null,
+        error: insufficient
+          ? "Your card has insufficient funds. Update your payment method in Billing and try again."
+          : "Your card was declined. Update your payment method in Billing and try again.",
+      });
+    }
     return res.status(statusCode).json({
       success: false,
       error: BILLING_PAYMENT_UNAVAILABLE_MESSAGE,
@@ -34955,6 +35197,17 @@ const handleSendMessage: RequestHandler = async (req, res) => {
       }
     }
 
+    // Billing gate for Resend email (1-to-1 SMS is intentionally not gated, same as real-state).
+    const msgEmailBillingCtx: BillingSendContext = {
+      source: "conversation_email",
+      refType: "conversation",
+      refId: conversation_id ?? null,
+    };
+    if (communication_type === "email" && !mailbox_id) {
+      const gate = await billingPrecheck("email_sends", 1, msgEmailBillingCtx);
+      if (!gate.allowed) return res.status(402).json(billingDenialForRequest(req, gate));
+    }
+
     // Insert communication record
     const [result] = (await pool.query(
       `INSERT INTO communications (
@@ -35178,6 +35431,7 @@ const handleSendMessage: RequestHandler = async (req, res) => {
                 isHtmlEmail,
                 finalConversationId,
               );
+              if (sendResult.success) await billingRecord("email_sends", 1, msgEmailBillingCtx);
             }
           } else {
             sendResult = {
@@ -36155,6 +36409,21 @@ const handleVoiceTwiml: RequestHandler = async (req, res) => {
     return res.send(
       "<Response><Say>Missing destination number.</Say></Response>",
     );
+  }
+
+  // Billing gate for outbound PSTN calls only. Inbound calls and browser-to-browser
+  // transfers ("client:…") never reach this check, so they always work.
+  if (/^\+?\d{7,15}$/.test(To.replace(/[\s()-]/g, ""))) {
+    const callGate = await billingPrecheck("voice_minutes", Math.ceil(VOICE_MIN_PER_CALL_EST), {
+      source: "voice_outbound",
+      refType: "broker_identity",
+      refId: identity || null,
+    });
+    if (!callGate.allowed) {
+      return res.send(
+        "<Response><Say>Outbound calling is paused because billing needs attention. Please contact your administrator.</Say><Hangup/></Response>",
+      );
+    }
   }
 
   // Resolve caller ID:
@@ -37933,6 +38202,12 @@ const handleVoiceLog: RequestHandler = async (req, res) => {
       recipientPhone: normalizedPhone,
     });
 
+    await billingRecord("voice_minutes", Math.ceil(durationSec / 60), {
+      source: "voice_log",
+      refType: direction ?? "call",
+      refId: commResult?.insertId ?? null,
+      exempt: true,
+    });
     return res.json({ success: true });
   } catch (error) {
     console.error("Error logging voice call:", error);
@@ -41290,7 +41565,7 @@ function createServer() {
   // TODO: Re-enable origin allowlist once prod env vars / domains are confirmed.
   expressApp.use(cors());
 
-  const quotaService = createQuotaService(pool);
+  const quotaService = getQuotaService();
   const handleStripeTopUpGranted: TopUpGrantedHandler = async ({
     tenantId,
     paymentIntentId,
@@ -44163,6 +44438,17 @@ function createServer() {
           .json({ success: false, error: "This time slot is already taken" });
       }
 
+      // Billing gate — clients never see internal billing wording.
+      const bookingBillingCtx: BillingSendContext = { source: "scheduler_public", refType: "broker", refId: brokerId };
+      const bookingGate = await billingPrecheck("scheduler_bookings", 1, bookingBillingCtx);
+      if (!bookingGate.allowed) {
+        const officePhone = (await getLegalCompanyDetails().catch(() => null))?.phone;
+        return res.status(503).json({
+          success: false,
+          error: `Online booking is temporarily unavailable.${officePhone ? ` Please call us at ${officePhone} to schedule.` : " Please call our office to schedule."}`,
+        });
+      }
+
       const bookingToken = crypto.randomUUID();
 
       // Create Zoom meeting for video calls; fall back gracefully if Zoom is not configured
@@ -44264,6 +44550,8 @@ function createServer() {
         // Non-fatal — booking already confirmed, just log
         console.error("Scheduler auto-create client error:", clientErr);
       }
+
+      await billingRecord("scheduler_bookings", 1, bookingBillingCtx);
 
       // After auto-create so the consent row links to the new client.
       await recordSmsConsent({
@@ -45285,6 +45573,10 @@ function createServer() {
       let teamsJoinUrl: string | null = null;
       let teamsHostUrl: string | null = null;
 
+      const staffBookingBillingCtx: BillingSendContext = { source: "scheduler_staff", refType: "broker", refId: effectiveBrokerId };
+      const staffBookingGate = await billingPrecheck("scheduler_bookings", 1, staffBookingBillingCtx);
+      if (!staffBookingGate.allowed) return res.status(402).json(billingDenialForRequest(req, staffBookingGate));
+
       const bookingToken = crypto.randomUUID();
 
       const [result] = await pool.query<ResultSetHeader>(
@@ -45361,6 +45653,7 @@ function createServer() {
         );
       }
 
+      await billingRecord("scheduler_bookings", 1, staffBookingBillingCtx);
       return res.json({
         success: true,
         meeting_id: result.insertId,
